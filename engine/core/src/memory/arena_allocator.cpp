@@ -3,6 +3,7 @@
 #include "engine/memory/heap_allocator.hpp"
 
 #include <cstddef>
+#include <cstdint>
 #include <cstdio>
 
 ArenaAllocator::ArenaAllocator(const usz arena_size)
@@ -43,7 +44,12 @@ void* ArenaAllocator::allocate(const size_t size, const size_t alignment) {
         this->owns_data = true;
     }
 
-    const usz aligned_offset = (this->offset + alignment - 1) & ~(alignment - 1);
+    // Align the absolute address, not the offset: the buffer itself is only
+    // guaranteed max_align_t alignment when owned, and nothing at all when
+    // borrowed (MAIN_ARENA_BUFFER is a plain char array).
+    const uintptr_t base = reinterpret_cast<uintptr_t>(this->data);
+    const uintptr_t aligned = (base + this->offset + alignment - 1) & ~(static_cast<uintptr_t>(alignment) - 1);
+    const usz aligned_offset = aligned - base;
     if (aligned_offset + size > this->arena_size) {
         fprintf(stderr, "[memory] arena out of memory: %llu bytes requested, %llu of %llu used\n",
                 static_cast<unsigned long long>(size), static_cast<unsigned long long>(this->offset),
