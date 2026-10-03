@@ -1,7 +1,7 @@
 #include "engine/engine.h"
 
 int main() {
-    engine::Engine app;
+    Engine app;
     app.init();
     app.run();
     app.shutdown();

@@ -29,6 +29,11 @@ set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
 set(CMAKE_LIBRARY_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/lib)
 set(CMAKE_ARCHIVE_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/lib)
 
+# volk and SDL3 are shared by the vendored ImGui and the engine.
+find_package(volk CONFIG REQUIRED)
+find_package(SDL3 CONFIG REQUIRED)
+
+add_subdirectory(vendor/imgui)
 add_subdirectory(engine)
 add_subdirectory(standalone)
 add_subdirectory(editor)

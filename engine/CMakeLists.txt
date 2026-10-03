@@ -1,11 +1,7 @@
 # --- Dependencies ------------------------------------------------------------
 
-# volk (from the LunarG SDK). Provides the Vulkan headers through its include
-# directories, so we do not link the loader directly: volk loads it at runtime.
-find_package(volk CONFIG REQUIRED)
-
-# SDL3 (system package).
-find_package(SDL3 CONFIG REQUIRED)
+# volk and SDL3 are located by the top-level CMakeLists.txt (shared with
+# vendor/imgui). volk provides the Vulkan headers and loads the loader at runtime.
 
 # shaderc ships no CMake config, only headers + libraries. Build an imported
 # target from the statically linked "combined" library (shaderc + glslang +
@@ -63,6 +59,7 @@ target_link_libraries(engine
     PUBLIC
         volk::volk
         SDL3::SDL3
+        imgui::imgui
     PRIVATE
         shaderc::shaderc_combined
 )
