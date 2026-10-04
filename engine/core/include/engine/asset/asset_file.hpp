@@ -8,20 +8,23 @@
 
 // The `.lunaasset` container: one binary file per asset holding its identity,
 // dependencies, import settings, original source and compiled data as a table
-// of chunks. This header is the byte layout plus a validating reader
-// (AssetView) and a writer (AssetWriter); it knows nothing about what the
-// chunks contain. docs/asset_format.md is the full specification.
+// of chunks. This header is the byte layout plus a validating view over the
+// *prelude* (header, dependency table, chunk table: AssetView) and a writer
+// (AssetWriter); it knows nothing about what the chunks contain.
+// asset_reader.hpp reads chunk payloads out of the file on demand, and
+// docs/asset_format.md is the full specification.
 //
-//     u8* bytes = ASSET_FILE::read_file("wall.lunaasset", allocator, &size);
+//     u8* prelude = ASSET_FILE::read_prelude("wall.lunaasset", allocator, &size);
 //     AssetView view;
-//     if (view.parse(bytes, size) == ASSET_PARSE_OK) {
-//         const ChunkEntry* pixels = view.find_chunk(CHUNK_TAG::PIXELS);
-//         const u8* data = view.chunk_data(*pixels);   // points into `bytes`
+//     if (view.parse(prelude, size) == ASSET_PARSE_OK) {
+//         view.header->type, view.dependencies[i], view.find_chunk(CHUNK_TAG::PIXELS)->size ...
 //     }
-//     allocator->free(bytes);
 //
-// The file is little-endian and every payload is 64-byte aligned, so a loader
-// reads the file into memory once and points into it; nothing is parsed.
+// A view is all the editor's asset browser and references ever hold: the
+// prelude is small and at the start of the file. Payloads are read later,
+// one chunk at a time, by seeking with the chunk table (see AssetReader).
+// The file is little-endian and every payload is 64-byte aligned, so a
+// payload read into an aligned buffer is used in place; nothing is parsed.
 
 static_assert(std::endian::native == std::endian::little, "the asset format is little-endian; big-endian targets are not supported");
 
@@ -175,9 +178,12 @@ const char* parse_error_name(AssetParseError error);
 
 }
 
-// Non-owning view over a buffer that holds a .lunaasset file, or at least its
-// prelude. parse() validates the layout and sets the pointers; they stay valid
-// as long as the buffer does. The view holds no memory of its own.
+// Non-owning view over a buffer that holds the prelude of a .lunaasset file:
+// the header, the dependency table and the chunk table. parse() validates
+// the layout and sets the pointers; they stay valid as long as the buffer
+// does. The view holds no memory of its own and never touches payloads: it
+// knows where every chunk is (offset, size, tag, version, flags), and an
+// AssetReader fetches the bytes.
 struct AssetView {
     const u8* data = nullptr;
     usz size = 0;
@@ -187,15 +193,14 @@ struct AssetView {
     const ChunkEntry* chunks = nullptr;      // header->chunk_count entries
 
     // Validates `size` bytes at `data` as described in docs/asset_format.md.
-    // Accepts a complete file or any prefix long enough to hold the prelude.
-    // `data` must be 8-byte aligned, which every allocator guarantees. On any
-    // error the view is reset to empty and nothing else is touched.
+    // The buffer is what read_prelude returns; a longer prefix of the file,
+    // or the whole file, parses the same way. `data` must be 8-byte aligned,
+    // which every allocator guarantees. On any error the view is reset to
+    // empty and nothing else is touched.
     AssetParseError parse(const void* data, usz size);
     void reset();
 
     bool is_parsed() const { return this->header != nullptr; }
-    // Whether the buffer holds the whole file and every payload is reachable.
-    bool is_complete() const { return this->header != nullptr && this->size >= this->header->file_size; }
     bool is_cooked() const { return this->header != nullptr && (this->header->flags & ASSET_FLAG::COOKED) != 0; }
 
     usz dependency_count() const { return this->header != nullptr ? this->header->dependency_count : 0; }
@@ -205,10 +210,6 @@ struct AssetView {
     // find_chunk(tag, after) to walk them: `after` is the previous match.
     const ChunkEntry* find_chunk(u32 tag) const;
     const ChunkEntry* find_chunk(u32 tag, const ChunkEntry* after) const;
-
-    // Start of `chunk`'s payload inside the buffer, or nullptr when the buffer
-    // does not reach it (a prelude-only read). Valid for size 0 chunks too.
-    const u8* chunk_data(const ChunkEntry& chunk) const;
 
     // Index of `guid` in the dependency table, or dependency_count() if absent.
     usz find_dependency(const AssetGuid& guid) const;
@@ -272,15 +273,11 @@ private:
 
 namespace ASSET_FILE {
 
-// Reads the whole file at `path` into a buffer from `allocator` and returns
-// it with its size in `out_size`. nullptr (and a message on stderr) if the
-// file cannot be opened or read. The buffer is PAYLOAD_ALIGNMENT aligned.
-u8* read_file(const char* path, BaseAllocator* allocator, usz* out_size);
-
 // Reads only as much of the file at `path` as the prelude needs: the header
-// first, then the tables. The returned buffer parses with AssetView but
-// is_complete() is false unless the file has no payload bytes. nullptr if the
-// file cannot be read or does not start with a valid header.
+// first, then the tables. The returned buffer parses with AssetView. nullptr
+// (and a message on stderr) if the file cannot be read or does not start
+// with a valid header. This is what an asset scan calls per file; to read
+// payloads afterwards, open the file with an AssetReader (asset_reader.hpp).
 u8* read_prelude(const char* path, BaseAllocator* allocator, usz* out_size);
 
 // Writes `size` bytes to `path`, replacing any existing file. False (and a

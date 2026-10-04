@@ -18,9 +18,10 @@ compiled chunks in place when the settings change. Shipping is a *cook*: a copy
 of the file without its editor-only chunks (see [Cooking](#cooking)).
 
 The container is implemented in `engine/core/include/engine/asset/asset_file.hpp`
-(`AssetView` reads, `AssetWriter` writes). Core has no external dependencies,
-so the container stays a pure byte-layout description; importers and the
-per-type payload code live in other modules.
+(`AssetView` over the prelude, `AssetWriter` writes) and
+`asset_reader.hpp` (`AssetReader` reads chunk payloads from the file on
+demand). Core has no external dependencies, so the container stays a pure
+byte-layout description; importers live in other modules.
 
 ## Design decisions
 
@@ -42,10 +43,17 @@ scanning headers at startup and caches it. Two files with the same GUID (a file
 copied in the OS) are resolved by the scan: the newer file gets a fresh GUID
 and its header is rewritten.
 
-**The header is readable without the payloads.** The asset browser and the
-dependency scan read only the *prelude* (header, dependency table, chunk
-table), which is at the start of the file and small. A reader given only the
-prelude bytes can still answer type, GUID, dependencies and which chunks exist.
+**The prelude is the asset; payloads are fetched.** The asset browser, the
+dependency scan and every reference to an asset hold only the *prelude*
+(header, dependency table, chunk table), which is at the start of the file
+and small: an `AssetView` over those bytes answers type, GUID, dependencies
+and which chunks exist, with their offsets, sizes and versions. Nothing
+loads a whole file. When a payload is needed, an `AssetReader` reopens the
+file and seeks straight to that chunk using the view's table, so a mesh's
+bounds cost one 48-byte read and a texture's pixels go directly into
+staging memory. An asset provider that refreshes an asset re-reads the
+prelude; a view from before the file changed is detected (`matches()`
+compares GUID, size and content hash) rather than trusted.
 
 **Chunks version themselves.** The container's `format_version` only describes
 the layout of the header and tables. Each chunk carries its own `version`, so a
@@ -55,7 +63,7 @@ do not know, so adding a chunk is never a breaking change.
 
 **Payloads are plain data.** A chunk's payload is a plain struct or a flat
 array: no pointers, no padding surprises, offsets or indices instead. Loading
-is one read into an arena, a validation pass over the prelude, and pointers
+a chunk is one read into an aligned buffer, a validation pass, and pointers
 into the buffer. Nothing is parsed.
 
 **Little-endian only, 64-byte aligned.** The engine runs on little-endian
@@ -138,8 +146,8 @@ aligned position, possibly equal to `file_size` when it is last. The same tag
 may appear more than once (a mesh with several vertex streams); `find_chunk`
 returns the first.
 
-Readers validate every entry against `file_size`, not against the buffer they
-were handed, so a prelude-only buffer validates the same way a complete file
+`AssetView` validates every entry against `file_size`, not against the
+buffer it was handed, so the prelude validates the same way a complete file
 does.
 
 ## Fourcc codes
@@ -184,14 +192,208 @@ Mesh (`MESH`), payload layouts not yet defined:
 | `INDX` | index data |
 | `BBOX` | axis-aligned bounds |
 
-Until the layouts exist, importers write these chunks with `size == 0` and
-`version == 0` so that files produced now already have the right table and can
-be re-imported in place once the payload code lands.
+Files written before these layouts existed carry the tags with `size == 0`
+and `version == 0`; the readers report them as an unsupported version and the
+editor re-imports them in place.
+
+## Texture payloads
+
+Defined in `engine/core/include/engine/asset/texture_asset.hpp`
+(`TextureAssetView` reads). A texture is one `TEX2` chunk and one `PIXL`
+chunk, both at `TEXTURE_ASSET::VERSION` (1). The `TEX2` payload is small and
+describes everything; `PIXL` is only bytes. A loader that has read the file
+up to the end of `TEX2` can create the image and size its staging buffer
+before a single pixel is in memory.
+
+**Formats are engine enums.** `TextureFormat` names the texel layout
+(`RGBA8_SRGB`, `BC7_UNORM`, ...) with no reference to Vulkan, so core stays
+free of GPU headers and the graphics module owns the one table that maps to
+`VkFormat`. Block-compressed formats are first-class: every size in the file
+is in whole blocks, so a BC7 file and an RGBA8 file are read by the same
+code. sRGB is part of the format, not a flag. Enum values are on disk, so
+new formats are appended and never renumbered.
+
+**Compression is a field, reserved.** `TextureDesc::compression` says how
+the bytes in `PIXL` are encoded. Version 1 only knows
+`TEXTURE_COMPRESSION_NONE`, where every mip is raw texel data ready for
+`vkCmdCopyBufferToImage`, and the reader rejects anything else. When a codec
+is added it is applied per mip, so the mip table's `size` becomes the stored
+size and `decoded_size` in the desc gives the staging buffer. This is kept
+separate from the container's `COMPRESSED` chunk flag on purpose: the
+container cannot know mip boundaries, and a texture loader wants to stream
+and decode one mip at a time.
+
+**Mips are a table, not a formula.** Mip extents do follow from mip 0
+(halve and clamp to 1) and the reader verifies that, but the offsets and
+pitches are written out so a loader never computes a block size: it copies
+`size` bytes from `offset` with `row_pitch` and is done. The table costs 32
+bytes per mip.
+
+### TextureDesc (64 bytes)
+
+| offset | type     | field          | meaning |
+|-------:|----------|----------------|---------|
+| 0      | `u32`    | `width`        | mip 0 width in texels, nonzero |
+| 4      | `u32`    | `height`       | mip 0 height in texels, nonzero |
+| 8      | `u32`    | `depth`        | mip 0 depth in texels; 1 unless 3D |
+| 12     | `u32`    | `layers`       | array layers, nonzero; a multiple of 6 for cube maps |
+| 16     | `u32`    | `mip_count`    | 1 to 16, at most the full chain for the extents |
+| 20     | `u32`    | `format`       | `TextureFormat` |
+| 24     | `u32`    | `dimension`    | `TextureDimension`: `2D` (0), `CUBE` (1), `3D` (2) |
+| 28     | `u32`    | `compression`  | `TextureCompression`; only `NONE` (0) in version 1 |
+| 32     | `u64`    | `decoded_size` | bytes of raw texel data over every mip and layer |
+| 40     | `u32`    | `flags`        | zero; no bits defined in version 1 |
+| 44     | `u32[5]` | `reserved`     | zero |
+
+Dimension rules: `2D` and `CUBE` have `depth == 1`; `CUBE` has `layers % 6
+== 0` with faces in Vulkan order (+X, -X, +Y, -Y, +Z, -Z); `3D` has `layers
+== 1`. A 2D array is `2D` with `layers > 1`.
+
+### TextureMip (32 bytes, `mip_count` entries after the desc)
+
+| offset | type  | field       | meaning |
+|-------:|-------|-------------|---------|
+| 0      | `u64` | `offset`    | from the start of `PIXL`; multiple of 16 |
+| 8      | `u64` | `size`      | bytes in `PIXL` for this mip, all layers; the decoded size when uncompressed |
+| 16     | `u32` | `width`     | `max(1, desc.width >> level)` |
+| 20     | `u32` | `height`    | `max(1, desc.height >> level)` |
+| 24     | `u32` | `depth`     | `max(1, desc.depth >> level)` |
+| 28     | `u32` | `row_pitch` | bytes per row of blocks: `ceil(width / block_width) * block_bytes` |
+
+Inside a mip the layers are back to back, each `row_pitch * ceil(height /
+block_height) * depth` bytes. Mips are in level order and do not overlap;
+the first starts at offset 0 and each starts on a 16-byte boundary, which
+with the chunk's own 64-byte alignment satisfies every `bufferOffset`
+requirement of a buffer-to-image copy. `PIXL` may be longer than the last
+mip's end.
+
+`TextureAssetView::parse` takes the prelude view and the `TEX2` bytes (from
+`AssetReader::read_chunk`) and validates all of the above against the
+`PIXL` chunk entry, whose size is in the prelude. It keeps that entry as
+`pixels_chunk`; the loader reads it into upload memory and uses the view's
+mip table to address the result. Pixels are never read to validate a
+texture.
+
+## Mesh payloads
+
+Defined in `engine/core/include/engine/asset/mesh_asset.hpp`
+(`MeshAssetView` reads). A mesh is one `MESH` chunk, one `VERT` chunk per
+vertex stream, one `INDX` chunk and one `BBOX` chunk, all at
+`MESH_ASSET::VERSION` (1).
+
+**Streams are chunks.** Each vertex stream is its own `VERT` chunk, 64-byte
+aligned, holding `vertex_count` vertices of that stream's stride. The
+`i`-th `VERT` chunk in the table is stream `i`; there are exactly
+`stream_count` of them. A stream maps one-to-one to a vertex input binding,
+so a loader uploads each chunk into a buffer and binds them in order, and a
+depth-only pass can read the position stream alone.
+
+**The layout is data, not a fixed vertex struct.** Attributes name a
+semantic, an element format, a stream and a byte offset, which is exactly a
+`VkVertexInputAttributeDescription`. The importer decides whether to
+interleave or split, and whether normals are `F32x3` or `SNORM16x4`; the
+file says what it did. `VertexFormat` values are on disk and only appended.
+
+**Submeshes reference materials through the dependency table.** A submesh
+is an index range and a material; the material is a `u32` index into the
+file's dependency table (so the loader already knows to load it) or
+`MESH_ASSET::NO_MATERIAL`. Each submesh carries its own object-space box
+for per-submesh culling.
+
+**Always indexed, always triangle lists.** `topology` and `index_format`
+are fields so the reader can reject what it does not support rather than
+guess; version 1 writes and reads only `TRIANGLE_LIST`, with 16- or 32-bit
+indices. Mesh compression (quantization beyond the vertex formats, index
+reordering, meshoptimizer-style encoding) is not addressed and would be a
+version 2 of these chunks; `MeshDesc::flags` is reserved for it.
+
+### MeshDesc (64 bytes)
+
+| offset | type     | field             | meaning |
+|-------:|----------|-------------------|---------|
+| 0      | `u32`    | `vertex_count`    | nonzero |
+| 4      | `u32`    | `index_count`     | nonzero, multiple of 3 |
+| 8      | `u32`    | `index_format`    | `MeshIndexFormat`: `U16` (0) or `U32` (1) |
+| 12     | `u32`    | `topology`        | `MeshTopology`; only `TRIANGLE_LIST` (0) in version 1 |
+| 16     | `u32`    | `stream_count`    | 1 to 16 `VERT` chunks |
+| 20     | `u32`    | `attribute_count` | 1 to 16 |
+| 24     | `u32`    | `submesh_count`   | nonzero |
+| 28     | `u32`    | `flags`           | zero; no bits defined in version 1 |
+| 32     | `u32[8]` | `reserved`        | zero |
+
+The `MESH` payload is this struct followed, back to back, by
+`stream_count` `VertexStreamDesc`, `attribute_count`
+`VertexAttributeDesc` and `submesh_count` `SubmeshDesc`; its size is
+exactly the sum.
+
+### VertexStreamDesc (8 bytes)
+
+| offset | type  | field      | meaning |
+|-------:|-------|------------|---------|
+| 0      | `u32` | `stride`   | bytes per vertex, nonzero, multiple of 4 |
+| 4      | `u32` | `reserved` | zero |
+
+The matching `VERT` chunk is exactly `stride * vertex_count` bytes.
+
+### VertexAttributeDesc (8 bytes)
+
+| offset | type | field            | meaning |
+|-------:|------|------------------|---------|
+| 0      | `u8` | `semantic`       | `VertexSemantic`: `POSITION` (0), `NORMAL` (1), `TANGENT` (2), `COLOR` (3), `TEXCOORD` (4), `JOINTS` (5), `WEIGHTS` (6) |
+| 1      | `u8` | `semantic_index` | distinguishes `TEXCOORD` 0 from `TEXCOORD` 1; the pair is unique within a mesh |
+| 2      | `u8` | `format`         | `VertexFormat` |
+| 3      | `u8` | `stream`         | index into the stream table |
+| 4      | `u32`| `offset`         | bytes from the start of the vertex inside its stream; `offset + size(format) <= stride` |
+
+Vertex formats in version 1: `F32`, `F32x2`, `F32x3`, `F32x4`, `F16x2`,
+`F16x4`, `UNORM8x4`, `SNORM8x4`, `UNORM16x2`, `UNORM16x4`, `SNORM16x2`,
+`SNORM16x4`, `UINT8x4`, `UINT16x4`, `UINT32`. Tangents are `xyz` plus `w`
+handedness.
+
+### SubmeshDesc (48 bytes)
+
+| offset | type     | field         | meaning |
+|-------:|----------|---------------|---------|
+| 0      | `u32`    | `first_index` | into `INDX` |
+| 4      | `u32`    | `index_count` | nonzero, multiple of 3; `first_index + index_count <= desc.index_count` |
+| 8      | `u32`    | `base_vertex` | added to every index; `< vertex_count` |
+| 12     | `u32`    | `material`    | dependency table index, or `0xffffffff` for none |
+| 16     | `f32[3]` | `bounds_min`  | object-space box over this submesh |
+| 28     | `f32[3]` | `bounds_max`  | |
+| 40     | `u32[2]` | `reserved`    | zero |
+
+### INDX
+
+`index_count` indices of `index_format` size, tightly packed; the chunk is
+exactly that many bytes.
+
+### MeshBounds (48 bytes, the `BBOX` payload)
+
+| offset | type     | field      | meaning |
+|-------:|----------|------------|---------|
+| 0      | `f32[3]` | `min`      | object-space box over the whole mesh |
+| 12     | `f32[3]` | `max`      | |
+| 24     | `f32[3]` | `center`   | bounding sphere |
+| 36     | `f32`    | `radius`   | |
+| 40     | `u32[2]` | `reserved` | zero |
+
+`MeshAssetView::parse` takes the prelude view and the `MESH` bytes (from
+`AssetReader::read_chunk`) and validates the tables against the `VERT`,
+`INDX` and `BBOX` chunk entries, whose sizes are in the prelude. It keeps
+those entries (`vertex_chunks[i]`, `index_chunk`, `bounds_chunk`); the
+loader reads whichever it needs, straight into upload memory, and a culling
+pass or the editor can read the bounds alone. No geometry is read to
+validate a mesh.
 
 ## Reading
 
-`AssetView::parse(data, size)` validates a buffer and points into it. It
-accepts either a complete file or any prefix long enough to hold the prelude:
+Reading is two steps with two types, so the cheap one can be done for every
+file in a project and the expensive one only for what is used.
+
+**The prelude: `ASSET_FILE::read_prelude` + `AssetView`.** `read_prelude`
+opens the file, reads the header, and then exactly the bytes the tables
+need. `AssetView::parse(data, size)` validates that buffer and points into
+it:
 
 1. `size >= sizeof(AssetHeader)`, magic matches, `format_version` is supported.
 2. `file_size` is at least the prelude size, and `size <= file_size` (a buffer
@@ -200,9 +402,33 @@ accepts either a complete file or any prefix long enough to hold the prelude:
 4. every chunk entry is 64-byte aligned, starts at or after `payload_start`,
    ends at or before `file_size`, and does not overlap the previous entry.
 
-`is_complete()` tells whether the buffer holds the whole file. `chunk_data()`
-returns `nullptr` for a chunk whose payload lies past the end of the buffer, so
-code that only read the prelude cannot accidentally read payloads.
+A view is what the asset browser lists and what a reference to an asset
+holds. It never touches a payload; it has no way to.
+
+**Payloads: `AssetReader`.** `open(path)` reopens the file, reads the header
+back and checks that the file on disk is exactly `file_size` bytes, so a
+truncated or half-written file is refused before any seek. `matches(view)`
+checks the open file against a view (GUID, `file_size`, `content_hash`),
+which catches a view from a stale scan. Then:
+
+- `read_chunk(entry, out)` seeks to `entry.offset` and reads `entry.size`
+  bytes into caller memory (a struct on the stack for `BBOX`, a mapped
+  staging buffer for `PIXL`);
+- `read_chunk(entry, allocator)` does the same into a fresh 64-byte aligned
+  buffer;
+- `read_chunk(view, tag, allocator)` finds the first chunk with `tag` in the
+  view and reads it, refusing a view that does not match the file;
+- `read_prelude(allocator)` re-reads the tables, which is how a provider
+  refreshes a view after the file changed.
+
+Every entry is bounds-checked against the header read at `open`, never
+against the view, so a corrupt entry cannot read outside the file. Chunks
+are read in any order; the reader seeks for each one.
+
+The per-type views (`TextureAssetView`, `MeshAssetView`) take the prelude
+view plus the bytes of their descriptor chunk, validate them against the
+other chunks' table entries, and hand back the entries of the big chunks
+for the caller to read where it wants them.
 
 The runtime loader additionally rejects a file without `COOKED` set, so a
 shipped build cannot carry sources by mistake. The editor accepts both.
@@ -218,14 +444,17 @@ the thin stdio helpers around it.
 ## Cooking
 
 Cooking an asset is a copy that drops every chunk with `EDITOR_ONLY` set and
-sets `COOKED` in the header. The result is the same format read by the same
-loader, only smaller. `content_hash` is kept so a cooked file can still be
+sets `COOKED` in the header: read the prelude, open a reader, and for each
+chunk that is not editor-only `read_chunk` it and `add_chunk` it to a
+writer. The result is the same format read by the same loader, only smaller. `content_hash` is kept so a cooked file can still be
 matched to the editor file it came from.
 
 ## Open items
 
 - Payload layouts for `NAME`, `IMPS`, `SRC `, and the texture and mesh chunks.
 - The `dump` tool and its `textconv` setup.
+- The asset provider: owns the preludes of a project, hands out views, loads
+  and refreshes payloads through `AssetReader`.
 - GUID generation and the editor's path-to-GUID index.
 - Platform-specific compiled data (BC7 on desktop, ASTC on mobile) is not
   addressed; version 1 targets desktop Vulkan only.

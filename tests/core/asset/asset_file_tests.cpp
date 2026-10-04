@@ -114,7 +114,6 @@ TEST_CASE("asset/asset_file: prelude and payload start follow from the table cou
 TEST_CASE("asset/asset_file: a view starts empty and parse rejects garbage") {
     AssetView view;
     CHECK_FALSE(view.is_parsed());
-    CHECK_FALSE(view.is_complete());
     CHECK_FALSE(view.is_cooked());
     CHECK(view.chunk_count() == 0);
     CHECK(view.dependency_count() == 0);
@@ -134,7 +133,7 @@ TEST_CASE("asset/asset_file: a view starts empty and parse rejects garbage") {
     CHECK(doctest::String(ASSET_FILE::parse_error_name(ASSET_PARSE_BAD_MAGIC)) != "ok");
 }
 
-TEST_CASE("asset/asset_file: a writer with no chunks produces a prelude-only file that parses as complete") {
+TEST_CASE("asset/asset_file: a writer with no chunks produces a prelude-only file") {
     AssetWriter writer;
     writer.type = ASSET_TYPE::MESH;
     writer.guid = WALL_GUID;
@@ -149,7 +148,6 @@ TEST_CASE("asset/asset_file: a writer with no chunks produces a prelude-only fil
     AssetView view;
     REQUIRE(view.parse(bytes, size) == ASSET_PARSE_OK);
     CHECK(view.is_parsed());
-    CHECK(view.is_complete());
     CHECK_FALSE(view.is_cooked());
     CHECK(view.header->magic == ASSET_FILE::MAGIC);
     CHECK(view.header->format_version == ASSET_FILE::FORMAT_VERSION);
@@ -178,7 +176,6 @@ TEST_CASE("asset/asset_file: chunks round-trip in order, aligned, with their pay
 
     AssetView view;
     REQUIRE(view.parse(bytes, size) == ASSET_PARSE_OK);
-    CHECK(view.is_complete());
     CHECK(view.header->type == ASSET_TYPE::TEXTURE);
     CHECK(view.header->content_hash == 0xdeadbeef);
     CHECK(view.chunk_count() == 5);
@@ -200,20 +197,19 @@ TEST_CASE("asset/asset_file: chunks round-trip in order, aligned, with their pay
     // The file ends exactly where the last payload ends.
     CHECK(previous_end == view.header->file_size);
 
-    SUBCASE("find_chunk locates tags and chunk_data points at the copied bytes") {
+    SUBCASE("find_chunk locates tags and the entries point at the copied bytes") {
         const ChunkEntry* name = view.find_chunk(CHUNK_TAG::NAME);
         REQUIRE(name != nullptr);
         CHECK(name->version == 1);
         CHECK(name->is_editor_only());
         CHECK(name->size == sizeof("wall_albedo"));
-        CHECK(doctest::String(reinterpret_cast<const char*>(view.chunk_data(*name))) == "wall_albedo");
+        CHECK(doctest::String(reinterpret_cast<const char*>(bytes + name->offset)) == "wall_albedo");
 
         const ChunkEntry* pixels = view.find_chunk(CHUNK_TAG::PIXELS);
         REQUIRE(pixels != nullptr);
         CHECK_FALSE(pixels->is_editor_only());
         CHECK(pixels->size == 300);
-        const u8* data = view.chunk_data(*pixels);
-        REQUIRE(data != nullptr);
+        const u8* data = bytes + pixels->offset;
         CHECK(is_aligned(data, ASSET_FILE::PAYLOAD_ALIGNMENT));
         bool intact = true;
         for (usz i = 0; i < 300; ++i) {
@@ -224,7 +220,7 @@ TEST_CASE("asset/asset_file: chunks round-trip in order, aligned, with their pay
         const ChunkEntry* texture = view.find_chunk(CHUNK_TAG::TEXTURE);
         REQUIRE(texture != nullptr);
         u32 info[4];
-        std::memcpy(info, view.chunk_data(*texture), sizeof(info));
+        std::memcpy(info, bytes + texture->offset, sizeof(info));
         CHECK(info[0] == 256);
         CHECK(info[3] == 9);
 
@@ -241,8 +237,8 @@ TEST_CASE("asset/asset_file: chunks round-trip in order, aligned, with their pay
         const ChunkEntry* settings = view.find_chunk(CHUNK_TAG::IMPORT_SETTINGS);
         REQUIRE(settings != nullptr);
         CHECK(settings->size == 3);
-        const u8* after = view.chunk_data(*settings) + settings->size;
-        const u8* next = view.data + ASSET_FILE::align_up(settings->offset + settings->size, ASSET_FILE::PAYLOAD_ALIGNMENT);
+        const u8* after = bytes + settings->offset + settings->size;
+        const u8* next = bytes + ASSET_FILE::align_up(settings->offset + settings->size, ASSET_FILE::PAYLOAD_ALIGNMENT);
         bool zero = true;
         for (const u8* p = after; p < next; ++p) {
             zero = zero && *p == 0;
@@ -272,14 +268,12 @@ TEST_CASE("asset/asset_file: placeholder chunks with no payload are valid, even 
 
     AssetView view;
     REQUIRE(view.parse(bytes, size) == ASSET_PARSE_OK);
-    CHECK(view.is_complete());
     CHECK(view.chunk_count() == 4);
     for (usz i = 0; i < 4; ++i) {
         CHECK(view.chunks[i].size == 0);
         CHECK(view.chunks[i].version == 0);
+        // Zero-size payloads still have an aligned, in-bounds offset.
         CHECK(view.chunks[i].offset == view.header->file_size);
-        // Zero-size payloads still have a non-null, in-bounds address.
-        CHECK(view.chunk_data(view.chunks[i]) == view.data + view.header->file_size);
     }
     CHECK(view.find_chunk(CHUNK_TAG::BOUNDS) == &view.chunks[3]);
 
@@ -512,7 +506,7 @@ TEST_CASE("asset/asset_file: parse rejects corrupted chunk tables") {
     writer.free();
 }
 
-TEST_CASE("asset/asset_file: a prelude-only buffer parses but exposes no payloads") {
+TEST_CASE("asset/asset_file: the prelude alone parses the same as the whole file") {
     AssetWriter writer;
     fill_texture(writer);
     usz size = 0;
@@ -526,11 +520,11 @@ TEST_CASE("asset/asset_file: a prelude-only buffer parses but exposes no payload
     SUBCASE("exactly the prelude") {
         REQUIRE(view.parse(bytes, prelude) == ASSET_PARSE_OK);
     }
-    SUBCASE("the prelude plus some but not all payload bytes") {
+    SUBCASE("the prelude plus some payload bytes") {
         REQUIRE(view.parse(bytes, size - 1) == ASSET_PARSE_OK);
-        // The first chunks are reachable, the last is not.
-        CHECK(view.chunk_data(view.chunks[0]) != nullptr);
-        CHECK(view.chunk_data(view.chunks[4]) == nullptr);
+    }
+    SUBCASE("the whole file") {
+        REQUIRE(view.parse(bytes, size) == ASSET_PARSE_OK);
     }
     SUBCASE("one byte short of the prelude") {
         CHECK(view.parse(bytes, prelude - 1) == ASSET_PARSE_TOO_SMALL);
@@ -538,7 +532,6 @@ TEST_CASE("asset/asset_file: a prelude-only buffer parses but exposes no payload
     }
 
     if (view.is_parsed()) {
-        CHECK_FALSE(view.is_complete());
         CHECK(view.header->type == ASSET_TYPE::TEXTURE);
         CHECK(view.header->guid == WALL_GUID);
         CHECK(view.dependency_count() == 1);
@@ -548,7 +541,7 @@ TEST_CASE("asset/asset_file: a prelude-only buffer parses but exposes no payload
         const ChunkEntry* pixels = view.find_chunk(CHUNK_TAG::PIXELS);
         REQUIRE(pixels != nullptr);
         CHECK(pixels->size == 300);
-        CHECK(view.chunk_data(*pixels) == nullptr);
+        CHECK(pixels->offset + pixels->size == view.header->file_size);
     }
 
     MEMORY::heap_allocator()->free(bytes);
@@ -564,7 +557,8 @@ TEST_CASE("asset/asset_file: a cooked file carries the flag and no editor chunks
     AssetView source;
     REQUIRE(source.parse(bytes, size) == ASSET_PARSE_OK);
 
-    // Cooking: copy everything but the EDITOR_ONLY chunks, set COOKED.
+    // Cooking: copy everything but the EDITOR_ONLY chunks, set COOKED. Done
+    // here from the in-memory file; asset_reader_tests does it from disk.
     AssetWriter cooked;
     cooked.type = source.header->type;
     cooked.flags = source.header->flags | ASSET_FLAG::COOKED;
@@ -576,7 +570,7 @@ TEST_CASE("asset/asset_file: a cooked file carries the flag and no editor chunks
     for (usz i = 0; i < source.chunk_count(); ++i) {
         const ChunkEntry& chunk = source.chunks[i];
         if (!chunk.is_editor_only()) {
-            cooked.add_chunk(chunk.tag, chunk.version, chunk.flags, source.chunk_data(chunk), chunk.size);
+            cooked.add_chunk(chunk.tag, chunk.version, chunk.flags, bytes + chunk.offset, chunk.size);
         }
     }
 
@@ -597,7 +591,7 @@ TEST_CASE("asset/asset_file: a cooked file carries the flag and no editor chunks
     const ChunkEntry* pixels = view.find_chunk(CHUNK_TAG::PIXELS);
     REQUIRE(pixels != nullptr);
     CHECK(pixels->size == 300);
-    CHECK(std::memcmp(view.chunk_data(*pixels), source.chunk_data(*source.find_chunk(CHUNK_TAG::PIXELS)), 300) == 0);
+    CHECK(std::memcmp(cooked_bytes + pixels->offset, bytes + source.find_chunk(CHUNK_TAG::PIXELS)->offset, 300) == 0);
 
     MEMORY::heap_allocator()->free(cooked_bytes);
     MEMORY::heap_allocator()->free(bytes);
@@ -627,7 +621,7 @@ TEST_CASE("asset/asset_file: a writer on an arena puts everything there") {
     arena.release();
 }
 
-TEST_CASE("asset/asset_file: files round-trip through write_file, read_file and read_prelude") {
+TEST_CASE("asset/asset_file: files round-trip through write_file and read_prelude") {
     const std::string path = temp_asset_path("roundtrip");
     AssetWriter writer;
     fill_texture(writer);
@@ -636,34 +630,20 @@ TEST_CASE("asset/asset_file: files round-trip through write_file, read_file and 
     REQUIRE(bytes != nullptr);
     REQUIRE(ASSET_FILE::write_file(path.c_str(), bytes, size));
 
-    SUBCASE("read_file returns the whole file") {
-        usz read_size = 0;
-        u8* read = ASSET_FILE::read_file(path.c_str(), MEMORY::heap_allocator(), &read_size);
-        REQUIRE(read != nullptr);
-        CHECK(read_size == size);
-        CHECK(std::memcmp(read, bytes, size) == 0);
-        CHECK(is_aligned(read, ASSET_FILE::PAYLOAD_ALIGNMENT));
-
-        AssetView view;
-        CHECK(view.parse(read, read_size) == ASSET_PARSE_OK);
-        CHECK(view.is_complete());
-        MEMORY::heap_allocator()->free(read);
-    }
-
     SUBCASE("read_prelude returns just the tables") {
         usz read_size = 0;
         u8* read = ASSET_FILE::read_prelude(path.c_str(), MEMORY::heap_allocator(), &read_size);
         REQUIRE(read != nullptr);
         CHECK(read_size == ASSET_FILE::prelude_size(1, 5));
         CHECK(std::memcmp(read, bytes, read_size) == 0);
+        CHECK(is_aligned(read, ASSET_FILE::PAYLOAD_ALIGNMENT));
 
         AssetView view;
         REQUIRE(view.parse(read, read_size) == ASSET_PARSE_OK);
-        CHECK_FALSE(view.is_complete());
         CHECK(view.header->guid == WALL_GUID);
         CHECK(view.chunk_count() == 5);
         CHECK(view.find_chunk(CHUNK_TAG::PIXELS) != nullptr);
-        CHECK(view.chunk_data(*view.find_chunk(CHUNK_TAG::PIXELS)) == nullptr);
+        CHECK(view.find_chunk(CHUNK_TAG::PIXELS)->size == 300);
         MEMORY::heap_allocator()->free(read);
     }
 
@@ -682,7 +662,7 @@ TEST_CASE("asset/asset_file: files round-trip through write_file, read_file and 
         CHECK(read_size == 64);
         AssetView view;
         CHECK(view.parse(read, read_size) == ASSET_PARSE_OK);
-        CHECK(view.is_complete());
+        CHECK(view.chunk_count() == 0);
 
         MEMORY::heap_allocator()->free(read);
         MEMORY::heap_allocator()->free(empty_bytes);
@@ -692,30 +672,16 @@ TEST_CASE("asset/asset_file: files round-trip through write_file, read_file and 
     SUBCASE("read_prelude rejects a file that is not an asset") {
         const u8 junk[100] = {'n', 'o', 't', ' ', 'a', 'n', ' ', 'a', 's', 's', 'e', 't'};
         REQUIRE(ASSET_FILE::write_file(path.c_str(), junk, sizeof(junk)));
-        usz read_size = 0;
+        usz read_size = 7;
         CHECK(ASSET_FILE::read_prelude(path.c_str(), MEMORY::heap_allocator(), &read_size) == nullptr);
-
-        // read_file does not care; parse does.
-        u8* read = ASSET_FILE::read_file(path.c_str(), MEMORY::heap_allocator(), &read_size);
-        REQUIRE(read != nullptr);
-        CHECK(read_size == sizeof(junk));
-        AssetView view;
-        CHECK(view.parse(read, read_size) == ASSET_PARSE_BAD_MAGIC);
-        MEMORY::heap_allocator()->free(read);
+        CHECK(read_size == 7);
     }
 
     SUBCASE("a truncated file fails to read its prelude") {
         REQUIRE(ASSET_FILE::write_file(path.c_str(), bytes, 70)); // header plus part of the dependency table
-        usz read_size = 0;
+        usz read_size = 7;
         CHECK(ASSET_FILE::read_prelude(path.c_str(), MEMORY::heap_allocator(), &read_size) == nullptr);
-
-        // read_file hands back what is there, and parse notices.
-        u8* read = ASSET_FILE::read_file(path.c_str(), MEMORY::heap_allocator(), &read_size);
-        REQUIRE(read != nullptr);
-        CHECK(read_size == 70);
-        AssetView view;
-        CHECK(view.parse(read, read_size) == ASSET_PARSE_TOO_SMALL);
-        MEMORY::heap_allocator()->free(read);
+        CHECK(read_size == 7);
     }
 
     std::filesystem::remove(path);
@@ -726,8 +692,6 @@ TEST_CASE("asset/asset_file: files round-trip through write_file, read_file and 
 TEST_CASE("asset/asset_file: missing files are reported as nullptr / false") {
     const std::string path = temp_asset_path("does_not_exist/nested/missing");
     usz size = 7;
-    CHECK(ASSET_FILE::read_file(path.c_str(), MEMORY::heap_allocator(), &size) == nullptr);
-    CHECK(size == 7);
     CHECK(ASSET_FILE::read_prelude(path.c_str(), MEMORY::heap_allocator(), &size) == nullptr);
     CHECK(size == 7);
     const u8 byte = 0;

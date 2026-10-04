@@ -107,13 +107,6 @@ const ChunkEntry* AssetView::find_chunk(const u32 tag, const ChunkEntry* after) 
     return nullptr;
 }
 
-const u8* AssetView::chunk_data(const ChunkEntry& chunk) const {
-    if (this->header == nullptr || chunk.offset + chunk.size > this->size) {
-        return nullptr;
-    }
-    return this->data + chunk.offset;
-}
-
 usz AssetView::find_dependency(const AssetGuid& guid) const {
     const usz count = this->dependency_count();
     for (usz i = 0; i < count; ++i) {
@@ -259,94 +252,7 @@ void AssetWriter::free() {
 
 // --- Files ----------------------------------------------------------------------------
 
-namespace {
-
-// Reads exactly `size` bytes from `file` into a fresh buffer. nullptr on a
-// short read.
-u8* read_exact(FILE* file, const usz size, BaseAllocator* allocator, const char* path) {
-    u8* buffer = static_cast<u8*>(allocator->allocate(size, ASSET_FILE::PAYLOAD_ALIGNMENT));
-    if (buffer == nullptr) {
-        fprintf(stderr, "[asset] error: out of memory reading %s (%llu bytes)\n", path, static_cast<unsigned long long>(size));
-        return nullptr;
-    }
-    if (size > 0 && fread(buffer, 1, size, file) != size) {
-        fprintf(stderr, "[asset] error: short read on %s\n", path);
-        allocator->free(buffer);
-        return nullptr;
-    }
-    return buffer;
-}
-
-} // namespace
-
-u8* ASSET_FILE::read_file(const char* path, BaseAllocator* allocator, usz* out_size) {
-    FILE* file = fopen(path, "rb");
-    if (file == nullptr) {
-        fprintf(stderr, "[asset] error: cannot open %s\n", path);
-        return nullptr;
-    }
-
-    u8* buffer = nullptr;
-    if (fseek(file, 0, SEEK_END) == 0) {
-        const long end = ftell(file);
-        if (end >= 0 && fseek(file, 0, SEEK_SET) == 0) {
-            const usz size = static_cast<usz>(end);
-            buffer = read_exact(file, size, allocator, path);
-            if (buffer != nullptr && out_size != nullptr) {
-                *out_size = size;
-            }
-        }
-    }
-    if (buffer == nullptr && ferror(file)) {
-        fprintf(stderr, "[asset] error: cannot read %s\n", path);
-    }
-    fclose(file);
-    return buffer;
-}
-
-u8* ASSET_FILE::read_prelude(const char* path, BaseAllocator* allocator, usz* out_size) {
-    FILE* file = fopen(path, "rb");
-    if (file == nullptr) {
-        fprintf(stderr, "[asset] error: cannot open %s\n", path);
-        return nullptr;
-    }
-
-    AssetHeader header;
-    u8* buffer = nullptr;
-    bool reported = false;
-    if (fread(&header, 1, sizeof(AssetHeader), file) == sizeof(AssetHeader) && header.magic == MAGIC &&
-        header.format_version == FORMAT_VERSION) {
-        // Never read past the declared file size: a file with no payloads can
-        // legitimately end before the alignment padding.
-        usz size = prelude_size(header.dependency_count, header.chunk_count);
-        if (size > header.file_size) {
-            size = header.file_size;
-        }
-        if (size >= sizeof(AssetHeader)) {
-            buffer = static_cast<u8*>(allocator->allocate(size, PAYLOAD_ALIGNMENT));
-            if (buffer == nullptr) {
-                fprintf(stderr, "[asset] error: out of memory reading %s (%llu bytes)\n", path, static_cast<unsigned long long>(size));
-                reported = true;
-            } else {
-                std::memcpy(buffer, &header, sizeof(AssetHeader));
-                const usz rest = size - sizeof(AssetHeader);
-                if (rest > 0 && fread(buffer + sizeof(AssetHeader), 1, rest, file) != rest) {
-                    fprintf(stderr, "[asset] error: short read on %s\n", path);
-                    reported = true;
-                    allocator->free(buffer);
-                    buffer = nullptr;
-                } else if (out_size != nullptr) {
-                    *out_size = size;
-                }
-            }
-        }
-    }
-    if (buffer == nullptr && !reported) {
-        fprintf(stderr, "[asset] error: %s does not start with a valid asset header\n", path);
-    }
-    fclose(file);
-    return buffer;
-}
+// read_prelude lives in asset_reader.cpp: it is an AssetReader open + read.
 
 bool ASSET_FILE::write_file(const char* path, const void* data, const usz size) {
     FILE* file = fopen(path, "wb");
