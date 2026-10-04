@@ -1,7 +1,7 @@
 #pragma once
 
 #include "engine/defines.hpp"
-#include "engine/project.hpp"
+#include "project.hpp"
 
 #include <imgui.h>
 

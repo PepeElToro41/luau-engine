@@ -1,4 +1,4 @@
-#include "engine/project.hpp"
+#include "project.hpp"
 
 bool Project::open(const std::filesystem::path& root) {
     return this->open(root, std::string());

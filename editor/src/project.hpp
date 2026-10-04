@@ -3,14 +3,17 @@
 #include <filesystem>
 #include <string>
 
-// The project the engine is working on: the directory that holds its assets,
-// scripts and settings. It is an engine singleton, so there is at most one and
-// everything that needs the project asks the engine for it:
+// The project the editor has open: the directory that holds its assets,
+// scripts and settings. This is editor-only: the standalone build ships its
+// assets packed and never browses a project directory. The editor registers
+// one as an engine singleton so every panel reaches the same object:
 //
-//     Project& project = engine.get_singleton<Project>();
-//     if (project.open("/path/to/game")) {
-//         std::filesystem::path assets = project.root / "assets";
+//     Project* project = engine.create_singleton<Project>();   // once, at startup
+//     if (project->open("/path/to/game")) {
+//         std::filesystem::path assets = project->root / "assets";
 //     }
+//     ...
+//     engine.get_singleton<Project>()                           // anywhere later
 //
 // Nothing is open until open() succeeds; a default-constructed Project is
 // closed. The type owns no resources, so there is nothing to release before

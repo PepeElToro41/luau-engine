@@ -5,7 +5,7 @@
 #include "engine/gpu/device.hpp"
 #include "engine/gpu/render_target.hpp"
 #include "engine/gpu/window_presenter.hpp"
-#include "engine/project.hpp"
+#include "project.hpp"
 #include "ui/asset_browser_panel.hpp"
 #include "ui/explorer_panel.hpp"
 #include "ui/output_panel.hpp"
