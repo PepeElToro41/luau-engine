@@ -1,66 +1,32 @@
 #include "engine/asset/asset_reader.hpp"
 
-#include <cstring>
-
-namespace {
-
-// fseek/ftell take a long, which is 32 bits on Windows; asset files can be
-// larger than that.
-bool seek_to(FILE* file, const u64 offset) {
-#if defined(_WIN32)
-    return _fseeki64(file, static_cast<long long>(offset), SEEK_SET) == 0;
-#else
-    return fseeko(file, static_cast<off_t>(offset), SEEK_SET) == 0;
-#endif
-}
-
-bool size_of(FILE* file, u64* out_size) {
-#if defined(_WIN32)
-    if (_fseeki64(file, 0, SEEK_END) != 0) {
-        return false;
-    }
-    const long long end = _ftelli64(file);
-#else
-    if (fseeko(file, 0, SEEK_END) != 0) {
-        return false;
-    }
-    const off_t end = ftello(file);
-#endif
-    if (end < 0) {
-        return false;
-    }
-    *out_size = static_cast<u64>(end);
-    return true;
-}
-
-} // namespace
 
 bool AssetReader::open(const char* path) {
     this->close();
 
-    FILE* file = fopen(path, "rb");
-    if (file == nullptr) {
+    File file;
+    if (!PLATFORM::file_open(&file, path, FILE_ACCESS_READ)) {
         fprintf(stderr, "[asset] error: cannot open %s\n", path);
         return false;
     }
 
     AssetHeader header;
-    if (fread(&header, 1, sizeof(AssetHeader), file) != sizeof(AssetHeader) || header.magic != ASSET_FILE::MAGIC ||
+    if (!PLATFORM::file_read(file, 0, &header, sizeof(AssetHeader)) || header.magic != ASSET_FILE::MAGIC ||
         header.format_version != ASSET_FILE::FORMAT_VERSION) {
         fprintf(stderr, "[asset] error: %s does not start with a valid asset header\n", path);
-        fclose(file);
+        PLATFORM::file_close(&file);
         return false;
     }
     u64 on_disk = 0;
-    if (!size_of(file, &on_disk)) {
+    if (!PLATFORM::file_size(file, &on_disk)) {
         fprintf(stderr, "[asset] error: cannot read %s\n", path);
-        fclose(file);
+        PLATFORM::file_close(&file);
         return false;
     }
     if (on_disk != header.file_size) {
         fprintf(stderr, "[asset] error: %s is %llu bytes but its header says %llu\n", path, static_cast<unsigned long long>(on_disk),
                 static_cast<unsigned long long>(header.file_size));
-        fclose(file);
+        PLATFORM::file_close(&file);
         return false;
     }
 
@@ -70,15 +36,12 @@ bool AssetReader::open(const char* path) {
 }
 
 void AssetReader::close() {
-    if (this->file != nullptr) {
-        fclose(this->file);
-        this->file = nullptr;
-    }
+    PLATFORM::file_close(&this->file);
     this->header = AssetHeader{};
 }
 
 bool AssetReader::matches(const AssetView& view) const {
-    if (this->file == nullptr || !view.is_parsed()) {
+    if (!this->file.is_open() || !view.is_parsed()) {
         return false;
     }
     const AssetHeader& other = *view.header;
@@ -86,7 +49,7 @@ bool AssetReader::matches(const AssetView& view) const {
 }
 
 u8* AssetReader::read_prelude(BaseAllocator* allocator, usz* out_size) {
-    if (this->file == nullptr) {
+    if (!this->file.is_open()) {
         fprintf(stderr, "[asset] error: read_prelude on a closed reader\n");
         return nullptr;
     }
@@ -101,7 +64,7 @@ u8* AssetReader::read_prelude(BaseAllocator* allocator, usz* out_size) {
         fprintf(stderr, "[asset] error: out of memory reading a prelude (%llu bytes)\n", static_cast<unsigned long long>(size));
         return nullptr;
     }
-    if (!seek_to(this->file, 0) || fread(buffer, 1, size, this->file) != size) {
+    if (!PLATFORM::file_read(this->file, 0, buffer, size)) {
         fprintf(stderr, "[asset] error: short read on a prelude\n");
         allocator->free(buffer);
         return nullptr;
@@ -113,7 +76,7 @@ u8* AssetReader::read_prelude(BaseAllocator* allocator, usz* out_size) {
 }
 
 bool AssetReader::read_chunk(const ChunkEntry& chunk, void* out) {
-    if (this->file == nullptr) {
+    if (!this->file.is_open()) {
         fprintf(stderr, "[asset] error: read_chunk on a closed reader\n");
         return false;
     }
@@ -126,7 +89,7 @@ bool AssetReader::read_chunk(const ChunkEntry& chunk, void* out) {
     if (chunk.size == 0) {
         return true;
     }
-    if (!seek_to(this->file, chunk.offset) || fread(out, 1, chunk.size, this->file) != chunk.size) {
+    if (!PLATFORM::file_read(this->file, chunk.offset, out, chunk.size)) {
         fprintf(stderr, "[asset] error: short read on chunk at %llu (+%llu)\n", static_cast<unsigned long long>(chunk.offset),
                 static_cast<unsigned long long>(chunk.size));
         return false;

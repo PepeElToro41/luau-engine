@@ -3,8 +3,7 @@
 #include "engine/asset/asset_file.hpp"
 #include "engine/defines.hpp"
 #include "engine/memory/base_allocator.hpp"
-
-#include <cstdio>
+#include "engine/platform/file.hpp"
 
 // Reads chunk payloads out of a .lunaasset file on demand. An AssetView
 // (from ASSET_FILE::read_prelude, typically scanned long before anything is
@@ -24,8 +23,8 @@
 // open() reads the header back and checks it against the file on disk, and
 // matches() checks it against the view, so a view from a stale scan (the
 // file was re-imported since) is caught before any chunk is trusted; the
-// caller then re-reads the prelude. The reader holds a FILE* and nothing
-// else; close() when done.
+// caller then re-reads the prelude. The reader holds an open platform File
+// and nothing else; close() when done.
 struct AssetReader {
     AssetReader() = default;
     AssetReader(const AssetReader&) = delete;
@@ -39,7 +38,7 @@ struct AssetReader {
     // stderr) otherwise; the reader stays closed.
     bool open(const char* path);
     void close();
-    bool is_open() const { return this->file != nullptr; }
+    bool is_open() const { return this->file.is_open(); }
 
     // Whether the open file is the one `view` describes: same guid, size and
     // content hash. A view that fails this was taken before the file changed.
@@ -69,5 +68,5 @@ struct AssetReader {
     u8* read_chunk(const AssetView& view, u32 tag, BaseAllocator* allocator, const ChunkEntry** out_chunk = nullptr);
 
 private:
-    FILE* file = nullptr;
+    File file;
 };

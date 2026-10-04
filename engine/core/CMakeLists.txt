@@ -1,6 +1,8 @@
-# engine_core: defines, memory, templates, utils and the ECS. This module has no
-# external dependencies on purpose: tests and benchmarks link it alone, so it
-# must stay free of graphics / platform code.
+# engine_core: defines, memory, templates, utils, the ECS, assets and the
+# platform layer. This module has no external dependencies on purpose: tests
+# and benchmarks link it alone, so it must stay free of graphics code. OS calls
+# go through src/platform/<os>/, every file of which is guarded by its platform
+# macro so the glob below can compile them all everywhere.
 
 file(GLOB_RECURSE CORE_SOURCES CONFIGURE_DEPENDS
     ${CMAKE_CURRENT_SOURCE_DIR}/src/*.cpp

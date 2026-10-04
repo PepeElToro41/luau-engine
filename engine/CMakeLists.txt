@@ -1,6 +1,6 @@
 # The engine is split into modules, each a static library:
 #
-#   core      defines, memory, templates, utils, ecs. No external dependencies,
+#   core      defines, memory, templates, utils, ecs, asset, platform. No external dependencies,
 #             so tests and benchmarks link only this.
 #   graphics  window + renderer backends. Owns the SDL3 / volk / shaderc / imgui
 #             dependencies.

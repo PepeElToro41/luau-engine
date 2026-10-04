@@ -134,7 +134,7 @@ void AssetBrowserPanel::draw_breadcrumbs(const Project& project) {
     ImGui::SameLine();
 
     // One button per path component; clicking one jumps to that folder.
-    if (ImGui::SmallButton(project.name.c_str())) {
+    if (ImGui::Button(project.name.c_str())) {
         this->navigate({});
     }
     if (ImGui::IsItemHovered()) {
@@ -148,7 +148,7 @@ void AssetBrowserPanel::draw_breadcrumbs(const Project& project) {
         ImGui::SameLine(0.0f, 0.0f);
         const std::string label = component.string();
         ImGui::PushID(label.c_str());
-        if (ImGui::SmallButton(label.c_str())) {
+        if (ImGui::Button(label.c_str())) {
             this->navigate(walked);
             ImGui::PopID();
             break;

@@ -1,6 +1,7 @@
 #include "engine/asset/asset_file.hpp"
 
 #include "engine/memory/heap_allocator.hpp"
+#include "engine/platform/file.hpp"
 
 #include <cstdint>
 #include <cstdio>
@@ -255,14 +256,15 @@ void AssetWriter::free() {
 // read_prelude lives in asset_reader.cpp: it is an AssetReader open + read.
 
 bool ASSET_FILE::write_file(const char* path, const void* data, const usz size) {
-    FILE* file = fopen(path, "wb");
-    if (file == nullptr) {
+    File file;
+    if (!PLATFORM::file_open(&file, path, FILE_ACCESS_WRITE)) {
         fprintf(stderr, "[asset] error: cannot create %s\n", path);
         return false;
     }
-    const bool ok = size == 0 || fwrite(data, 1, size, file) == size;
+    const bool ok = PLATFORM::file_write(file, 0, data, size);
     if (!ok) {
         fprintf(stderr, "[asset] error: short write on %s\n", path);
     }
-    return fclose(file) == 0 && ok;
+    PLATFORM::file_close(&file);
+    return ok;
 }
