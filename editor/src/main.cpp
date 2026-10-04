@@ -1,9 +1,11 @@
-#include "engine/engine.h"
+#include "app.hpp"
 
 int main() {
-    Engine app;
-    app.init();
-    app.run();
+    App app;
+    const bool ok = app.init();
+    if (ok) {
+        app.run();
+    }
     app.shutdown();
-    return 0;
+    return ok ? 0 : 1;
 }

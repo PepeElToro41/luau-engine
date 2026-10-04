@@ -7,9 +7,9 @@ C++20 game engine built with CMake and Vulkan.
 The engine lives in `engine/` as three static libraries plus an umbrella target:
 
 - `engine/core` -> `LuauEngine::core`: `defines.hpp`, `memory/`, `templates/`, `utils/`, `ecs/`. No external dependencies. Keep it that way: tests and benchmarks link only this.
-- `engine/graphics` -> `LuauEngine::graphics`: `display_window`, `backends/`. Owns SDL3, volk, shaderc and imgui.
-- `engine/runtime` -> `LuauEngine::runtime`: the `Engine` app object (later physics etc). Links core and graphics.
-- `LuauEngine::engine`: INTERFACE target linking all three. `standalone/` and `editor/` link this.
+- `engine/graphics` -> `LuauEngine::graphics`: `display_window`, `gpu/`. Owns SDL3, volk, shaderc and imgui. `gpu/` is layered: `GpuDevice` (instance, device, queues, surface) -> `Swapchain` (images, acquire/present) -> `SwapchainTargets` / `OffscreenTarget` (render pass + framebuffer, both expose a `RenderTarget`) -> `FrameScheduler` (frames in flight, fences, command buffers) -> `WindowPresenter` (bundles the previous three; `begin(FrameContext&)` / `end()`).
+- `engine/runtime` -> `LuauEngine::runtime`: the `Engine` object (simulation + renderer, later physics etc). It owns no window or swapchain: the app calls `update(dt)` and `render(const FrameContext&)`, and the `FrameContext` says which command buffer and `RenderTarget` to draw into. Links core and graphics.
+- `LuauEngine::engine`: INTERFACE target linking all three. `standalone/` and `editor/` link this. Each has an `App` (`src/app.hpp`) that owns `DisplayWindow`, `GpuDevice`, `WindowPresenter` and `Engine` and runs the loop. Standalone renders the engine straight into the swapchain; the editor renders it into per-slot `OffscreenTarget`s shown in an ImGui Viewport panel and draws only the UI into the swapchain. Editor panels live in `editor/src/ui/` (`output_panel`, `explorer_panel`, `dock_layout` for the default docking, `panels.hpp` for the window titles); the App draws Viewport and Stats itself.
 
 Each module has `include/engine/...` (public) and `src/...`; sources are globbed, so new files need no CMake edit. Includes always use the `engine/` prefix regardless of module.
 

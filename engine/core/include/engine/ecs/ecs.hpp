@@ -52,21 +52,20 @@ constexpr Id MAX_COMPONENT_ID = 256;
 
 constexpr Id WILDCARD         = MAX_COMPONENT_ID + 1;  // matches any id: (R, *), (*, T)
 constexpr Id ANY              = MAX_COMPONENT_ID + 2;  // like WILDCARD but matches at most once per entity
-constexpr Id THIS             = MAX_COMPONENT_ID + 3;  // query variable for the matched entity
-constexpr Id COMPONENT        = MAX_COMPONENT_ID + 4;  // component holding a TypeInfo
-constexpr Id EXCLUSIVE        = MAX_COMPONENT_ID + 5;  // trait: an entity holds at most one (R, *)
-constexpr Id TRAVERSABLE      = MAX_COMPONENT_ID + 6;  // trait: queries may walk up through R
+constexpr Id COMPONENT        = MAX_COMPONENT_ID + 3;  // component holding a TypeInfo
+constexpr Id EXCLUSIVE        = MAX_COMPONENT_ID + 4;  // trait: an entity holds at most one (R, *)
+constexpr Id TRAVERSABLE      = MAX_COMPONENT_ID + 5;  // trait: queries may walk up through R
 // Deletion policies (see entity_cleanup.hpp). Both trait relations are
 // exclusive; without one the policy is REMOVE. Every built-in id, component
 // ids included, carries (ON_DELETE, PANIC) so it cannot be deleted.
-constexpr Id ON_DELETE        = MAX_COMPONENT_ID + 7;  // (ON_DELETE, policy) on id E: what happens to holders of E / (E, *) when E is deleted
-constexpr Id ON_DELETE_TARGET = MAX_COMPONENT_ID + 8;  // (ON_DELETE_TARGET, policy) on relation R: what happens to holders of (R, T) when T is deleted
-constexpr Id REMOVE           = MAX_COMPONENT_ID + 9;  // policy: remove the id from its holders (the default)
-constexpr Id DELETE           = MAX_COMPONENT_ID + 10; // policy: delete the holders too
-constexpr Id PANIC            = MAX_COMPONENT_ID + 11; // policy: the deletion is an error and does not happen
-constexpr Id CHILD_OF         = MAX_COMPONENT_ID + 12; // (CHILD_OF, parent); exclusive, traversable, (ON_DELETE_TARGET, DELETE)
-constexpr Id IS_A             = MAX_COMPONENT_ID + 13; // (IS_A, base); traversable
-constexpr Id REST             = IS_A + 1;              // last built-in id; user entities start after it
+constexpr Id ON_DELETE        = MAX_COMPONENT_ID + 6;  // (ON_DELETE, policy) on id E: what happens to holders of E / (E, *) when E is deleted
+constexpr Id ON_DELETE_TARGET = MAX_COMPONENT_ID + 7;  // (ON_DELETE_TARGET, policy) on relation R: what happens to holders of (R, T) when T is deleted
+constexpr Id REMOVE           = MAX_COMPONENT_ID + 8;  // policy: remove the id from its holders (the default)
+constexpr Id DELETE           = MAX_COMPONENT_ID + 9;  // policy: delete the holders too
+constexpr Id PANIC            = MAX_COMPONENT_ID + 10; // policy: the deletion is an error and does not happen
+constexpr Id CHILD_OF         = MAX_COMPONENT_ID + 11; // (CHILD_OF, parent); exclusive, traversable, (ON_DELETE_TARGET, DELETE)
+constexpr Id IS_A             = MAX_COMPONENT_ID + 12; // (IS_A, base); traversable
+constexpr Id REST             = MAX_COMPONENT_ID + 13; // last built-in id; user entities start after it
 
 // --- Utilities ---------------------------------------------------------------
 

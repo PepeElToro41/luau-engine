@@ -1,8 +1,11 @@
 #include "engine/ecs/world.hpp"
 
+#include "engine/ecs/archetype_listener.hpp"
 #include "engine/ecs/ecs.hpp"
 #include "engine/ecs/entity.hpp"
 #include "engine/ecs/hooks.hpp"
+#include "engine/ecs/monitor.hpp"
+#include "engine/ecs/observer.hpp"
 #include "engine/memory/heap_allocator.hpp"
 #include "engine/memory/temporal_allocator.hpp"
 
@@ -17,7 +20,11 @@ World::World(BaseAllocator* allocator) :
     archetype_index(allocator),
     component_index(allocator),
     type_index(allocator),
-    type_info_index(allocator)
+    type_info_index(allocator),
+    monitors(allocator),
+    observers(allocator),
+    archetype_listeners(allocator),
+    archetype_listener_keys(allocator)
 {}
 
 World::World() : World(MEMORY::heap_allocator()) {}
@@ -222,6 +229,22 @@ bool World::unhook(const Id id, const HookId hook) {
     return true;
 }
 
+ObserverId World::monitor(const QueryTerm* terms, const usz term_count, const MonitorCallback callback, void* user_data) {
+    return MONITOR::create(this, terms, term_count, callback, user_data);
+}
+
+bool World::unmonitor(const ObserverId id) {
+    return MONITOR::destroy(this, id);
+}
+
+ObserverId World::observe(const QueryTerm* terms, const usz term_count, const ObserverCallback callback, void* user_data) {
+    return OBSERVER::create(this, terms, term_count, callback, user_data);
+}
+
+bool World::unobserve(const ObserverId id) {
+    return OBSERVER::destroy(this, id);
+}
+
 void World::fire_shutdown_hooks() {
     if (this->hook_counts[HOOK_REMOVED] == 0 || this->root_archetype == nullptr) {
         return;
@@ -295,4 +318,21 @@ void World::free() {
     for (u32 kind = 0; kind < HOOK_KIND_COUNT; kind++) {
         this->hook_counts[kind] = 0;
     }
+
+    // The archetype lists holding monitor and observer ids went with the
+    // archetypes.
+    for (auto& entry : this->monitors) {
+        entry.value.matcher.free();
+    }
+    this->monitors.free();
+    for (auto& entry : this->observers) {
+        entry.value.matcher.free();
+        this->allocator->free(entry.value.terms);
+    }
+    this->observers.free();
+    this->next_observer_id = 1;
+
+    // Nothing fires for the archetypes that just went away; whoever
+    // registered a listener is being torn down with the world.
+    ARCHETYPE_LISTENER::free_all(this);
 }

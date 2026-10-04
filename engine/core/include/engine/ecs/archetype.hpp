@@ -1,6 +1,7 @@
 #pragma once
 
 #include "engine/defines.hpp"
+#include "engine/templates/dynamic_array.hpp"
 #include "engine/templates/hash_map.hpp"
 #include "engine/ecs/archetype_signature.hpp"
 #include "engine/ecs/ecs_types.hpp"
@@ -11,6 +12,10 @@
 
 struct World;
 struct EntityRecord;
+
+// Id of a monitor (see monitor.hpp) or an observer (see observer.hpp); both
+// are issued from the same counter and 0 is never issued.
+using ObserverId = u64;
 
 // The set of component ids that defines an archetype. `ids` is a view over an
 // array that must be kept sorted ascending: equality relies on it so the
@@ -94,6 +99,37 @@ struct ArchetypeData {
     usz entity_capacity;
 };
 
+// One id of an archetype's type that a term of an observer's query matches
+// (see observer.hpp): the observer hears about that id when it is added to
+// or removed from an entity of the archetype, and, when `output` is set,
+// when its data is written.
+struct ArchetypeObserverTerm {
+    Id id = 0;
+    ObserverId observer = 0;
+    // The id matches an output term of the query (one in the template list
+    // of World::query<Ts...>()), so set() / modified() on it fire CHANGED.
+    bool output = false;
+};
+
+// Which monitors (see monitor.hpp) and observers (see observer.hpp) an
+// archetype's entities are members of. `monitors` and `observers` hold the
+// id of every monitor / observer whose query the archetype matches, sorted
+// ascending, so the lists of two archetypes can be diffed in a single merge
+// walk when an entity moves between them. `observer_terms` has one entry per
+// (id of the type, observer in `observers`) where the id matches a term of
+// the observer's query, sorted by id then observer, so the observers that
+// care about a given id are one lower bound away. MONITOR:: / OBSERVER::
+// create and destroy keep the lists current, and each monitor's / observer's
+// archetype listener (see archetype_listener.hpp) fills them in for the
+// archetypes created afterwards. The root archetype is never in any list.
+struct ArchetypeObservers {
+    DynamicArray<ObserverId> monitors;
+    DynamicArray<ObserverId> observers;
+    DynamicArray<ArchetypeObserverTerm> observer_terms;
+
+    explicit ArchetypeObservers(BaseAllocator* allocator) : monitors(allocator), observers(allocator), observer_terms(allocator) {}
+};
+
 // A table of entities that all share the same ArchetypeType.
 struct Archetype {
     World* world;
@@ -111,6 +147,7 @@ struct Archetype {
     // ArchetypeMatcher so most archetypes are accepted or rejected without
     // scanning the ids.
     ArchetypeSignature signature { };
+    ArchetypeObservers observers;
 
     HashMap<Id, Archetype*> forward_edges;
     HashMap<Id, Archetype*> backwards_edges;
@@ -173,20 +210,7 @@ struct Archetype {
     static Archetype* create_archetype(World* world, ArchetypeType archetype_type);
     static Archetype* ensure_archetype(World* world, ArchetypeType archetype_type);
 
-    // Tears the archetype down: unlinks every edge into and out of it, removes
-    // it from each component record and from the world's archetype index,
-    // releases its storage and type, and frees its slot in the world's
-    // archetype list. The archetype must be empty (entity_count == 0) and its
-    // slot must still be alive under archetype_id; otherwise an error is
-    // printed and nothing is touched. The root goes through the same path:
-    // it has no rows or columns, so only its edges, maps and type are released.
     void destroy();
-
-    // Releases only what this archetype owns: row storage, column and edge
-    // maps, and the cloned type. Nothing else is told, so neighbouring
-    // archetypes, component records and the world index keep dangling
-    // pointers to it. destroy() calls this after unlinking; World::free()
-    // calls it directly on every archetype since the whole graph goes away.
     void free();
 
 private:

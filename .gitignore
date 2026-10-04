@@ -5,3 +5,4 @@ out/
 compile_commands.json
 cmake-build-*/
 .idea/
+imgui.ini

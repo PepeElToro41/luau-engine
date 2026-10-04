@@ -6,6 +6,8 @@
 #include "engine/ecs/entity_cleanup.hpp"
 #include "engine/ecs/entity_index.hpp"
 #include "engine/ecs/hooks.hpp"
+#include "engine/ecs/monitor.hpp"
+#include "engine/ecs/observer.hpp"
 #include "engine/ecs/world.hpp"
 
 #include <cstdio>
@@ -22,17 +24,6 @@ namespace {
 
 bool is_root(const World* world, const Archetype* archetype) {
     return archetype == world->root_archetype;
-}
-
-// Alive record for `entity`, or nullptr. Entities created through create() or
-// make_alive() always have an archetype; one registered straight through
-// EntityIndex::make_alive has none and is treated as not usable here.
-EntityRecord* alive_record(const World* world, const EntityId entity) {
-    EntityRecord* record = world->entity_index.get_record_alive(entity);
-    if (record == nullptr || record->archetype == nullptr) {
-        return nullptr;
-    }
-    return record;
 }
 
 // Moves `entity` from `source` to `destination`, where either end may be the
@@ -158,13 +149,15 @@ bool delete_entity(World* world, const EntityId entity) {
     if (record->archetype != nullptr && !is_root(world, record->archetype)) {
         Archetype* archetype = record->archetype;
         // Removed hooks run while the row is still there, so callbacks can
-        // read the data that is about to go away.
+        // read the data that is about to go away; then the entity leaves
+        // every monitor its archetype is in.
         if (world->hook_counts[HOOK_REMOVED] != 0) {
             const ArchetypeType& type = archetype->type;
             for (usz i = 0; i < type.id_count; i++) {
                 HOOKS::fire(world, HOOK_REMOVED, entity, type.ids[i]);
             }
         }
+        MONITOR::fire_leave(world, entity, archetype, nullptr);
         archetype->delete_entity(world, entity, record);
     }
     // Clears the record's archetype, row and flags as well.
@@ -173,19 +166,21 @@ bool delete_entity(World* world, const EntityId entity) {
 }
 
 void clear(World* world, const EntityId entity) {
-    EntityRecord* record = alive_record(world, entity);
+    EntityRecord* record = world->entity_index.get_record_alive(entity);
     if (record == nullptr || is_root(world, record->archetype)) {
         return;
     }
 
     Archetype* source = record->archetype;
-    // Same order as delete_entity: hooks see the row, then the row goes.
+    // Same order as delete_entity: hooks see the row, then the row goes. The
+    // root is in no monitor, so this is a leave from every one of them.
     if (world->hook_counts[HOOK_REMOVED] != 0) {
         const ArchetypeType& type = source->type;
         for (usz i = 0; i < type.id_count; i++) {
             HOOKS::fire(world, HOOK_REMOVED, entity, type.ids[i]);
         }
     }
+    MONITOR::fire_leave(world, entity, source, world->root_archetype);
     move(world, source, world->root_archetype, entity, record);
 }
 
@@ -196,7 +191,7 @@ bool is_alive(const World* world, const EntityId entity) {
 // --- Queries -----------------------------------------------------------------
 
 bool has(const World* world, const EntityId entity, const Id id) {
-    const EntityRecord* record = alive_record(world, entity);
+    const EntityRecord* record = world->entity_index.get_record_alive(entity);
     if (record == nullptr) {
         return false;
     }
@@ -205,7 +200,7 @@ bool has(const World* world, const EntityId entity, const Id id) {
 }
 
 void* get(const World* world, const EntityId entity, const Id id) {
-    const EntityRecord* record = alive_record(world, entity);
+    const EntityRecord* record = world->entity_index.get_record_alive(entity);
     if (record == nullptr) {
         return nullptr;
     }
@@ -221,19 +216,21 @@ void* get(const World* world, const EntityId entity, const Id id) {
 // --- Mutations ---------------------------------------------------------------
 
 // Moves the entity to the archetype with `id`, firing only the removed hook
-// for a pair an exclusive relation swaps out. Returns false if nothing
-// changed: the entity already has `id`, or the pair cannot be held. Callers
-// fire HOOK_ADDED themselves, so set() can write the data first.
-static bool add_id(World* world, const EntityId entity, EntityRecord* record, const Id id) {
+// for a pair an exclusive relation swaps out (reported through
+// `swapped_out`, 0 if none) and the monitors the move leaves. Returns false
+// if nothing changed: the entity already has `id`, or the pair cannot be
+// held. Callers fire the observers, the monitors entered and HOOK_ADDED
+// themselves, so set() can write the data first.
+static bool add_id(World* world, const EntityId entity, EntityRecord* record, const Id id, Id* swapped_out) {
     Archetype* source = record->archetype;
+    *swapped_out = 0;
     if (source->contains(id)) {
         return false;
     }
 
     Archetype* destination = nullptr;
-    Id swapped_out = 0;
     if (ECS::IS_PAIR(id)) {
-        destination = pair_destination(world, source, id, &swapped_out);
+        destination = pair_destination(world, source, id, swapped_out);
         if (destination == nullptr) {
             return false;
         }
@@ -241,8 +238,6 @@ static bool add_id(World* world, const EntityId entity, EntityRecord* record, co
         // Patterns are matched against, never held: storing one would break
         // every lookup on the type. Debug-only, like the rest of the caller
         // mistakes that cannot corrupt memory.
-        ENGINE_ASSERT(!ECS::IS_WILDCARD(id) && id != ECS::THIS,
-            "cannot add %llx to entity %llx: WILDCARD, ANY and THIS are query patterns, not ids an entity can hold", id, entity);
         // A plain id is a full entity id; a dead or stale one is refused
         // rather than stored (see entity.hpp).
         if (!world->entity_index.is_alive(id)) {
@@ -252,21 +247,25 @@ static bool add_id(World* world, const EntityId entity, EntityRecord* record, co
         destination = source->traverse_add(world, id);
     }
 
-    if (swapped_out != 0) {
+    if (*swapped_out != 0) {
         // The exclusive relation drops its old target; report that while the
         // old data is still readable.
-        HOOKS::fire(world, HOOK_REMOVED, entity, swapped_out);
+        HOOKS::fire(world, HOOK_REMOVED, entity, *swapped_out);
     }
+    // Gaining an id can leave a monitor too (one that excludes it).
+    MONITOR::fire_leave(world, entity, source, destination);
     move(world, source, destination, entity, record);
     return true;
 }
 
 void add(World* world, const EntityId entity, const Id id) {
-    EntityRecord* record = alive_record(world, entity);
+    EntityRecord* record = world->entity_index.get_record_alive(entity);
     if (record == nullptr) {
         return;
     }
-    if (!add_id(world, entity, record, id)) {
+    Archetype* source = record->archetype;
+    Id swapped_out = 0;
+    if (!add_id(world, entity, record, id, &swapped_out)) {
         return;
     }
 
@@ -275,17 +274,19 @@ void add(World* world, const EntityId entity, const Id id) {
     // before (often a previous entity's data), so zero them rather than let
     // a hook or a get() read garbage. set() is the way to add a component.
     const ArchetypeColumn* column = record->archetype->get_column(id);
-    if (column != nullptr && column->type_info.length != 0) {
+    if (column != nullptr && column->data) {
         // TODO: route through the engine log once there is one; stdout for now.
         printf("[ecs] warning: add() used for id %llx on entity %llx, which carries %llu bytes of data; use set() for components. The value was zeroed\n",
             id, entity, column->type_info.length);
         std::memset(column->read(record->archetype_row), 0, column->type_info.length);
     }
+    OBSERVER::fire_moved(world, entity, source, record->archetype, id, swapped_out);
+    MONITOR::fire_enter(world, entity, source, record->archetype);
     HOOKS::fire(world, HOOK_ADDED, entity, id);
 }
 
 void remove(World* world, const EntityId entity, const Id id) {
-    EntityRecord* record = alive_record(world, entity);
+    EntityRecord* record = world->entity_index.get_record_alive(entity);
     if (record == nullptr) {
         return;
     }
@@ -298,34 +299,33 @@ void remove(World* world, const EntityId entity, const Id id) {
     if (!ECS::IS_PAIR(id)) {
         warn_if_trait_changes_used_id(world, entity, id, "removing");
     }
-    // Removed hooks run before the move so the data is still readable.
+
     HOOKS::fire(world, HOOK_REMOVED, entity, id);
+    
     // Removing the last id resolves to the root; move() handles that end.
     Archetype* destination = source->traverse_remove(world, id);
+    
+    MONITOR::fire_leave(world, entity, source, destination);
     move(world, source, destination, entity, record);
+    OBSERVER::fire_moved(world, entity, source, destination, 0, id);
+    MONITOR::fire_enter(world, entity, source, destination);
 }
 
 void set(World* world, const EntityId entity, const Id id, const void* data) {
-    EntityRecord* record = alive_record(world, entity);
+    EntityRecord* record = world->entity_index.get_record_alive(entity);
     if (record == nullptr) {
         return;
     }
 
-    // contains() and get_column() also answer for wildcards, aliasing the
-    // first matching (R, T) column. Writing through that alias would be
-    // ambiguous, so wildcard pairs are refused outright.
     if (ECS::IS_PAIR(id) && ECS::PAIR_HAS_WILDCARD(id)) {
         return;
     }
 
-    // Records live in fixed pages, so `record` stays valid across the move;
-    // add_id() refreshes its archetype and row (and leaves the root if
-    // needed). For an exclusive pair this may swap out the old target first.
-    // The added hook is held back until the data is written, so it sees the
-    // value rather than uninitialized memory.
+    Archetype* source = record->archetype;
     bool added = false;
+    Id swapped_out = 0;
     if (!record->archetype->contains(id)) {
-        added = add_id(world, entity, record, id);
+        added = add_id(world, entity, record, id, &swapped_out);
         if (!added) {
             // Refused (dead-ended pair); nothing to write into.
             return;
@@ -341,17 +341,20 @@ void set(World* world, const EntityId entity, const Id id, const void* data) {
     // changed when an existing id was overwritten. Tags store nothing, so an
     // existing tag reports no change.
     if (added) {
+        OBSERVER::fire_moved(world, entity, source, record->archetype, id, swapped_out);
+        MONITOR::fire_enter(world, entity, source, record->archetype);
         HOOKS::fire(world, HOOK_ADDED, entity, id);
-    } else if (column != nullptr && column->type_info.length != 0) {
+    } else if (column != nullptr && column->data) {
+        OBSERVER::fire_changed(world, entity, record->archetype, id);
         HOOKS::fire(world, HOOK_CHANGED, entity, id);
     }
 }
 
 void modified(World* world, const EntityId entity, const Id id) {
-    if (world->hook_counts[HOOK_CHANGED] == 0) {
+    if (world->hook_counts[HOOK_CHANGED] == 0 && world->observers.is_empty()) {
         return;
     }
-    const EntityRecord* record = alive_record(world, entity);
+    const EntityRecord* record = world->entity_index.get_record_alive(entity);
     if (record == nullptr) {
         return;
     }
@@ -364,6 +367,7 @@ void modified(World* world, const EntityId entity, const Id id) {
         // Not held (always the case in the root), or a tag.
         return;
     }
+    OBSERVER::fire_changed(world, entity, record->archetype, id);
     HOOKS::fire(world, HOOK_CHANGED, entity, id);
 }
 

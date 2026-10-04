@@ -1,12 +1,16 @@
 #pragma once
 
 #include "engine/ecs/archetype.hpp"
+#include "engine/ecs/archetype_listener.hpp"
 #include "engine/ecs/component_record.hpp"
 #include "engine/ecs/ecs.hpp"
 #include "engine/ecs/ecs_types.hpp"
 #include "engine/ecs/entity.hpp"
 #include "engine/ecs/entity_index.hpp"
 #include "engine/ecs/hooks.hpp"
+#include "engine/ecs/monitor.hpp"
+#include "engine/ecs/observer.hpp"
+#include "engine/ecs/query_term.hpp"
 #include "engine/memory/base_allocator.hpp"
 #include "engine/memory/heap_allocator.hpp"
 #include "engine/templates/hash_map.hpp"
@@ -14,6 +18,10 @@
 #include "engine/utils/type_id.hpp"
 
 #include <type_traits>
+
+template <typename... Ts>
+struct Query;
+struct QueryBuilder;
 
 // Owns everything an ECS instance needs: the entity index, every archetype
 // and component record, and the lookup tables that find them by type or id.
@@ -60,6 +68,20 @@ struct World {
     HookList* any_pair_hooks = nullptr;
     u32 hook_counts[HOOK_KIND_COUNT] = {};
     HookId next_hook_id = 1;
+
+    // Every monitor (see monitor.hpp) and observer (see observer.hpp) by id,
+    // issued from one counter. The archetypes a monitor / observer matches
+    // carry its id in Archetype::observers, which is what fires it.
+    HashMap<ObserverId, Monitor> monitors;
+    HashMap<ObserverId, Observer> observers;
+    ObserverId next_observer_id = 1;
+
+    // Archetype lifecycle listeners (see archetype_listener.hpp) by the key
+    // they listen under, plus listener id -> key so remove() and fire() can
+    // find a listener by id alone.
+    HashMap<Id, ArchetypeListenerList*> archetype_listeners;
+    HashMap<ArchetypeListenerId, Id> archetype_listener_keys;
+    ArchetypeListenerId next_archetype_listener_id = 1;
 
     World();
     explicit World(BaseAllocator* allocator);
@@ -262,6 +284,39 @@ struct World {
     // Removes the hook registered under `id` (the same id or pattern given at
     // registration). False if no such hook.
     bool unhook(Id id, HookId hook);
+
+    // --- Queries -------------------------------------------------------------
+    // The trivial query (see query.hpp): the types listed are the outputs,
+    // with() / without() on the returned handle add constraints, and the
+    // handle iterates (each / iter / begin), counts and monitors. `flags`
+    // are QueryFlags.
+    template <typename... Ts>
+    Query<Ts...> query(u32 flags = QUERY_NONE);
+    // A builder for an engine-evaluated query (see query_builder.hpp):
+    // optionals, variables, traversal, other sources. The builder owns its
+    // term list; free() it or build() it.
+    QueryBuilder query_build(u32 flags = QUERY_NONE);
+
+    // --- Monitors ------------------------------------------------------------
+    // Registers `callback` to run when an entity enters or leaves the result
+    // set of the query `terms` describe (see monitor.hpp for the events and
+    // their timing). Query<Ts...>::monitor() is the usual way in. Returns an
+    // ObserverId for unmonitor(), or 0 with an error for a null callback or a
+    // term shape monitors do not support.
+    ObserverId monitor(const QueryTerm* terms, usz term_count, MonitorCallback callback, void* user_data = nullptr);
+    // Removes the monitor. False if no monitor has that id.
+    bool unmonitor(ObserverId id);
+
+    // --- Observers -----------------------------------------------------------
+    // Registers `callback` to run when an entity matching the query `terms`
+    // describe moves archetype because of one of the query's ids, or has the
+    // data of one of its output terms written (see observer.hpp for the
+    // events and their timing). Query<Ts...>::observe() is the usual way in.
+    // Returns an ObserverId for unobserve(), or 0 with an error for a null
+    // callback or a term shape observers do not support.
+    ObserverId observe(const QueryTerm* terms, usz term_count, ObserverCallback callback, void* user_data = nullptr);
+    // Removes the observer. False if no observer has that id.
+    bool unobserve(ObserverId id);
 
     // TypeInfo stored for `id` in type_info_index, or nullptr for tags and
     // unknown ids. Component data sizes normally come from the
@@ -558,3 +613,8 @@ template <typename T>
 HookId World::hook_changed(const HookCallback callback, void* user_data) {
     return this->hook_changed(this->id<T>(), callback, user_data);
 }
+
+// The query front ends need the World definition above and define
+// World::query / World::query_build; including world.hpp gives the full API.
+#include "engine/ecs/query.hpp"         // NOLINT(misc-include-cleaner)
+#include "engine/ecs/query_builder.hpp" // NOLINT(misc-include-cleaner)

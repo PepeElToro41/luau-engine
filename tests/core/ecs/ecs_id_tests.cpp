@@ -48,7 +48,6 @@ static_assert(ECS::PAIR(42, 7) != ECS::PAIR(7, 42), "pairs are ordered");
 
 static_assert(ECS::IS_WILDCARD(ECS::WILDCARD));
 static_assert(ECS::IS_WILDCARD(ECS::ANY));
-static_assert(!ECS::IS_WILDCARD(ECS::THIS));
 static_assert(!ECS::IS_WILDCARD(1));
 static_assert(!ECS::IS_WILDCARD(0));
 
@@ -57,7 +56,6 @@ static_assert(ECS::PAIR_HAS_WILDCARD(ECS::PAIR(ECS::WILDCARD, 42)));
 static_assert(ECS::PAIR_HAS_WILDCARD(ECS::PAIR(42, ECS::ANY)));
 static_assert(ECS::PAIR_HAS_WILDCARD(ECS::PAIR(ECS::ANY, ECS::ANY)));
 static_assert(!ECS::PAIR_HAS_WILDCARD(ECS::PAIR(42, 7)));
-static_assert(!ECS::PAIR_HAS_WILDCARD(ECS::PAIR(ECS::THIS, 7)), "THIS is a query variable, not a wildcard");
 
 // --- FOLD_ANY ----------------------------------------------------------------
 
@@ -78,7 +76,6 @@ static_assert(!ECS::ID_MATCHES(42, WITH_GENERATION_3), "plain ids compare with t
 static_assert(ECS::ID_MATCHES(ECS::WILDCARD, 42));
 static_assert(ECS::ID_MATCHES(ECS::ANY, 42));
 static_assert(ECS::ID_MATCHES(ECS::WILDCARD, ECS::PAIR(42, 7)), "a plain wildcard matches pairs too");
-static_assert(!ECS::ID_MATCHES(ECS::THIS, 42));
 static_assert(!ECS::ID_MATCHES(ECS::PAIR(42, ECS::WILDCARD), 42), "a pair pattern never matches a plain id");
 static_assert(!ECS::ID_MATCHES(ECS::PAIR(ECS::WILDCARD, ECS::WILDCARD), 42));
 static_assert(!ECS::ID_MATCHES(42, ECS::PAIR(42, 7)), "a plain pattern never matches a pair");
@@ -146,7 +143,6 @@ TEST_CASE("ecs/id: IS_PAIR is false for every plain id") {
 TEST_CASE("ecs/id: IS_WILDCARD accepts WILDCARD and ANY only") {
     CHECK(ECS::IS_WILDCARD(ECS::WILDCARD));
     CHECK(ECS::IS_WILDCARD(ECS::ANY));
-    CHECK_FALSE(ECS::IS_WILDCARD(ECS::THIS));
     CHECK_FALSE(ECS::IS_WILDCARD(ECS::COMPONENT));
     CHECK_FALSE(ECS::IS_WILDCARD(ECS::REST));
     CHECK_FALSE(ECS::IS_WILDCARD(ECS::MAX_COMPONENT_ID));
@@ -158,14 +154,12 @@ TEST_CASE("ecs/id: PAIR_HAS_WILDCARD looks at both sides") {
     CHECK(ECS::PAIR_HAS_WILDCARD(ECS::PAIR(ECS::ANY, 5)));
     CHECK(ECS::PAIR_HAS_WILDCARD(ECS::PAIR(5, ECS::ANY)));
     CHECK_FALSE(ECS::PAIR_HAS_WILDCARD(ECS::PAIR(ECS::CHILD_OF, 5)));
-    CHECK_FALSE(ECS::PAIR_HAS_WILDCARD(ECS::PAIR(ECS::CHILD_OF, ECS::THIS)));
 }
 
 TEST_CASE("ecs/id: FOLD_ANY rewrites ANY as WILDCARD") {
     SUBCASE("plain ids") {
         CHECK(ECS::FOLD_ANY(ECS::ANY) == ECS::WILDCARD);
         CHECK(ECS::FOLD_ANY(ECS::WILDCARD) == ECS::WILDCARD);
-        CHECK(ECS::FOLD_ANY(ECS::THIS) == ECS::THIS);
         CHECK(ECS::FOLD_ANY(WITH_GENERATION_3) == WITH_GENERATION_3);
     }
     SUBCASE("pairs") {
@@ -197,7 +191,6 @@ TEST_CASE("ecs/id: ID_MATCHES plain wildcards match any id") {
     CHECK(ECS::ID_MATCHES(ECS::ANY, ECS::REST));
     CHECK(ECS::ID_MATCHES(ECS::WILDCARD, ECS::PAIR(1, 2)));
     CHECK(ECS::ID_MATCHES(ECS::ANY, ECS::PAIR(1, 2)));
-    CHECK_FALSE(ECS::ID_MATCHES(ECS::THIS, 1));
 }
 
 TEST_CASE("ecs/id: ID_MATCHES pair patterns match side by side") {
@@ -236,7 +229,7 @@ TEST_CASE("ecs/id: ID_MATCHES pair patterns match side by side") {
 
 TEST_CASE("ecs/id: built-in ids are distinct and sit after the component range") {
     const Id builtins[] = {
-        ECS::WILDCARD, ECS::ANY, ECS::THIS, ECS::COMPONENT, ECS::EXCLUSIVE, ECS::TRAVERSABLE,
+        ECS::WILDCARD, ECS::ANY, ECS::COMPONENT, ECS::EXCLUSIVE, ECS::TRAVERSABLE,
         ECS::ON_DELETE, ECS::ON_DELETE_TARGET, ECS::REMOVE, ECS::DELETE, ECS::PANIC,
         ECS::CHILD_OF, ECS::IS_A, ECS::REST,
     };

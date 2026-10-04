@@ -1,5 +1,6 @@
 #include "engine/ecs/archetype.hpp"
 
+#include "engine/ecs/archetype_listener.hpp"
 #include "engine/ecs/ecs.hpp"
 #include "engine/ecs/world.hpp"
 #include "engine/memory/temporal_allocator.hpp"
@@ -77,8 +78,6 @@ void Archetype::ensure_capacity(const usz capacity) {
         new_capacity = capacity;
     }
     new_capacity = MATH::next_power_of_two(new_capacity);
-
-
     data.entities = this->allocator->reallocate_array(data.entities, new_capacity);
 
     for (usz i = 0; i < data.column_count; i++) {
@@ -199,6 +198,7 @@ Archetype::Archetype(World* world) :
     allocator(world->allocator),
     columns_index(world->allocator),
     columns_map(world->allocator),
+    observers(world->allocator),
     forward_edges(world->allocator),
     backwards_edges(world->allocator),
     swapped_edges(world->allocator),
@@ -277,6 +277,9 @@ Archetype* Archetype::create_archetype(World* world, const ArchetypeType archety
 
     // The key points at the archetype's own cloned ids, not the caller's.
     world->archetype_index.insert(new_archetype->type, new_archetype);
+    // Whoever keeps state per archetype (monitors, cached queries) learns
+    // about the new table now that it is complete.
+    ARCHETYPE_LISTENER::fire(world, new_archetype, ARCHETYPE_CREATED);
     return new_archetype;
 }
 
@@ -368,6 +371,9 @@ void Archetype::destroy() {
         return;
     }
 
+    // Listeners see the archetype whole, before any of it is unlinked.
+    ARCHETYPE_LISTENER::fire(world, this, ARCHETYPE_DESTROYED);
+
     // --- Edges ---------------------------------------------------------------
     // Forward edge id -> destination. A regular add edge has a matching
     // backwards edge on the destination; a swap edge instead has a reverse
@@ -458,6 +464,9 @@ void Archetype::free() {
 
     this->columns_index.free();
     this->columns_map.free();
+    this->observers.monitors.free();
+    this->observers.observers.free();
+    this->observers.observer_terms.free();
     this->forward_edges.free();
     this->backwards_edges.free();
     this->swapped_edges.free();
