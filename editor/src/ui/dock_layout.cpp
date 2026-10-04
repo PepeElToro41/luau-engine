@@ -28,6 +28,7 @@ void build_default(const ImGuiID dockspace) {
 
     ImGui::DockBuilderDockWindow(PANELS::EXPLORER, left);
     ImGui::DockBuilderDockWindow(PANELS::VIEWPORT, center);
+    ImGui::DockBuilderDockWindow(PANELS::ASSET_BROWSER, bottom);
     ImGui::DockBuilderDockWindow(PANELS::OUTPUT, bottom);
     ImGui::DockBuilderDockWindow(PANELS::STATS, bottom);
     ImGui::DockBuilderFinish(dockspace);

@@ -5,6 +5,8 @@
 #include "engine/gpu/device.hpp"
 #include "engine/gpu/render_target.hpp"
 #include "engine/gpu/window_presenter.hpp"
+#include "engine/project.hpp"
+#include "ui/asset_browser_panel.hpp"
 #include "ui/explorer_panel.hpp"
 #include "ui/output_panel.hpp"
 
@@ -16,9 +18,13 @@
 // the Viewport panel shows as a texture; the swapchain image itself only ever
 // receives the UI.
 //
-// Panels: Explorer (left), Viewport (center), Output and Stats (bottom), laid
-// out by DOCK_LAYOUT::build_default on first run and restorable from the View
-// menu. Each panel with state of its own lives in ui/.
+// Panels: Explorer (left), Viewport (center), Asset Browser, Output and Stats
+// (bottom), laid out by DOCK_LAYOUT::build_default on first run and restorable
+// from the View menu. Each panel with state of its own lives in ui/.
+//
+// The project being edited is the engine's Project singleton. There is no
+// open-project page yet, so init() opens TEST_PROJECT_DIR (the repository
+// root, from CMake) to have something for the Asset Browser to show.
 struct App {
     // Returns false if anything could not start. shutdown() is still safe to
     // call afterwards.
@@ -39,6 +45,10 @@ struct App {
     bool running = false;
 
 private:
+    // Creates the engine's Project singleton and opens the hardcoded test
+    // project into it. Replace with the open-project flow once it exists.
+    void open_test_project();
+
     bool init_ui();
     void shutdown_ui();
     bool init_viewport(VkExtent2D extent);
@@ -63,6 +73,7 @@ private:
 
     OutputPanel output;
     ExplorerPanel explorer;
+    AssetBrowserPanel asset_browser;
 
     // Formats. ImGui's colors are already display-encoded, so the swapchain
     // it draws into is _UNORM (no second encode). The engine renders linear
@@ -83,6 +94,7 @@ private:
     bool show_viewport = true;
     bool show_output = true;
     bool show_stats = true;
+    bool show_asset_browser = true;
     bool show_demo_window = false;
 
     f32 frame_dt = 0.0f;

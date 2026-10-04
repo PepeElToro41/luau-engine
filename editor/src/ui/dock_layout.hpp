@@ -14,7 +14,7 @@ ImGuiID submit_dockspace();
 //     | Explorer |       Viewport        |
 //     |          |                       |
 //     +----------+-----------------------+
-//     |         Output | Stats           |
+//     | Asset Browser | Output | Stats   |
 //     +----------------------------------+
 //
 // Call right after submit_dockspace() in the frame the layout should apply;

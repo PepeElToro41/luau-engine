@@ -43,10 +43,30 @@ bool App::init() {
     if (this->presenter.swapchain.format != UI_FORMAT) {
         this->output.warning("Surface does not offer the UNORM swapchain format; UI colors will look washed out");
     }
+    this->open_test_project();
     this->output.info("Editor ready");
 
     this->running = true;
     return true;
+}
+
+#ifndef EDITOR_TEST_PROJECT_DIR
+#define EDITOR_TEST_PROJECT_DIR "."
+#endif
+
+void App::open_test_project() {
+    // Placeholder until the editor has an open-project page: the path is the
+    // repository root, baked in by editor/CMakeLists.txt.
+    Project* project = this->engine.create_singleton<Project>();
+    if (project == nullptr) {
+        this->output.error("Project singleton already exists");
+        return;
+    }
+    if (project->open(EDITOR_TEST_PROJECT_DIR)) {
+        this->output.info("Project '%s' opened at %s", project->name.c_str(), project->root.string().c_str());
+    } else {
+        this->output.error("Test project directory not found: %s", EDITOR_TEST_PROJECT_DIR);
+    }
 }
 
 void App::run() {
@@ -244,6 +264,7 @@ void App::draw_editor() {
         this->show_viewport = true;
         this->show_output = true;
         this->show_stats = true;
+        this->show_asset_browser = true;
         DOCK_LAYOUT::build_default(dockspace);
     }
 
@@ -253,6 +274,9 @@ void App::draw_editor() {
     }
     if (this->show_viewport) {
         this->draw_viewport();
+    }
+    if (this->show_asset_browser) {
+        this->asset_browser.draw(&this->show_asset_browser, this->engine.get_singleton<Project>());
     }
     if (this->show_output) {
         this->output.draw(&this->show_output);
@@ -280,6 +304,7 @@ void App::draw_main_menu() {
     if (ImGui::BeginMenu("View")) {
         ImGui::MenuItem(PANELS::EXPLORER, nullptr, &this->show_explorer);
         ImGui::MenuItem(PANELS::VIEWPORT, nullptr, &this->show_viewport);
+        ImGui::MenuItem(PANELS::ASSET_BROWSER, nullptr, &this->show_asset_browser);
         ImGui::MenuItem(PANELS::OUTPUT, nullptr, &this->show_output);
         ImGui::MenuItem(PANELS::STATS, nullptr, &this->show_stats);
         ImGui::Separator();
