@@ -225,3 +225,105 @@ struct TextureAssetView {
     // Bytes of one decoded layer of `mip`.
     u64 layer_size(u32 mip) const;
 };
+
+// --- Writing ------------------------------------------------------------------
+//
+//     TextureSource source;  ... decoded mip 0, as the importer got it from the PNG ...
+//     TextureImportOptions options;
+//     options.srgb = true;
+//     TextureAssetWriter texture;
+//     if (texture.build(source, options) == TEXTURE_WRITE_OK) {
+//         texture.add_chunks(file); // the AssetWriter; NAME, IMPS, SRC are the importer's
+//     }
+//     texture.free();
+//
+// The writer turns decoded pixels into the TEX2 and PIXL payloads that
+// TextureAssetView::parse reads: it lays out the mip chain, filters the
+// mips, and fills the desc and mip table. It produces only those two chunks;
+// the container (GUID, dependencies, editor chunks) is the caller's.
+
+// What the editor asks of a texture import. Plain data so it can become the
+// IMPS payload once that layout is defined; nothing beyond the essentials yet.
+struct TextureImportOptions {
+    // Write the full mip chain (box filtered from mip 0, capped at
+    // TEXTURE_ASSET::MAX_MIPS) instead of mip 0 alone. Block compressed
+    // sources cannot be filtered and must set this false.
+    bool generate_mips = true;
+    // The pixels are color data: store them in the sRGB variant of the source
+    // format when there is one (RGBA8, BC1, BC3, BC7). Formats without one are
+    // written as given.
+    bool srgb = false;
+};
+
+// Mip 0 of a texture as decoded by an importer. The pixels are tightly
+// packed: `layers` layers back to back, each
+// TEXTURE_FORMAT::layer_size(format, width, height, depth) bytes, rows of
+// whole blocks with no padding. Block compressed sources hold the encoded
+// blocks. The same dimension rules as TextureDesc apply.
+struct TextureSource {
+    u32 width = 0;
+    u32 height = 0;
+    u32 depth = 1;
+    u32 layers = 1;
+    u32 format = TEXTURE_FORMAT_NONE;     // TextureFormat
+    u32 dimension = TEXTURE_DIMENSION_2D; // TextureDimension
+    const void* pixels = nullptr;
+    usz pixels_size = 0; // bytes at `pixels`; must be exactly layers * layer_size
+};
+
+enum TextureWriteError {
+    TEXTURE_WRITE_OK = 0,
+    TEXTURE_WRITE_BAD_SOURCE,           // zero extent, unknown format or broken dimension rules
+    TEXTURE_WRITE_BAD_SIZE,             // pixels_size is not layers * layer_size, or pixels is null
+    TEXTURE_WRITE_CANNOT_GENERATE_MIPS, // generate_mips with a block compressed format
+};
+
+namespace TEXTURE_ASSET {
+
+const char* write_error_name(TextureWriteError error);
+
+}
+
+namespace TEXTURE_FORMAT {
+
+// The sRGB counterpart of `format` (RGBA8_UNORM -> RGBA8_SRGB, ...), or
+// `format` itself when it has none or already is one.
+u32 srgb_variant(u32 format);
+
+} // namespace TEXTURE_FORMAT
+
+// Builds the TEX2 and PIXL payloads for one texture. build() fills `desc`,
+// `mips` and `pixels` from a source; add_chunks() appends them to an
+// AssetWriter at TEXTURE_ASSET::VERSION. The writer owns its buffers: call
+// free() when done, or build() again to reuse them.
+struct TextureAssetWriter {
+    TextureAssetWriter();
+    explicit TextureAssetWriter(BaseAllocator* allocator);
+
+    TextureAssetWriter(const TextureAssetWriter&) = delete;
+    TextureAssetWriter& operator=(const TextureAssetWriter&) = delete;
+
+    TextureDesc desc;              // what TEX2 starts with
+    DynamicArray<TextureMip> mips; // desc.mip_count entries, the rest of TEX2
+    DynamicArray<u8> pixels;       // the PIXL payload
+
+    // Lays out and fills the payloads. Mips beyond 0 are box filtered in
+    // linear space (sRGB formats are decoded and re-encoded); every mip starts
+    // at a MIP_ALIGNMENT boundary in `pixels`. On error nothing is kept.
+    TextureWriteError build(const TextureSource& source, const TextureImportOptions& options);
+
+    bool is_built() const { return this->desc.mip_count != 0; }
+
+    // Size of the TEX2 payload: desc + mip table.
+    usz desc_size() const { return TEXTURE_ASSET::desc_size(this->desc.mip_count); }
+    // Writes the TEX2 payload into `out`, which must hold desc_size() bytes.
+    void write_desc(void* out) const;
+
+    // Appends TEX2 then PIXL to `file`. Does nothing when nothing is built.
+    void add_chunks(AssetWriter& file) const;
+
+    // Forgets the texture, keeping the buffers for the next build().
+    void clear();
+    // Releases the storage.
+    void free();
+};

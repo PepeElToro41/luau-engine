@@ -1,5 +1,9 @@
 #include "engine/asset/mesh_asset.hpp"
 
+#include "engine/memory/heap_allocator.hpp"
+
+#include <cfloat>
+#include <cmath>
 #include <cstdint>
 #include <cstring>
 
@@ -256,4 +260,289 @@ u64 MeshAssetView::index_bytes() const {
         return 0;
     }
     return static_cast<u64>(MESH_ASSET::index_size(this->desc->index_format)) * this->desc->index_count;
+}
+
+// --- Writing ----------------------------------------------------------------------
+
+const char* MESH_ASSET::write_error_name(const MeshWriteError error) {
+    switch (error) {
+    case MESH_WRITE_OK: return "ok";
+    case MESH_WRITE_BAD_SOURCE: return "invalid source counts";
+    case MESH_WRITE_BAD_STREAM: return "invalid vertex stream";
+    case MESH_WRITE_BAD_ATTRIBUTE: return "invalid vertex attribute";
+    case MESH_WRITE_NO_POSITION: return "no POSITION 0 attribute in F32x3 or F32x4";
+    case MESH_WRITE_BAD_INDEX: return "an index is out of the vertex range";
+    case MESH_WRITE_BAD_SUBMESH: return "invalid submesh range";
+    }
+    return "unknown error";
+}
+
+namespace {
+
+// Running min/max over positions; starts inverted so the first point sets it.
+struct BoundsAccumulator {
+    f32 min[3] = {FLT_MAX, FLT_MAX, FLT_MAX};
+    f32 max[3] = {-FLT_MAX, -FLT_MAX, -FLT_MAX};
+
+    void add(const f32* point) {
+        for (u32 axis = 0; axis < 3; ++axis) {
+            this->min[axis] = point[axis] < this->min[axis] ? point[axis] : this->min[axis];
+            this->max[axis] = point[axis] > this->max[axis] ? point[axis] : this->max[axis];
+        }
+    }
+};
+
+// Reads the xyz of vertex `index` from the position attribute's stream.
+void load_position(const MeshSource& source, const VertexAttributeDesc& position, const u32 index, f32* out) {
+    const MeshSourceStream& stream = source.streams[position.stream];
+    const u8* vertex = static_cast<const u8*>(stream.vertices) + static_cast<usz>(stream.stride) * index + position.offset;
+    std::memcpy(out, vertex, sizeof(f32) * 3);
+}
+
+MeshWriteError validate_source(const MeshSource& source, const VertexAttributeDesc** out_position) {
+    if (source.vertex_count == 0 || source.stream_count == 0 || source.stream_count > MESH_ASSET::MAX_STREAMS ||
+        source.attribute_count == 0 || source.attribute_count > MESH_ASSET::MAX_ATTRIBUTES) {
+        return MESH_WRITE_BAD_SOURCE;
+    }
+    if (source.indices == nullptr || source.index_count == 0 || source.index_count % 3 != 0) {
+        return MESH_WRITE_BAD_SOURCE;
+    }
+    if (source.submesh_count != 0 && source.submeshes == nullptr) {
+        return MESH_WRITE_BAD_SOURCE;
+    }
+
+    for (u32 i = 0; i < source.stream_count; ++i) {
+        const MeshSourceStream& stream = source.streams[i];
+        if (stream.vertices == nullptr || stream.stride == 0 || stream.stride % 4 != 0) {
+            return MESH_WRITE_BAD_STREAM;
+        }
+    }
+
+    const VertexAttributeDesc* position = nullptr;
+    for (u32 i = 0; i < source.attribute_count; ++i) {
+        const VertexAttributeDesc& attribute = source.attributes[i];
+        const u32 size = VERTEX_FORMAT::size(attribute.format);
+        if (size == 0 || attribute.semantic > VERTEX_SEMANTIC_WEIGHTS || attribute.stream >= source.stream_count) {
+            return MESH_WRITE_BAD_ATTRIBUTE;
+        }
+        const u32 stride = source.streams[attribute.stream].stride;
+        if (attribute.offset > stride || size > stride - attribute.offset) {
+            return MESH_WRITE_BAD_ATTRIBUTE;
+        }
+        for (u32 j = 0; j < i; ++j) {
+            const VertexAttributeDesc& other = source.attributes[j];
+            if (other.semantic == attribute.semantic && other.semantic_index == attribute.semantic_index) {
+                return MESH_WRITE_BAD_ATTRIBUTE;
+            }
+        }
+        if (attribute.semantic == VERTEX_SEMANTIC_POSITION && attribute.semantic_index == 0) {
+            position = &attribute;
+        }
+    }
+    if (position == nullptr || (position->format != VERTEX_FORMAT_F32x3 && position->format != VERTEX_FORMAT_F32x4)) {
+        return MESH_WRITE_NO_POSITION;
+    }
+
+    for (u32 i = 0; i < source.index_count; ++i) {
+        if (source.indices[i] >= source.vertex_count) {
+            return MESH_WRITE_BAD_INDEX;
+        }
+    }
+
+    for (u32 i = 0; i < source.submesh_count; ++i) {
+        const MeshSourceSubmesh& submesh = source.submeshes[i];
+        if (submesh.index_count == 0 || submesh.index_count % 3 != 0 || submesh.first_index > source.index_count ||
+            submesh.index_count > source.index_count - submesh.first_index) {
+            return MESH_WRITE_BAD_SUBMESH;
+        }
+    }
+
+    *out_position = position;
+    return MESH_WRITE_OK;
+}
+
+} // namespace
+
+// --- MeshAssetWriter --------------------------------------------------------------
+
+MeshAssetWriter::MeshAssetWriter() : MeshAssetWriter(MEMORY::heap_allocator()) {}
+
+MeshAssetWriter::MeshAssetWriter(BaseAllocator* allocator)
+    : streams(allocator), attributes(allocator), submeshes(allocator), vertices(allocator), indices(allocator), allocator(allocator) {}
+
+MeshWriteError MeshAssetWriter::build(const MeshSource& source, const MeshImportOptions& options) {
+    this->clear();
+
+    const VertexAttributeDesc* position = nullptr;
+    const MeshWriteError error = validate_source(source, &position);
+    if (error != MESH_WRITE_OK) {
+        return error;
+    }
+
+    // Tables. The layout is the importer's; it is copied as given.
+    for (u32 i = 0; i < source.stream_count; ++i) {
+        VertexStreamDesc stream;
+        stream.stride = source.streams[i].stride;
+        this->streams.push(stream);
+    }
+    for (u32 i = 0; i < source.attribute_count; ++i) {
+        this->attributes.push(source.attributes[i]);
+    }
+
+    // Vertex data, every stream back to back.
+    usz vertex_bytes = 0;
+    for (u32 i = 0; i < source.stream_count; ++i) {
+        vertex_bytes += static_cast<usz>(source.streams[i].stride) * source.vertex_count;
+    }
+    this->vertices.resize(vertex_bytes);
+    u8* cursor = this->vertices.data;
+    for (u32 i = 0; i < source.stream_count; ++i) {
+        const usz size = static_cast<usz>(source.streams[i].stride) * source.vertex_count;
+        std::memcpy(cursor, source.streams[i].vertices, size);
+        cursor += size;
+    }
+
+    // Indices: 16-bit when every index fits (they are all below vertex_count).
+    const bool compact = options.compact_indices && source.vertex_count <= 0x10000u;
+    const u32 index_format = compact ? MESH_INDEX_U16 : MESH_INDEX_U32;
+    this->indices.resize(static_cast<usz>(MESH_ASSET::index_size(index_format)) * source.index_count);
+    if (compact) {
+        u16* out = reinterpret_cast<u16*>(this->indices.data);
+        for (u32 i = 0; i < source.index_count; ++i) {
+            const u16 index = static_cast<u16>(source.indices[i]);
+            std::memcpy(out + i, &index, sizeof(index));
+        }
+    } else {
+        std::memcpy(this->indices.data, source.indices, sizeof(u32) * source.index_count);
+    }
+
+    // Whole mesh bounds over every vertex: the box, then the tightest sphere
+    // around the box's center.
+    BoundsAccumulator whole;
+    f32 point[3];
+    for (u32 i = 0; i < source.vertex_count; ++i) {
+        load_position(source, *position, i, point);
+        whole.add(point);
+    }
+    f32 radius_squared = 0;
+    for (u32 axis = 0; axis < 3; ++axis) {
+        this->bounds.min[axis] = whole.min[axis];
+        this->bounds.max[axis] = whole.max[axis];
+        this->bounds.center[axis] = (whole.min[axis] + whole.max[axis]) * 0.5f;
+    }
+    for (u32 i = 0; i < source.vertex_count; ++i) {
+        load_position(source, *position, i, point);
+        f32 distance_squared = 0;
+        for (u32 axis = 0; axis < 3; ++axis) {
+            const f32 delta = point[axis] - this->bounds.center[axis];
+            distance_squared += delta * delta;
+        }
+        radius_squared = distance_squared > radius_squared ? distance_squared : radius_squared;
+    }
+    this->bounds.radius = sqrtf(radius_squared);
+
+    // Submeshes, each with its own box over the vertices its indices reach.
+    MeshSourceSubmesh whole_mesh;
+    whole_mesh.index_count = source.index_count;
+    const MeshSourceSubmesh* source_submeshes = source.submesh_count != 0 ? source.submeshes : &whole_mesh;
+    const u32 submesh_count = source.submesh_count != 0 ? source.submesh_count : 1;
+    for (u32 i = 0; i < submesh_count; ++i) {
+        const MeshSourceSubmesh& from = source_submeshes[i];
+        SubmeshDesc submesh;
+        submesh.first_index = from.first_index;
+        submesh.index_count = from.index_count;
+        submesh.base_vertex = 0;
+        submesh.material = from.material;
+        BoundsAccumulator box;
+        for (u32 j = from.first_index; j < from.first_index + from.index_count; ++j) {
+            load_position(source, *position, source.indices[j], point);
+            box.add(point);
+        }
+        for (u32 axis = 0; axis < 3; ++axis) {
+            submesh.bounds_min[axis] = box.min[axis];
+            submesh.bounds_max[axis] = box.max[axis];
+        }
+        this->submeshes.push(submesh);
+    }
+
+    this->desc.vertex_count = source.vertex_count;
+    this->desc.index_count = source.index_count;
+    this->desc.index_format = index_format;
+    this->desc.topology = MESH_TOPOLOGY_TRIANGLE_LIST;
+    this->desc.stream_count = source.stream_count;
+    this->desc.attribute_count = source.attribute_count;
+    this->desc.submesh_count = submesh_count;
+    return MESH_WRITE_OK;
+}
+
+void MeshAssetWriter::write_desc(void* out) const {
+    u8* cursor = static_cast<u8*>(out);
+    std::memcpy(cursor, &this->desc, sizeof(MeshDesc));
+    cursor += sizeof(MeshDesc);
+    if (this->streams.count > 0) {
+        std::memcpy(cursor, this->streams.data, sizeof(VertexStreamDesc) * this->streams.count);
+        cursor += sizeof(VertexStreamDesc) * this->streams.count;
+    }
+    if (this->attributes.count > 0) {
+        std::memcpy(cursor, this->attributes.data, sizeof(VertexAttributeDesc) * this->attributes.count);
+        cursor += sizeof(VertexAttributeDesc) * this->attributes.count;
+    }
+    if (this->submeshes.count > 0) {
+        std::memcpy(cursor, this->submeshes.data, sizeof(SubmeshDesc) * this->submeshes.count);
+    }
+}
+
+const u8* MeshAssetWriter::stream_data(const u32 stream) const {
+    if (stream >= this->desc.stream_count) {
+        return nullptr;
+    }
+    usz offset = 0;
+    for (u32 i = 0; i < stream; ++i) {
+        offset += static_cast<usz>(this->streams[i].stride) * this->desc.vertex_count;
+    }
+    return this->vertices.data + offset;
+}
+
+u64 MeshAssetWriter::stream_size(const u32 stream) const {
+    if (stream >= this->desc.stream_count) {
+        return 0;
+    }
+    return static_cast<u64>(this->streams[stream].stride) * this->desc.vertex_count;
+}
+
+void MeshAssetWriter::add_chunks(AssetWriter& file) const {
+    if (!this->is_built()) {
+        return;
+    }
+    DynamicArray<u8> payload(this->allocator);
+    payload.resize(this->desc_size());
+    this->write_desc(payload.data);
+    file.add_chunk(CHUNK_TAG::MESH, MESH_ASSET::VERSION, 0, payload.data, payload.count);
+    payload.free();
+
+    for (u32 i = 0; i < this->desc.stream_count; ++i) {
+        file.add_chunk(CHUNK_TAG::VERTICES, MESH_ASSET::VERSION, 0, this->stream_data(i), static_cast<usz>(this->stream_size(i)));
+    }
+    file.add_chunk(CHUNK_TAG::INDICES, MESH_ASSET::VERSION, 0, this->indices.data, this->indices.count);
+    file.add_chunk(CHUNK_TAG::BOUNDS, MESH_ASSET::VERSION, 0, &this->bounds, sizeof(MeshBounds));
+}
+
+void MeshAssetWriter::clear() {
+    this->desc = MeshDesc{};
+    this->bounds = MeshBounds{};
+    this->streams.clear();
+    this->attributes.clear();
+    this->submeshes.clear();
+    this->vertices.clear();
+    this->indices.clear();
+}
+
+void MeshAssetWriter::free() {
+    this->desc = MeshDesc{};
+    this->bounds = MeshBounds{};
+    this->streams.free();
+    this->attributes.free();
+    this->submeshes.free();
+    this->vertices.free();
+    this->indices.free();
 }

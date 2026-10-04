@@ -274,6 +274,34 @@ mip's end.
 mip table to address the result. Pixels are never read to validate a
 texture.
 
+### Writing a texture
+
+`TextureAssetWriter` (same header) is the other half: it takes a
+`TextureSource` (decoded mip 0 of every layer, tightly packed, plus the
+dimensions, format and dimension kind) and a `TextureImportOptions`, and
+produces exactly the `TEX2` and `PIXL` payloads described above;
+`add_chunks()` appends them to an `AssetWriter`. It writes nothing else: the
+GUID, dependencies and editor chunks belong to the importer that decoded the
+file. The import options are deliberately thin until the `IMPS` layout
+exists: `generate_mips` and `srgb`.
+
+**Mips are generated here, not in the loader.** With `generate_mips` the
+writer lays out the full chain (capped at 16 levels) and box filters each
+level from the previous one, per layer, following the same halve-and-clamp
+rule the reader verifies: a 2x2 (2x2x2 for 3D) window per target texel, the
+last row or column of an odd extent dropped. Linear UNORM channels are
+averaged as integers so the result is exact and identical everywhere; float
+and half channels go through float. Block compressed sources cannot be
+filtered, so `generate_mips` is an error for them and they are written as
+given, mip 0 only; an importer that compresses supplies its own chain later.
+
+**sRGB is an import decision, filtered in linear space.** `srgb` switches
+the stored format to its sRGB variant (`RGBA8`, `BC1`, `BC3`, `BC7`; others
+are unchanged) without touching the bytes of mip 0. The mip filter then
+decodes the color channels to linear, averages, and re-encodes, so a
+checkerboard of black and white halves to the perceptual middle (188, not
+128). Alpha stays linear.
+
 ## Mesh payloads
 
 Defined in `engine/core/include/engine/asset/mesh_asset.hpp`
@@ -385,6 +413,34 @@ loader reads whichever it needs, straight into upload memory, and a culling
 pass or the editor can read the bounds alone. No geometry is read to
 validate a mesh.
 
+### Writing a mesh
+
+`MeshAssetWriter` (same header) takes a `MeshSource` (the vertex streams
+with their strides and bytes, the attribute table, 32-bit indices and an
+optional submesh list) and a `MeshImportOptions`, and produces the `MESH`,
+`VERT`, `INDX` and `BBOX` payloads; `add_chunks()` appends them to an
+`AssetWriter`, streams in order. Like the texture writer it owns no
+container concerns; a submesh's `material` is an index into the dependency
+table the importer is building, which the writer cannot check and the
+reader does.
+
+**The importer owns the vertex layout; the writer checks and copies it.**
+Interleaving, quantization and attribute formats are decided by whoever
+decoded the source. The writer enforces exactly what the reader will
+(strides, attribute fit, unique semantics) and copies the bytes unchanged,
+so what goes to the GPU is what the importer laid out.
+
+**Indices are narrowed, never widened.** The source always hands over
+`u32` indices; with `compact_indices` (the default) the writer stores
+`U16` when `vertex_count <= 65536`, since every index is checked to be
+below `vertex_count`, and `U32` otherwise. `base_vertex` is written as 0.
+
+**Bounds are derived, not supplied.** A `POSITION 0` attribute in `F32x3`
+or `F32x4` is required. The `BBOX` box spans every vertex, its sphere is
+centered on the box and sized to the farthest vertex; each submesh's box
+spans only the vertices its indices reach. A source with no submeshes gets
+one covering every index with no material.
+
 ## Reading
 
 Reading is two steps with two types, so the cheap one can be done for every
@@ -491,7 +547,11 @@ matched to the editor file it came from.
 
 ## Open items
 
-- Payload layouts for `NAME`, `IMPS`, `SRC `, and the texture and mesh chunks.
+- Payload layouts for `NAME`, `IMPS` (the `TextureImportOptions` and
+  `MeshImportOptions` structs are the in-memory shape; what gets serialized
+  is still to be decided) and `SRC `.
+- Importers that decode source files (PNG, glTF) into `TextureSource` and
+  `MeshSource`; core has no decoders, so they live in the editor.
 - The `dump` tool and its `textconv` setup.
 - Asynchronous loading and an eviction policy for the asset provider.
 - GUID generation and the editor's path-to-GUID index.

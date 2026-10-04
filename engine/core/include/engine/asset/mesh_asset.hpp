@@ -226,3 +226,133 @@ struct MeshAssetView {
     u64 stream_size(u32 stream) const;
     u64 index_bytes() const;
 };
+
+// --- Writing ------------------------------------------------------------------
+//
+//     MeshSource source;  ... streams, attributes and indices as the importer built them ...
+//     source.stream_count = 1;
+//     source.streams[0] = {sizeof(Vertex), vertices};
+//     source.attribute_count = 2;
+//     source.attributes[0] = {VERTEX_SEMANTIC_POSITION, 0, VERTEX_FORMAT_F32x3, 0, 0};
+//     source.attributes[1] = {VERTEX_SEMANTIC_TEXCOORD, 0, VERTEX_FORMAT_F32x2, 0, 12};
+//     MeshAssetWriter mesh;
+//     if (mesh.build(source, MeshImportOptions{}) == MESH_WRITE_OK) {
+//         mesh.add_chunks(file); // the AssetWriter; NAME, IMPS, SRC are the importer's
+//     }
+//     mesh.free();
+//
+// The writer turns an importer's geometry into the MESH, VERT, INDX and BBOX
+// payloads that MeshAssetView::parse reads: it validates the layout, picks
+// the index format, computes the bounds and fills the tables. The vertex
+// bytes are written as given (the importer decides interleaving and formats,
+// the writer only checks them). It produces only those chunks; the container
+// (GUID, dependencies, editor chunks) is the caller's.
+
+// What the editor asks of a mesh import. Plain data so it can become the
+// IMPS payload once that layout is defined; nothing beyond the essentials yet.
+struct MeshImportOptions {
+    // Write 16-bit indices when every index fits, 32-bit otherwise. False
+    // always writes 32-bit.
+    bool compact_indices = true;
+};
+
+// One vertex stream of a source: `vertex_count` vertices of `stride` bytes.
+struct MeshSourceStream {
+    u32 stride = 0;                 // bytes per vertex, nonzero, multiple of 4
+    const void* vertices = nullptr; // vertex_count * stride bytes
+};
+
+// A range of the index buffer with one material. `material` is an index into
+// the dependency table the caller is building (AssetWriter::add_dependency
+// returns it) or MESH_ASSET::NO_MATERIAL; the writer cannot check it.
+struct MeshSourceSubmesh {
+    u32 first_index = 0;
+    u32 index_count = 0; // nonzero, multiple of 3
+    u32 material = MESH_ASSET::NO_MATERIAL;
+};
+
+// A mesh as an importer hands it to the writer. Indices are 32-bit, absolute
+// into [0, vertex_count), a triangle list. A POSITION 0 attribute in F32x3 or
+// F32x4 is required: the bounds are computed from it. With no submeshes the
+// writer emits one covering every index with no material.
+struct MeshSource {
+    u32 vertex_count = 0;
+    u32 stream_count = 0; // 1 to MESH_ASSET::MAX_STREAMS
+    MeshSourceStream streams[MESH_ASSET::MAX_STREAMS];
+    u32 attribute_count = 0; // 1 to MESH_ASSET::MAX_ATTRIBUTES
+    VertexAttributeDesc attributes[MESH_ASSET::MAX_ATTRIBUTES];
+    const u32* indices = nullptr;
+    u32 index_count = 0; // nonzero, multiple of 3
+    const MeshSourceSubmesh* submeshes = nullptr;
+    u32 submesh_count = 0;
+};
+
+enum MeshWriteError {
+    MESH_WRITE_OK = 0,
+    MESH_WRITE_BAD_SOURCE,    // a count is zero or over its limit, or index_count is not a multiple of 3
+    MESH_WRITE_BAD_STREAM,    // a stream has a null pointer or a stride that is zero or not a multiple of 4
+    MESH_WRITE_BAD_ATTRIBUTE, // unknown format or semantic, stream out of range, does not fit, or duplicate
+    MESH_WRITE_NO_POSITION,   // no POSITION 0 attribute in F32x3 or F32x4
+    MESH_WRITE_BAD_INDEX,     // an index is >= vertex_count
+    MESH_WRITE_BAD_SUBMESH,   // a submesh range is empty, not a multiple of 3 or out of the index buffer
+};
+
+namespace MESH_ASSET {
+
+const char* write_error_name(MeshWriteError error);
+
+}
+
+// Builds the MESH, VERT, INDX and BBOX payloads for one mesh. build() fills
+// the tables and buffers from a source; add_chunks() appends them to an
+// AssetWriter at MESH_ASSET::VERSION, streams in order. The writer owns its
+// buffers: call free() when done, or build() again to reuse them.
+struct MeshAssetWriter {
+    MeshAssetWriter();
+    explicit MeshAssetWriter(BaseAllocator* allocator);
+
+    MeshAssetWriter(const MeshAssetWriter&) = delete;
+    MeshAssetWriter& operator=(const MeshAssetWriter&) = delete;
+
+    // The MESH payload, as tables.
+    MeshDesc desc;
+    DynamicArray<VertexStreamDesc> streams;       // desc.stream_count entries
+    DynamicArray<VertexAttributeDesc> attributes; // desc.attribute_count entries
+    DynamicArray<SubmeshDesc> submeshes;          // desc.submesh_count entries
+    // Every VERT payload back to back, stream 0 first; see stream_data().
+    DynamicArray<u8> vertices;
+    // The INDX payload: desc.index_count indices of desc.index_format.
+    DynamicArray<u8> indices;
+    // The BBOX payload.
+    MeshBounds bounds;
+
+    // Validates the source and fills everything above. Per-submesh and whole
+    // mesh bounds come from the positions; the bounding sphere is centered on
+    // the box and tight around the vertices. On error nothing is kept.
+    MeshWriteError build(const MeshSource& source, const MeshImportOptions& options);
+
+    bool is_built() const { return this->desc.vertex_count != 0; }
+
+    // Size of the MESH payload: desc + the three tables.
+    usz desc_size() const {
+        return MESH_ASSET::desc_size(this->desc.stream_count, this->desc.attribute_count, this->desc.submesh_count);
+    }
+    // Writes the MESH payload into `out`, which must hold desc_size() bytes.
+    void write_desc(void* out) const;
+
+    // Stream `stream`'s VERT payload inside `vertices`, stream_size() bytes.
+    const u8* stream_data(u32 stream) const;
+    u64 stream_size(u32 stream) const;
+
+    // Appends MESH, one VERT per stream, INDX and BBOX to `file`. Does
+    // nothing when nothing is built.
+    void add_chunks(AssetWriter& file) const;
+
+    // Forgets the mesh, keeping the buffers for the next build().
+    void clear();
+    // Releases the storage.
+    void free();
+
+private:
+    BaseAllocator* allocator = nullptr;
+};

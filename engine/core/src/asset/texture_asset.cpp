@@ -1,5 +1,8 @@
 #include "engine/asset/texture_asset.hpp"
 
+#include "engine/memory/heap_allocator.hpp"
+
+#include <cmath>
 #include <cstdint>
 #include <cstring>
 
@@ -230,4 +233,400 @@ u64 TextureAssetView::layer_size(const u32 mip) const {
     }
     const TextureMip& entry = this->mips[mip];
     return TEXTURE_FORMAT::layer_size(this->desc->format, entry.width, entry.height, entry.depth);
+}
+
+// --- Writing ----------------------------------------------------------------------
+
+u32 TEXTURE_FORMAT::srgb_variant(const u32 format) {
+    switch (format) {
+    case TEXTURE_FORMAT_RGBA8_UNORM: return TEXTURE_FORMAT_RGBA8_SRGB;
+    case TEXTURE_FORMAT_BC1_RGB_UNORM: return TEXTURE_FORMAT_BC1_RGB_SRGB;
+    case TEXTURE_FORMAT_BC3_UNORM: return TEXTURE_FORMAT_BC3_SRGB;
+    case TEXTURE_FORMAT_BC7_UNORM: return TEXTURE_FORMAT_BC7_SRGB;
+    default: return format;
+    }
+}
+
+const char* TEXTURE_ASSET::write_error_name(const TextureWriteError error) {
+    switch (error) {
+    case TEXTURE_WRITE_OK: return "ok";
+    case TEXTURE_WRITE_BAD_SOURCE: return "invalid source dimensions or format";
+    case TEXTURE_WRITE_BAD_SIZE: return "source pixel size does not match its dimensions";
+    case TEXTURE_WRITE_CANNOT_GENERATE_MIPS: return "mips cannot be generated for a block compressed format";
+    }
+    return "unknown error";
+}
+
+// --- Mip filtering ----------------------------------------------------------------
+// The filter works on floats: every channel of every uncompressed format is
+// loaded to [0, 1] (or its float value), averaged over the 2x2(x2) source
+// texels, and stored back. sRGB channels are decoded to linear first and
+// re-encoded after, so a half-grey mip really is half as bright.
+
+namespace {
+
+enum ChannelKind : u32 {
+    CHANNEL_UNORM8,
+    CHANNEL_UNORM16,
+    CHANNEL_FLOAT16,
+    CHANNEL_FLOAT32,
+};
+
+struct ChannelLayout {
+    ChannelKind kind = CHANNEL_UNORM8;
+    u32 count = 0; // channels per texel
+    u32 bytes = 0; // per channel
+    bool srgb = false; // channels 0 to 2 are sRGB encoded; alpha stays linear
+};
+
+// False for block compressed formats, which cannot be filtered.
+bool channel_layout(const u32 format, ChannelLayout* out) {
+    switch (format) {
+    case TEXTURE_FORMAT_R8_UNORM: *out = {CHANNEL_UNORM8, 1, 1, false}; return true;
+    case TEXTURE_FORMAT_RG8_UNORM: *out = {CHANNEL_UNORM8, 2, 1, false}; return true;
+    case TEXTURE_FORMAT_RGBA8_UNORM: *out = {CHANNEL_UNORM8, 4, 1, false}; return true;
+    case TEXTURE_FORMAT_RGBA8_SRGB: *out = {CHANNEL_UNORM8, 4, 1, true}; return true;
+    case TEXTURE_FORMAT_R16_UNORM: *out = {CHANNEL_UNORM16, 1, 2, false}; return true;
+    case TEXTURE_FORMAT_RG16_UNORM: *out = {CHANNEL_UNORM16, 2, 2, false}; return true;
+    case TEXTURE_FORMAT_RGBA16_UNORM: *out = {CHANNEL_UNORM16, 4, 2, false}; return true;
+    case TEXTURE_FORMAT_R16_FLOAT: *out = {CHANNEL_FLOAT16, 1, 2, false}; return true;
+    case TEXTURE_FORMAT_RG16_FLOAT: *out = {CHANNEL_FLOAT16, 2, 2, false}; return true;
+    case TEXTURE_FORMAT_RGBA16_FLOAT: *out = {CHANNEL_FLOAT16, 4, 2, false}; return true;
+    case TEXTURE_FORMAT_R32_FLOAT: *out = {CHANNEL_FLOAT32, 1, 4, false}; return true;
+    case TEXTURE_FORMAT_RG32_FLOAT: *out = {CHANNEL_FLOAT32, 2, 4, false}; return true;
+    case TEXTURE_FORMAT_RGBA32_FLOAT: *out = {CHANNEL_FLOAT32, 4, 4, false}; return true;
+    default: return false;
+    }
+}
+
+// IEEE binary16 <-> binary32. Round to nearest even on the way down.
+f32 f16_to_f32(const u16 half) {
+    const u32 sign = static_cast<u32>(half & 0x8000u) << 16;
+    const u32 exponent = (half >> 10) & 0x1fu;
+    const u32 mantissa = half & 0x3ffu;
+    if (exponent == 0) {
+        // Zero or subnormal: mantissa * 2^-24.
+        const f32 value = static_cast<f32>(mantissa) * 5.9604644775390625e-08f;
+        return sign != 0 ? -value : value;
+    }
+    u32 bits;
+    if (exponent == 31) {
+        bits = sign | 0x7f800000u | (mantissa << 13);
+    } else {
+        bits = sign | ((exponent + 112) << 23) | (mantissa << 13);
+    }
+    f32 value;
+    std::memcpy(&value, &bits, sizeof(value));
+    return value;
+}
+
+u16 f32_to_f16(const f32 value) {
+    u32 bits;
+    std::memcpy(&bits, &value, sizeof(bits));
+    const u32 sign = (bits >> 16) & 0x8000u;
+    const u32 float_exponent = (bits >> 23) & 0xffu;
+    u32 mantissa = bits & 0x7fffffu;
+    if (float_exponent == 0xff) {
+        // Infinity or NaN; keep NaN a NaN.
+        return static_cast<u16>(sign | 0x7c00u | (mantissa != 0 ? 0x200u : 0));
+    }
+    const i32 exponent = static_cast<i32>(float_exponent) - 127 + 15;
+    if (exponent >= 31) {
+        return static_cast<u16>(sign | 0x7c00u);
+    }
+    if (exponent <= 0) {
+        if (exponent < -10) {
+            return static_cast<u16>(sign);
+        }
+        // Subnormal: the implicit one moves into the mantissa and the whole
+        // thing shifts down to units of 2^-24.
+        mantissa |= 0x800000u;
+        const u32 shift = static_cast<u32>(14 - exponent);
+        u32 half_mantissa = mantissa >> shift;
+        const u32 remainder = mantissa & ((1u << shift) - 1);
+        const u32 halfway = 1u << (shift - 1);
+        if (remainder > halfway || (remainder == halfway && (half_mantissa & 1) != 0)) {
+            half_mantissa += 1; // may carry into the smallest normal, which is right
+        }
+        return static_cast<u16>(sign | half_mantissa);
+    }
+    u32 half = sign | (static_cast<u32>(exponent) << 10) | (mantissa >> 13);
+    const u32 remainder = mantissa & 0x1fffu;
+    if (remainder > 0x1000u || (remainder == 0x1000u && (half & 1) != 0)) {
+        half += 1; // may carry into infinity, which is the correctly rounded result
+    }
+    return static_cast<u16>(half);
+}
+
+f32 srgb_to_linear(const f32 value) {
+    return value <= 0.04045f ? value / 12.92f : powf((value + 0.055f) / 1.055f, 2.4f);
+}
+
+f32 linear_to_srgb(const f32 value) {
+    return value <= 0.0031308f ? value * 12.92f : 1.055f * powf(value, 1.0f / 2.4f) - 0.055f;
+}
+
+// Decoded sRGB for every byte, since 8-bit sRGB is the common case and powf
+// per sample would dominate the import.
+const f32* srgb8_to_linear_table() {
+    static f32 table[256];
+    static bool built = false;
+    if (!built) {
+        for (u32 i = 0; i < 256; ++i) {
+            table[i] = srgb_to_linear(static_cast<f32>(i) / 255.0f);
+        }
+        built = true;
+    }
+    return table;
+}
+
+f32 load_channel(const u8* texel, const ChannelLayout& layout, const u32 channel) {
+    switch (layout.kind) {
+    case CHANNEL_UNORM8: {
+        const u8 value = texel[channel];
+        if (layout.srgb && channel < 3) {
+            return srgb8_to_linear_table()[value];
+        }
+        return static_cast<f32>(value) / 255.0f;
+    }
+    case CHANNEL_UNORM16: {
+        u16 value;
+        std::memcpy(&value, texel + channel * 2, sizeof(value));
+        return static_cast<f32>(value) / 65535.0f;
+    }
+    case CHANNEL_FLOAT16: {
+        u16 value;
+        std::memcpy(&value, texel + channel * 2, sizeof(value));
+        return f16_to_f32(value);
+    }
+    case CHANNEL_FLOAT32: {
+        f32 value;
+        std::memcpy(&value, texel + channel * 4, sizeof(value));
+        return value;
+    }
+    }
+    return 0;
+}
+
+f32 clamp_unit(const f32 value) {
+    return value < 0 ? 0 : value > 1 ? 1 : value;
+}
+
+void store_channel(u8* texel, const ChannelLayout& layout, const u32 channel, const f32 value) {
+    switch (layout.kind) {
+    case CHANNEL_UNORM8: {
+        const f32 encoded = layout.srgb && channel < 3 ? linear_to_srgb(clamp_unit(value)) : clamp_unit(value);
+        texel[channel] = static_cast<u8>(encoded * 255.0f + 0.5f);
+        return;
+    }
+    case CHANNEL_UNORM16: {
+        const u16 encoded = static_cast<u16>(clamp_unit(value) * 65535.0f + 0.5f);
+        std::memcpy(texel + channel * 2, &encoded, sizeof(encoded));
+        return;
+    }
+    case CHANNEL_FLOAT16: {
+        const u16 encoded = f32_to_f16(value);
+        std::memcpy(texel + channel * 2, &encoded, sizeof(encoded));
+        return;
+    }
+    case CHANNEL_FLOAT32: std::memcpy(texel + channel * 4, &value, sizeof(value)); return;
+    }
+}
+
+// Linear UNORM channels are averaged as integers: exact, so a .5 rounds the
+// same way everywhere, and faster than the float path for the common case.
+bool channel_is_integer(const ChannelLayout& layout, const u32 channel) {
+    const bool unorm = layout.kind == CHANNEL_UNORM8 || layout.kind == CHANNEL_UNORM16;
+    return unorm && !(layout.srgb && channel < 3);
+}
+
+u32 load_unorm(const u8* texel, const ChannelLayout& layout, const u32 channel) {
+    if (layout.kind == CHANNEL_UNORM8) {
+        return texel[channel];
+    }
+    u16 value;
+    std::memcpy(&value, texel + channel * 2, sizeof(value));
+    return value;
+}
+
+void store_unorm(u8* texel, const ChannelLayout& layout, const u32 channel, const u32 value) {
+    if (layout.kind == CHANNEL_UNORM8) {
+        texel[channel] = static_cast<u8>(value);
+        return;
+    }
+    const u16 encoded = static_cast<u16>(value);
+    std::memcpy(texel + channel * 2, &encoded, sizeof(encoded));
+}
+
+// Box filters one layer: every target texel averages the 2x2x2 source texels
+// it covers (2x2 for 2D). A source extent that is already 1 contributes the
+// same texel twice, which keeps the weights uniform; the last row or column
+// of an odd extent is dropped, as the halve-and-clamp mip rule implies.
+void downsample_layer(const ChannelLayout& layout, const u8* source, const u32 source_width, const u32 source_height,
+                      const u32 source_depth, u8* target, const u32 target_width, const u32 target_height, const u32 target_depth) {
+    const usz texel_bytes = layout.count * layout.bytes;
+    const usz source_row = texel_bytes * source_width;
+    const usz source_slice = source_row * source_height;
+    u8* out = target;
+    for (u32 z = 0; z < target_depth; ++z) {
+        const u32 z0 = 2 * z < source_depth ? 2 * z : source_depth - 1;
+        const u32 z1 = 2 * z + 1 < source_depth ? 2 * z + 1 : source_depth - 1;
+        for (u32 y = 0; y < target_height; ++y) {
+            const u32 y0 = 2 * y < source_height ? 2 * y : source_height - 1;
+            const u32 y1 = 2 * y + 1 < source_height ? 2 * y + 1 : source_height - 1;
+            for (u32 x = 0; x < target_width; ++x) {
+                const u32 x0 = 2 * x < source_width ? 2 * x : source_width - 1;
+                const u32 x1 = 2 * x + 1 < source_width ? 2 * x + 1 : source_width - 1;
+                const u8* taps[8] = {
+                    source + z0 * source_slice + y0 * source_row + x0 * texel_bytes,
+                    source + z0 * source_slice + y0 * source_row + x1 * texel_bytes,
+                    source + z0 * source_slice + y1 * source_row + x0 * texel_bytes,
+                    source + z0 * source_slice + y1 * source_row + x1 * texel_bytes,
+                    source + z1 * source_slice + y0 * source_row + x0 * texel_bytes,
+                    source + z1 * source_slice + y0 * source_row + x1 * texel_bytes,
+                    source + z1 * source_slice + y1 * source_row + x0 * texel_bytes,
+                    source + z1 * source_slice + y1 * source_row + x1 * texel_bytes,
+                };
+                for (u32 channel = 0; channel < layout.count; ++channel) {
+                    if (channel_is_integer(layout, channel)) {
+                        u32 sum = 0; // at most 8 * 65535, fits
+                        for (u32 tap = 0; tap < 8; ++tap) {
+                            sum += load_unorm(taps[tap], layout, channel);
+                        }
+                        store_unorm(out, layout, channel, (sum + 4) >> 3); // round half up
+                    } else {
+                        f32 sum = 0;
+                        for (u32 tap = 0; tap < 8; ++tap) {
+                            sum += load_channel(taps[tap], layout, channel);
+                        }
+                        store_channel(out, layout, channel, sum * 0.125f);
+                    }
+                }
+                out += texel_bytes;
+            }
+        }
+    }
+}
+
+bool source_is_valid(const TextureSource& source, const u32 format) {
+    if (source.width == 0 || source.height == 0 || source.depth == 0 || source.layers == 0) {
+        return false;
+    }
+    if (!TEXTURE_FORMAT::info(format).is_valid()) {
+        return false;
+    }
+    switch (source.dimension) {
+    case TEXTURE_DIMENSION_2D: return source.depth == 1;
+    case TEXTURE_DIMENSION_CUBE: return source.depth == 1 && source.layers % TEXTURE_ASSET::CUBE_FACES == 0;
+    case TEXTURE_DIMENSION_3D: return source.layers == 1;
+    default: return false;
+    }
+}
+
+} // namespace
+
+// --- TextureAssetWriter -----------------------------------------------------------
+
+TextureAssetWriter::TextureAssetWriter() : TextureAssetWriter(MEMORY::heap_allocator()) {}
+
+TextureAssetWriter::TextureAssetWriter(BaseAllocator* allocator) : mips(allocator), pixels(allocator) {}
+
+TextureWriteError TextureAssetWriter::build(const TextureSource& source, const TextureImportOptions& options) {
+    this->clear();
+
+    const u32 format = options.srgb ? TEXTURE_FORMAT::srgb_variant(source.format) : source.format;
+    if (!source_is_valid(source, format)) {
+        return TEXTURE_WRITE_BAD_SOURCE;
+    }
+    const u64 layer_bytes = TEXTURE_FORMAT::layer_size(format, source.width, source.height, source.depth);
+    if (source.pixels == nullptr || source.pixels_size != layer_bytes * source.layers) {
+        return TEXTURE_WRITE_BAD_SIZE;
+    }
+    const TextureFormatInfo info = TEXTURE_FORMAT::info(format);
+    if (options.generate_mips && info.is_block_compressed()) {
+        return TEXTURE_WRITE_CANNOT_GENERATE_MIPS;
+    }
+
+    u32 mip_count = 1;
+    if (options.generate_mips) {
+        mip_count = TEXTURE_ASSET::full_mip_count(source.width, source.height, source.depth);
+        mip_count = mip_count < TEXTURE_ASSET::MAX_MIPS ? mip_count : TEXTURE_ASSET::MAX_MIPS;
+    }
+
+    // Lay out the chain: level order, each mip on a MIP_ALIGNMENT boundary.
+    u64 offset = 0;
+    u64 decoded_size = 0;
+    for (u32 level = 0; level < mip_count; ++level) {
+        TextureMip mip;
+        mip.width = TEXTURE_ASSET::mip_extent(source.width, level);
+        mip.height = TEXTURE_ASSET::mip_extent(source.height, level);
+        mip.depth = TEXTURE_ASSET::mip_extent(source.depth, level);
+        mip.row_pitch = TEXTURE_FORMAT::row_pitch(format, mip.width);
+        mip.size = TEXTURE_FORMAT::layer_size(format, mip.width, mip.height, mip.depth) * source.layers;
+        mip.offset = offset;
+        offset = ASSET_FILE::align_up(static_cast<usz>(offset + mip.size), TEXTURE_ASSET::MIP_ALIGNMENT);
+        decoded_size += mip.size;
+        this->mips.push(mip);
+    }
+    const TextureMip& last = this->mips[mip_count - 1];
+    this->pixels.resize(static_cast<usz>(last.offset + last.size)); // zeroed, so the alignment gaps are too
+    std::memcpy(this->pixels.data, source.pixels, source.pixels_size);
+
+    if (mip_count > 1) {
+        ChannelLayout layout;
+        const bool filterable = channel_layout(format, &layout);
+        ENGINE_ASSERT(filterable, "TextureAssetWriter::build: every uncompressed format has a channel layout");
+        (void)filterable;
+        for (u32 level = 1; level < mip_count; ++level) {
+            const TextureMip& from = this->mips[level - 1];
+            const TextureMip& to = this->mips[level];
+            const usz from_layer = static_cast<usz>(TEXTURE_FORMAT::layer_size(format, from.width, from.height, from.depth));
+            const usz to_layer = static_cast<usz>(TEXTURE_FORMAT::layer_size(format, to.width, to.height, to.depth));
+            for (u32 layer = 0; layer < source.layers; ++layer) {
+                downsample_layer(layout, this->pixels.data + from.offset + from_layer * layer, from.width, from.height, from.depth,
+                                 this->pixels.data + to.offset + to_layer * layer, to.width, to.height, to.depth);
+            }
+        }
+    }
+
+    this->desc.width = source.width;
+    this->desc.height = source.height;
+    this->desc.depth = source.depth;
+    this->desc.layers = source.layers;
+    this->desc.mip_count = mip_count;
+    this->desc.format = format;
+    this->desc.dimension = source.dimension;
+    this->desc.compression = TEXTURE_COMPRESSION_NONE;
+    this->desc.decoded_size = decoded_size;
+    return TEXTURE_WRITE_OK;
+}
+
+void TextureAssetWriter::write_desc(void* out) const {
+    u8* cursor = static_cast<u8*>(out);
+    std::memcpy(cursor, &this->desc, sizeof(TextureDesc));
+    if (this->mips.count > 0) {
+        std::memcpy(cursor + sizeof(TextureDesc), this->mips.data, sizeof(TextureMip) * this->mips.count);
+    }
+}
+
+void TextureAssetWriter::add_chunks(AssetWriter& file) const {
+    if (!this->is_built()) {
+        return;
+    }
+    alignas(8) u8 payload[TEXTURE_ASSET::desc_size(TEXTURE_ASSET::MAX_MIPS)];
+    this->write_desc(payload);
+    file.add_chunk(CHUNK_TAG::TEXTURE, TEXTURE_ASSET::VERSION, 0, payload, this->desc_size());
+    file.add_chunk(CHUNK_TAG::PIXELS, TEXTURE_ASSET::VERSION, 0, this->pixels.data, this->pixels.count);
+}
+
+void TextureAssetWriter::clear() {
+    this->desc = TextureDesc{};
+    this->mips.clear();
+    this->pixels.clear();
+}
+
+void TextureAssetWriter::free() {
+    this->desc = TextureDesc{};
+    this->mips.free();
+    this->pixels.free();
 }
