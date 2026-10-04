@@ -114,6 +114,15 @@ struct AssetGuid {
     friend bool operator!=(const AssetGuid& a, const AssetGuid& b) { return !(a == b); }
 };
 
+// Hash functor for keying a HashMap by GUID: HashMap<AssetGuid, V, AssetGuidHash>.
+struct AssetGuidHash {
+    usz operator()(const AssetGuid& guid) const {
+        // GUIDs are random bits; folding the halves is enough and the map
+        // finalizes the result itself.
+        return static_cast<usz>(guid.lo ^ (guid.hi * 0x9e3779b97f4a7c15ull));
+    }
+};
+
 struct AssetHeader {
     u32 magic = ASSET_FILE::MAGIC;
     u32 format_version = ASSET_FILE::FORMAT_VERSION;

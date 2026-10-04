@@ -3,10 +3,17 @@
 bool Engine::init(GpuDevice* gpu) {
     this->gpu = gpu;
     this->time = 0.0;
+    if (this->create_singleton<AssetResourceProvider>() == nullptr) {
+        return false;
+    }
     return true;
 }
 
 void Engine::shutdown() {
+    // Singletons that own memory release it before the store destroys them.
+    if (AssetResourceProvider* assets = this->get_singleton<AssetResourceProvider>()) {
+        assets->free();
+    }
     this->singletons.free();
     this->gpu = nullptr;
 }

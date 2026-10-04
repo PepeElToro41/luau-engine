@@ -1,5 +1,6 @@
 #pragma once
 
+#include "engine/asset/asset_resource_provider.hpp"
 #include "engine/defines.hpp"
 #include "engine/gpu/device.hpp"
 #include "engine/gpu/render_target.hpp"
@@ -27,9 +28,12 @@
 // once and engine.get_singleton<T>() returns that same object afterwards
 // (see singletons.hpp). They are released by shutdown(); anything a singleton
 // owns must be released before that, explicitly, like any other engine
-// resource.
+// resource. init() creates the engine's own singletons, currently the
+// AssetResourceProvider that streams asset payloads (get_singleton<AssetResourceProvider>()),
+// and shutdown() frees what they own before destroying them.
 struct Engine {
-    // Creates the engine's GPU resources on `gpu`, which must outlive it.
+    // Creates the engine's GPU resources on `gpu`, which must outlive it,
+    // and the engine's own singletons.
     bool init(GpuDevice* gpu);
     // Destroys every singleton and releases the engine's resources.
     void shutdown();

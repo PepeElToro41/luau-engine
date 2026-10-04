@@ -19,6 +19,8 @@ bool App::init() {
     if (!this->engine.init(&this->gpu)) {
         return false;
     }
+    // A shipped build only ever loads cooked assets (see docs/asset_format.md).
+    this->engine.get_singleton<AssetResourceProvider>()->require_cooked = true;
     this->running = true;
     return true;
 }

@@ -433,6 +433,46 @@ for the caller to read where it wants them.
 The runtime loader additionally rejects a file without `COOKED` set, so a
 shipped build cannot carry sources by mistake. The editor accepts both.
 
+## The asset provider
+
+`AssetResourceProvider` (`asset_resource_provider.hpp`) is where payloads
+live once read. The engine creates one as a singleton; everything that
+needs an asset's bytes asks it, so a texture referenced by ten materials
+is read once and resident in one place.
+
+**Registration is a view and a path.** `add(view, path)` makes an asset
+known under the GUID in its header. The provider copies the prelude, so
+the `AssetView` it keeps outlives the scan buffer, and keeps the path, which
+is the one thing a view does not carry. Nothing is read at this point: a
+project scan registers every file it finds for the cost of the preludes it
+already read. `require_cooked` makes `add` refuse uncooked files, which the
+standalone runtime turns on.
+
+**Loading is lazy and per chunk.** `get(guid)` (or `get(view)`, which uses
+the view's GUID) returns the asset's `AssetResource` with every runtime
+chunk resident: whatever was already in memory, or read now. A read opens
+the file with an `AssetReader` and fills one 64-byte aligned buffer per
+chunk, allocated and owned by the provider, so the payload is used in
+place as the format intends. `EDITOR_ONLY` chunks are not part of a load;
+`get_chunk(resource, tag)` reads a single chunk on demand, which is how the
+editor reaches the source bytes without paying for them otherwise. A
+second `get` finds the payloads resident and touches no file.
+
+**Stale preludes are refreshed, never trusted.** Before any read the
+provider checks the file against its prelude (`AssetReader::matches`). If
+the file was re-imported since, the prelude is re-read from the file and
+every payload read from the old version is dropped, so a resource never
+mixes bytes from two chunk tables. A file that now holds a different GUID
+is an error. `add` with a newer view of a known GUID does the same without
+touching disk.
+
+**Streaming out is `unload`.** It frees the payloads and keeps the resource
+known, so the next `get` reads them again; `remove` forgets the asset. The
+provider reports `resident_bytes()` over every resource for whoever decides
+what to evict; it does not decide itself. Reads are synchronous on the
+calling thread; asynchronous streaming would sit on top of the same
+resources.
+
 ## Writing
 
 `AssetWriter` collects dependencies and chunks, then `write()` emits the file
@@ -453,8 +493,7 @@ matched to the editor file it came from.
 
 - Payload layouts for `NAME`, `IMPS`, `SRC `, and the texture and mesh chunks.
 - The `dump` tool and its `textconv` setup.
-- The asset provider: owns the preludes of a project, hands out views, loads
-  and refreshes payloads through `AssetReader`.
+- Asynchronous loading and an eviction policy for the asset provider.
 - GUID generation and the editor's path-to-GUID index.
 - Platform-specific compiled data (BC7 on desktop, ASTC on mobile) is not
   addressed; version 1 targets desktop Vulkan only.
