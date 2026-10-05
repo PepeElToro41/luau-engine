@@ -1,8 +1,9 @@
 #include "support/test_support.hpp"
 
-#include "engine/asset/asset_file.hpp"
+#include "engine/asset/asset_view.hpp"
+#include "engine/asset/asset_writer.hpp"
 #include "engine/asset/asset_reader.hpp"
-#include "engine/asset/mesh_asset.hpp"
+#include "engine/asset/asset_types/mesh_asset.hpp"
 #include "engine/memory/heap_allocator.hpp"
 #include "engine/templates/dynamic_array.hpp"
 
@@ -125,13 +126,13 @@ struct MeshBuilder {
         }
         usz payload_size = 0;
         u8* payload = this->build_payload(&payload_size);
-        writer.add_chunk(CHUNK_TAG::MESH, version, 0, payload, payload_size);
+        writer.add_chunk(CHUNK_TYPE::MESH, version, 0, payload, payload_size);
         MEMORY::heap_allocator()->free(payload);
         for (usz i = 0; i < this->streams.count && i < 2; ++i) {
-            writer.add_chunk(CHUNK_TAG::VERTICES, version, 0, this->stream_bytes[i].data, this->stream_bytes[i].count);
+            writer.add_chunk(CHUNK_TYPE::VERTICES, version, 0, this->stream_bytes[i].data, this->stream_bytes[i].count);
         }
-        writer.add_chunk(CHUNK_TAG::INDICES, version, 0, this->indices.data, this->indices.count);
-        writer.add_chunk(CHUNK_TAG::BOUNDS, version, 0, &this->bounds, sizeof(MeshBounds));
+        writer.add_chunk(CHUNK_TYPE::INDICES, version, 0, this->indices.data, this->indices.count);
+        writer.add_chunk(CHUNK_TYPE::BOUNDS, version, 0, &this->bounds, sizeof(MeshBounds));
     }
 
     void free() {
@@ -154,7 +155,7 @@ MeshParseError round_trip(const MeshBuilder& builder, AssetView& file, MeshAsset
     *bytes = writer.write(MEMORY::heap_allocator(), &size);
     writer.free();
     REQUIRE(*bytes != nullptr);
-    REQUIRE(file.parse(*bytes, size) == ASSET_PARSE_OK);
+    REQUIRE((file = AssetView::parse(*bytes, size)).is_ok());
     usz payload_size = 0;
     *payload = builder.build_payload(&payload_size);
     return mesh.parse(file, *payload, payload_size);
@@ -176,11 +177,11 @@ void copy_chunks(const AssetView& source, const u8* bytes, AssetWriter& out, con
     usz vertex_chunks = 0;
     for (usz i = 0; i < source.chunk_count(); ++i) {
         const ChunkEntry& chunk = source.chunks[i];
-        if (chunk.tag == CHUNK_TAG::VERTICES && vertex_chunks++ >= keep_vertex) {
+        if (chunk.tag == CHUNK_TYPE::VERTICES && vertex_chunks++ >= keep_vertex) {
             continue;
         }
         out.add_chunk(chunk.tag, chunk.version, chunk.flags, bytes + chunk.offset, chunk.size);
-        if (chunk.tag == CHUNK_TAG::VERTICES && vertex_chunks == keep_vertex) {
+        if (chunk.tag == CHUNK_TYPE::VERTICES && vertex_chunks == keep_vertex) {
             for (usz extra = 0; extra < extra_vertex; ++extra) {
                 out.add_chunk(chunk.tag, chunk.version, chunk.flags, bytes + chunk.offset, chunk.size);
             }
@@ -236,7 +237,7 @@ TEST_CASE("asset/mesh_asset: a view starts empty and rejects files of other type
     writer.free();
     REQUIRE(bytes != nullptr);
     AssetView file;
-    REQUIRE(file.parse(bytes, size) == ASSET_PARSE_OK);
+    REQUIRE((file = AssetView::parse(bytes, size)).is_ok());
     CHECK(mesh.parse(file, &desc, sizeof(desc)) == MESH_PARSE_NOT_A_MESH);
     MEMORY::heap_allocator()->free(bytes);
 
@@ -281,15 +282,15 @@ TEST_CASE("asset/mesh_asset: a two-stream quad parses from its prelude and MESH 
     }
 
     SUBCASE("the geometry chunk entries are the file's, in stream order") {
-        const ChunkEntry* first = file.find_chunk(CHUNK_TAG::VERTICES);
+        const ChunkEntry* first = file.find_chunk(CHUNK_TYPE::VERTICES);
         CHECK(mesh.vertex_chunks[0] == first);
-        CHECK(mesh.vertex_chunks[1] == file.find_chunk(CHUNK_TAG::VERTICES, first));
+        CHECK(mesh.vertex_chunks[1] == file.find_chunk(CHUNK_TYPE::VERTICES, first));
         CHECK(mesh.vertex_chunks[2] == nullptr);
         CHECK(mesh.vertex_chunks[0]->size == 48);
         CHECK(mesh.vertex_chunks[1]->size == 64);
-        CHECK(mesh.index_chunk == file.find_chunk(CHUNK_TAG::INDICES));
+        CHECK(mesh.index_chunk == file.find_chunk(CHUNK_TYPE::INDICES));
         CHECK(mesh.index_chunk->size == 12);
-        CHECK(mesh.bounds_chunk == file.find_chunk(CHUNK_TAG::BOUNDS));
+        CHECK(mesh.bounds_chunk == file.find_chunk(CHUNK_TYPE::BOUNDS));
         CHECK(mesh.bounds_chunk->size == sizeof(MeshBounds));
 
         // The in-memory file holds the bytes the entries point at.
@@ -335,20 +336,18 @@ TEST_CASE("asset/mesh_asset: loading through a file reads the tables, then each 
     MEMORY::heap_allocator()->free(bytes);
 
     // The scan: just the prelude.
-    usz prelude_size = 0;
-    u8* prelude = ASSET_FILE::read_prelude(path.c_str(), MEMORY::heap_allocator(), &prelude_size);
-    REQUIRE(prelude != nullptr);
-    AssetView file;
-    REQUIRE(file.parse(prelude, prelude_size) == ASSET_PARSE_OK);
+    AssetView file = ASSET_FILE::read_prelude(path.c_str(), MEMORY::heap_allocator());
+    REQUIRE(file.is_ok());
 
     // The load.
     AssetReader reader;
     REQUIRE(reader.open(path.c_str()));
-    const ChunkEntry* desc_chunk = nullptr;
-    u8* payload = reader.read_chunk(file, CHUNK_TAG::MESH, MEMORY::heap_allocator(), &desc_chunk);
-    REQUIRE(payload != nullptr);
+    ReadChunk desc_chunk = reader.read_chunk(file, CHUNK_TYPE::MESH, MEMORY::heap_allocator());
+    REQUIRE(desc_chunk.is_ok());
+    REQUIRE(desc_chunk.chunk_data != nullptr);
+    CHECK(desc_chunk.entry.tag == CHUNK_TYPE::MESH);
     MeshAssetView mesh;
-    REQUIRE(mesh.parse(file, payload, desc_chunk->size) == MESH_PARSE_OK);
+    REQUIRE(mesh.parse(file, desc_chunk) == MESH_PARSE_OK);
 
     // Bounds alone: one small read, what a culling pass or the editor wants.
     MeshBounds bounds;
@@ -358,18 +357,18 @@ TEST_CASE("asset/mesh_asset: loading through a file reads the tables, then each 
     // The position stream alone (a depth-only pass), then the indices.
     const VertexAttributeDesc* position = mesh.find_attribute(VERTEX_SEMANTIC_POSITION, 0);
     REQUIRE(position != nullptr);
-    u8* positions = reader.read_chunk(*mesh.vertex_chunks[position->stream], MEMORY::heap_allocator());
+    u8* positions = static_cast<u8*>(reader.read_chunk(*mesh.vertex_chunks[position->stream], MEMORY::heap_allocator()));
     REQUIRE(positions != nullptr);
     CHECK(std::memcmp(positions, builder.stream_bytes[0].data, mesh.stream_size(0)) == 0);
-    u8* indices = reader.read_chunk(*mesh.index_chunk, MEMORY::heap_allocator());
+    u8* indices = static_cast<u8*>(reader.read_chunk(*mesh.index_chunk, MEMORY::heap_allocator()));
     REQUIRE(indices != nullptr);
     CHECK(std::memcmp(indices, builder.indices.data, mesh.index_bytes()) == 0);
     reader.close();
 
     MEMORY::heap_allocator()->free(indices);
     MEMORY::heap_allocator()->free(positions);
-    MEMORY::heap_allocator()->free(payload);
-    MEMORY::heap_allocator()->free(prelude);
+    MEMORY::heap_allocator()->free(desc_chunk.chunk_data);
+    ASSET_FILE::free_prelude(&file, MEMORY::heap_allocator());
     std::filesystem::remove(path);
     builder.free();
 }
@@ -407,15 +406,15 @@ TEST_CASE("asset/mesh_asset: parse rejects missing chunks, unknown versions and 
         AssetWriter writer;
         writer.type = ASSET_TYPE::MESH;
         writer.guid = MESH_GUID;
-        writer.add_chunk(CHUNK_TAG::MESH, 0, 0, nullptr, 0);
-        writer.add_chunk(CHUNK_TAG::VERTICES, 0, 0, nullptr, 0);
-        writer.add_chunk(CHUNK_TAG::INDICES, 0, 0, nullptr, 0);
-        writer.add_chunk(CHUNK_TAG::BOUNDS, 0, 0, nullptr, 0);
+        writer.add_chunk(CHUNK_TYPE::MESH, 0, 0, nullptr, 0);
+        writer.add_chunk(CHUNK_TYPE::VERTICES, 0, 0, nullptr, 0);
+        writer.add_chunk(CHUNK_TYPE::INDICES, 0, 0, nullptr, 0);
+        writer.add_chunk(CHUNK_TYPE::BOUNDS, 0, 0, nullptr, 0);
         usz size = 0;
         u8* bytes = writer.write(MEMORY::heap_allocator(), &size);
         writer.free();
         AssetView file;
-        REQUIRE(file.parse(bytes, size) == ASSET_PARSE_OK);
+        REQUIRE((file = AssetView::parse(bytes, size)).is_ok());
         MeshAssetView mesh;
         CHECK(mesh.parse(file, nullptr, 0) == MESH_PARSE_UNSUPPORTED_VERSION);
         MEMORY::heap_allocator()->free(bytes);
@@ -428,7 +427,7 @@ TEST_CASE("asset/mesh_asset: parse rejects missing chunks, unknown versions and 
         u8* bytes = writer.write(MEMORY::heap_allocator(), &size);
         writer.free();
         AssetView file;
-        REQUIRE(file.parse(bytes, size) == ASSET_PARSE_OK);
+        REQUIRE((file = AssetView::parse(bytes, size)).is_ok());
         MeshAssetView mesh;
         CHECK(mesh.parse(file, payload, payload_size) == MESH_PARSE_UNSUPPORTED_VERSION);
         MEMORY::heap_allocator()->free(bytes);
@@ -441,7 +440,7 @@ TEST_CASE("asset/mesh_asset: parse rejects missing chunks, unknown versions and 
         u8* bytes = writer.write(MEMORY::heap_allocator(), &size);
         writer.free();
         AssetView file;
-        REQUIRE(file.parse(bytes, size) == ASSET_PARSE_OK);
+        REQUIRE((file = AssetView::parse(bytes, size)).is_ok());
         MeshAssetView mesh;
         CHECK(mesh.parse(file, payload, payload_size + 8) == MESH_PARSE_BAD_DESC);
         CHECK(mesh.parse(file, nullptr, payload_size) == MESH_PARSE_BAD_DESC);
@@ -456,7 +455,7 @@ TEST_CASE("asset/mesh_asset: parse rejects missing chunks, unknown versions and 
         u8* bytes = writer.write(MEMORY::heap_allocator(), &size);
         writer.free();
         AssetView full;
-        REQUIRE(full.parse(bytes, size) == ASSET_PARSE_OK);
+        REQUIRE((full = AssetView::parse(bytes, size)).is_ok());
         MeshAssetView mesh;
 
         AssetWriter without_bounds;
@@ -465,7 +464,7 @@ TEST_CASE("asset/mesh_asset: parse rejects missing chunks, unknown versions and 
         without_bounds.add_dependency(MATERIAL_GUID);
         for (usz i = 0; i < full.chunk_count(); ++i) {
             const ChunkEntry& chunk = full.chunks[i];
-            if (chunk.tag != CHUNK_TAG::BOUNDS) {
+            if (chunk.tag != CHUNK_TYPE::BOUNDS) {
                 without_bounds.add_chunk(chunk.tag, chunk.version, chunk.flags, bytes + chunk.offset, chunk.size);
             }
         }
@@ -473,7 +472,7 @@ TEST_CASE("asset/mesh_asset: parse rejects missing chunks, unknown versions and 
         u8* without_bytes = without_bounds.write(MEMORY::heap_allocator(), &without_size);
         without_bounds.free();
         AssetView without_view;
-        REQUIRE(without_view.parse(without_bytes, without_size) == ASSET_PARSE_OK);
+        REQUIRE((without_view = AssetView::parse(without_bytes, without_size)).is_ok());
         CHECK(mesh.parse(without_view, payload, payload_size) == MESH_PARSE_MISSING_CHUNK);
         MEMORY::heap_allocator()->free(without_bytes);
 
@@ -483,7 +482,7 @@ TEST_CASE("asset/mesh_asset: parse rejects missing chunks, unknown versions and 
         u8* fewer_bytes = fewer.write(MEMORY::heap_allocator(), &fewer_size);
         fewer.free();
         AssetView fewer_view;
-        REQUIRE(fewer_view.parse(fewer_bytes, fewer_size) == ASSET_PARSE_OK);
+        REQUIRE((fewer_view = AssetView::parse(fewer_bytes, fewer_size)).is_ok());
         CHECK(mesh.parse(fewer_view, payload, payload_size) == MESH_PARSE_MISSING_CHUNK);
         MEMORY::heap_allocator()->free(fewer_bytes);
 
@@ -493,7 +492,7 @@ TEST_CASE("asset/mesh_asset: parse rejects missing chunks, unknown versions and 
         u8* more_bytes = more.write(MEMORY::heap_allocator(), &more_size);
         more.free();
         AssetView more_view;
-        REQUIRE(more_view.parse(more_bytes, more_size) == ASSET_PARSE_OK);
+        REQUIRE((more_view = AssetView::parse(more_bytes, more_size)).is_ok());
         CHECK(mesh.parse(more_view, payload, payload_size) == MESH_PARSE_BAD_DESC);
         MEMORY::heap_allocator()->free(more_bytes);
 
@@ -626,17 +625,17 @@ TEST_CASE("asset/mesh_asset: parse rejects a BBOX chunk of the wrong size") {
     writer.type = ASSET_TYPE::MESH;
     writer.guid = MESH_GUID;
     writer.add_dependency(MATERIAL_GUID);
-    writer.add_chunk(CHUNK_TAG::MESH, MESH_ASSET::VERSION, 0, payload, payload_size);
-    writer.add_chunk(CHUNK_TAG::VERTICES, MESH_ASSET::VERSION, 0, builder.stream_bytes[0].data, builder.stream_bytes[0].count);
-    writer.add_chunk(CHUNK_TAG::VERTICES, MESH_ASSET::VERSION, 0, builder.stream_bytes[1].data, builder.stream_bytes[1].count);
-    writer.add_chunk(CHUNK_TAG::INDICES, MESH_ASSET::VERSION, 0, builder.indices.data, builder.indices.count);
-    writer.add_chunk(CHUNK_TAG::BOUNDS, MESH_ASSET::VERSION, 0, &builder.bounds, sizeof(MeshBounds) - 8);
+    writer.add_chunk(CHUNK_TYPE::MESH, MESH_ASSET::VERSION, 0, payload, payload_size);
+    writer.add_chunk(CHUNK_TYPE::VERTICES, MESH_ASSET::VERSION, 0, builder.stream_bytes[0].data, builder.stream_bytes[0].count);
+    writer.add_chunk(CHUNK_TYPE::VERTICES, MESH_ASSET::VERSION, 0, builder.stream_bytes[1].data, builder.stream_bytes[1].count);
+    writer.add_chunk(CHUNK_TYPE::INDICES, MESH_ASSET::VERSION, 0, builder.indices.data, builder.indices.count);
+    writer.add_chunk(CHUNK_TYPE::BOUNDS, MESH_ASSET::VERSION, 0, &builder.bounds, sizeof(MeshBounds) - 8);
 
     usz size = 0;
     u8* bytes = writer.write(MEMORY::heap_allocator(), &size);
     writer.free();
     AssetView file;
-    REQUIRE(file.parse(bytes, size) == ASSET_PARSE_OK);
+    REQUIRE((file = AssetView::parse(bytes, size)).is_ok());
     MeshAssetView mesh;
     CHECK(mesh.parse(file, payload, payload_size) == MESH_PARSE_BAD_BOUNDS);
     CHECK_FALSE(mesh.is_parsed());

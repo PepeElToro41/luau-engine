@@ -1,27 +1,12 @@
 #include "ui/asset_browser_panel.hpp"
 
+#include "ui/format.hpp"
+#include "ui/import/import_panel.hpp"
 #include "ui/panels.hpp"
 
 #include <algorithm>
 #include <cctype>
 #include <cfloat>
-#include <cstdio>
-
-// Writes `bytes` as "1.2 MB" style text into `out`.
-static void format_size(const u64 bytes, char* out, const usz out_size) {
-    static constexpr const char* UNITS[] = {"B", "KB", "MB", "GB", "TB"};
-    f64 value = static_cast<f64>(bytes);
-    usz unit = 0;
-    while (value >= 1024.0 && unit + 1 < sizeof(UNITS) / sizeof(UNITS[0])) {
-        value /= 1024.0;
-        ++unit;
-    }
-    if (unit == 0) {
-        snprintf(out, out_size, "%llu %s", static_cast<unsigned long long>(bytes), UNITS[unit]);
-    } else {
-        snprintf(out, out_size, "%.1f %s", value, UNITS[unit]);
-    }
-}
 
 static std::string lowercase_extension(const std::filesystem::path& path) {
     std::string extension = path.extension().string();
@@ -84,7 +69,9 @@ void AssetBrowserPanel::rescan(const Project& project) {
     });
 }
 
-void AssetBrowserPanel::draw(bool* open, const Project* project_or_null) {
+static const char* DELETE_POPUP = "Delete?";
+
+void AssetBrowserPanel::draw(bool* open, const Project* project_or_null, OutputPanel& output) {
     if (!ImGui::Begin(PANELS::ASSET_BROWSER, open)) {
         ImGui::End();
         return;
@@ -110,9 +97,11 @@ void AssetBrowserPanel::draw(bool* open, const Project* project_or_null) {
         this->rescan(project);
     }
 
+    this->activated.clear();
     this->draw_breadcrumbs(project);
     ImGui::Separator();
     this->draw_entries();
+    this->draw_delete_popup(project, output);
 
     ImGui::End();
 }
@@ -185,6 +174,7 @@ void AssetBrowserPanel::draw_entries() {
     ImGui::TableHeadersRow();
 
     std::filesystem::path enter; // folder double-clicked this frame, if any
+    bool request_delete = false; // Delete picked from a context menu this frame
     char size_text[32];
     for (const Entry& entry : this->entries) {
         if (!this->filter.PassFilter(entry.name.c_str())) {
@@ -197,9 +187,26 @@ void AssetBrowserPanel::draw_entries() {
         const ImGuiSelectableFlags flags = ImGuiSelectableFlags_SpanAllColumns | ImGuiSelectableFlags_AllowDoubleClick;
         if (ImGui::Selectable(entry.name.c_str(), is_selected, flags)) {
             this->selected = entry.name;
-            if (entry.is_directory && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) {
-                enter = this->current / entry.name;
+            if (ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) {
+                if (entry.is_directory) {
+                    enter = this->current / entry.name;
+                } else {
+                    this->activated = this->current / entry.name;
+                }
             }
+        }
+        // Right-click: context menu on the row (the Selectable's id).
+        if (ImGui::BeginPopupContextItem()) {
+            this->selected = entry.name;
+            const bool importable = !entry.is_directory && ImportPanel::kind_of(entry.extension) != ImportPanel::Kind::UNSUPPORTED;
+            if (importable && ImGui::MenuItem("Import")) {
+                this->activated = this->current / entry.name; // same as a double-click
+            }
+            if (ImGui::MenuItem("Delete")) {
+                this->deleting = entry;
+                request_delete = true;
+            }
+            ImGui::EndPopup();
         }
 
         ImGui::TableNextColumn();
@@ -213,7 +220,7 @@ void AssetBrowserPanel::draw_entries() {
 
         ImGui::TableNextColumn();
         if (!entry.is_directory) {
-            format_size(entry.size, size_text, sizeof(size_text));
+            UI::format_size(entry.size, size_text, sizeof(size_text));
             ImGui::TextUnformatted(size_text);
         }
     }
@@ -222,4 +229,63 @@ void AssetBrowserPanel::draw_entries() {
     if (!enter.empty()) {
         this->navigate(enter);
     }
+    // Opened here, outside the table, so the modal in draw_delete_popup()
+    // begins at the same id-stack level.
+    if (request_delete) {
+        ImGui::OpenPopup(DELETE_POPUP);
+    }
+}
+
+void AssetBrowserPanel::draw_delete_popup(const Project& project, OutputPanel& output) {
+    const ImVec2 center = ImGui::GetMainViewport()->GetCenter();
+    ImGui::SetNextWindowPos(center, ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
+    if (!ImGui::BeginPopupModal(DELETE_POPUP, nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+        return;
+    }
+    if (this->deleting.name.empty()) {
+        ImGui::CloseCurrentPopup();
+        ImGui::EndPopup();
+        return;
+    }
+
+    const std::string shown = (this->current / this->deleting.name).generic_string();
+    if (this->deleting.is_directory) {
+        ImGui::Text("Delete the folder %s and everything in it?", shown.c_str());
+    } else {
+        ImGui::Text("Delete %s?", shown.c_str());
+    }
+    ImGui::TextDisabled("This cannot be undone.");
+    ImGui::Separator();
+
+    if (ImGui::Button("Delete", ImVec2(100.0f, 0.0f))) {
+        this->delete_entry(project, this->deleting, output);
+        this->deleting = {};
+        ImGui::CloseCurrentPopup();
+    }
+    ImGui::SameLine();
+    if (ImGui::Button("Cancel", ImVec2(100.0f, 0.0f)) || ImGui::IsKeyPressed(ImGuiKey_Escape)) {
+        this->deleting = {};
+        ImGui::CloseCurrentPopup();
+    }
+    ImGui::EndPopup();
+}
+
+void AssetBrowserPanel::delete_entry(const Project& project, const Entry& entry, OutputPanel& output) {
+    const std::filesystem::path target = (project.root / this->current / entry.name).lexically_normal();
+    std::error_code error;
+    if (entry.is_directory) {
+        std::filesystem::remove_all(target, error);
+    } else {
+        std::filesystem::remove(target, error);
+    }
+    const std::string shown = (this->current / entry.name).generic_string();
+    if (error) {
+        output.error("Delete %s failed: %s", shown.c_str(), error.message().c_str());
+    } else {
+        output.info("Deleted %s", shown.c_str());
+        if (this->selected == entry.name) {
+            this->selected.clear();
+        }
+    }
+    this->refresh();
 }

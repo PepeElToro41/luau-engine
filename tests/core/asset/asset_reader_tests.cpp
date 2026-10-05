@@ -1,7 +1,8 @@
 #include "support/test_support.hpp"
 
-#include "engine/asset/asset_file.hpp"
 #include "engine/asset/asset_reader.hpp"
+#include "engine/asset/asset_view.hpp"
+#include "engine/asset/asset_writer.hpp"
 #include "engine/memory/arena_allocator.hpp"
 #include "engine/memory/heap_allocator.hpp"
 
@@ -41,12 +42,12 @@ void fill_mesh(AssetWriter& writer) {
     }
     f32 bounds[12] = {-1, -2, -3, 1, 2, 3, 0, 0, 0, 3.75f, 0, 0};
 
-    writer.add_chunk(CHUNK_TAG::NAME, 1, CHUNK_FLAG::EDITOR_ONLY, name, sizeof(name));
-    writer.add_chunk(CHUNK_TAG::MESH, 1, 0, nullptr, 0);
-    writer.add_chunk(CHUNK_TAG::VERTICES, 1, 0, positions, sizeof(positions));
-    writer.add_chunk(CHUNK_TAG::VERTICES, 1, 0, normals, sizeof(normals));
-    writer.add_chunk(CHUNK_TAG::INDICES, 1, 0, nullptr, 0);
-    writer.add_chunk(CHUNK_TAG::BOUNDS, 1, 0, bounds, sizeof(bounds));
+    writer.add_chunk(CHUNK_TYPE::NAME, 1, CHUNK_FLAG::EDITOR_ONLY, name, sizeof(name));
+    writer.add_chunk(CHUNK_TYPE::MESH, 1, 0, nullptr, 0);
+    writer.add_chunk(CHUNK_TYPE::VERTICES, 1, 0, positions, sizeof(positions));
+    writer.add_chunk(CHUNK_TYPE::VERTICES, 1, 0, normals, sizeof(normals));
+    writer.add_chunk(CHUNK_TYPE::INDICES, 1, 0, nullptr, 0);
+    writer.add_chunk(CHUNK_TYPE::BOUNDS, 1, 0, bounds, sizeof(bounds));
 }
 
 // Writes the mesh file to `path` and returns its bytes for comparison.
@@ -73,13 +74,41 @@ TEST_CASE("asset/asset_reader: a reader starts closed and refuses to read") {
     chunk.size = 0;
     CHECK_FALSE(reader.read_chunk(chunk, static_cast<void*>(nullptr)));
     CHECK(reader.read_chunk(chunk, MEMORY::heap_allocator()) == nullptr);
-    CHECK(reader.read_chunk(empty, CHUNK_TAG::MESH, MEMORY::heap_allocator()) == nullptr);
-    usz size = 7;
-    CHECK(reader.read_prelude(MEMORY::heap_allocator(), &size) == nullptr);
-    CHECK(size == 7);
+
+    ReadChunk by_tag = reader.read_chunk(empty, CHUNK_TYPE::MESH, MEMORY::heap_allocator());
+    CHECK_FALSE(by_tag.is_ok());
+    CHECK(by_tag.read_error == ASSET_READ_INVALID);
+    CHECK(by_tag.chunk_data == nullptr);
+
+    AssetView prelude = reader.read_prelude(MEMORY::heap_allocator());
+    CHECK_FALSE(prelude.is_ok());
+    CHECK(prelude.parse_error == ASSET_FILE_ERROR);
+    CHECK(prelude.data == nullptr);
 
     reader.close(); // closing a closed reader is fine
     CHECK_FALSE(reader.is_open());
+}
+
+TEST_CASE("asset/asset_reader: a default ReadChunk is invalid and an error one carries its reason") {
+    ReadChunk none;
+    CHECK_FALSE(none.is_ok());
+    CHECK(none.read_error == ASSET_READ_INVALID);
+    CHECK(none.chunk_data == nullptr);
+    CHECK(none.entry.size == 0);
+
+    ReadChunk failed(ASSET_READ_FILE_ERROR);
+    CHECK_FALSE(failed.is_ok());
+    CHECK(failed.read_error == ASSET_READ_FILE_ERROR);
+
+    ChunkEntry entry;
+    entry.tag = CHUNK_TYPE::BOUNDS;
+    entry.size = 48;
+    u8 bytes[48];
+    ReadChunk good(bytes, entry);
+    CHECK(good.is_ok());
+    CHECK(good.chunk_data == bytes);
+    CHECK(good.entry.tag == CHUNK_TYPE::BOUNDS);
+    CHECK(good.entry.size == 48);
 }
 
 TEST_CASE("asset/asset_reader: open validates the header against the file on disk") {
@@ -157,37 +186,32 @@ TEST_CASE("asset/asset_reader: read_prelude from the reader parses into a matchi
     AssetReader reader;
     REQUIRE(reader.open(path.c_str()));
 
-    usz prelude_size = 0;
-    u8* prelude = reader.read_prelude(MEMORY::heap_allocator(), &prelude_size);
-    REQUIRE(prelude != nullptr);
-    CHECK(prelude_size == ASSET_FILE::prelude_size(1, 6));
-    CHECK(std::memcmp(prelude, bytes, prelude_size) == 0);
-    CHECK(is_aligned(prelude, ASSET_FILE::PAYLOAD_ALIGNMENT));
-
-    AssetView view;
-    REQUIRE(view.parse(prelude, prelude_size) == ASSET_PARSE_OK);
+    AssetView view = reader.read_prelude(MEMORY::heap_allocator());
+    REQUIRE(view.is_ok());
+    CHECK(view.size == ASSET_FILE::prelude_size(1, 6));
+    CHECK(std::memcmp(view.data, bytes, view.size) == 0);
+    CHECK(is_aligned(view.data, ASSET_FILE::PAYLOAD_ALIGNMENT));
     CHECK(reader.matches(view));
     CHECK(view.dependencies[0] == MATERIAL_GUID);
 
     // The same bytes ASSET_FILE::read_prelude gives.
-    usz other_size = 0;
-    u8* other = ASSET_FILE::read_prelude(path.c_str(), MEMORY::heap_allocator(), &other_size);
-    REQUIRE(other != nullptr);
-    CHECK(other_size == prelude_size);
-    CHECK(std::memcmp(other, prelude, prelude_size) == 0);
+    AssetView other = ASSET_FILE::read_prelude(path.c_str(), MEMORY::heap_allocator());
+    REQUIRE(other.is_ok());
+    CHECK(other.size == view.size);
+    CHECK(std::memcmp(other.data, view.data, view.size) == 0);
 
     // Reading the prelude again after a chunk read still starts at 0.
-    const ChunkEntry* bounds = view.find_chunk(CHUNK_TAG::BOUNDS);
+    const ChunkEntry* bounds = view.find_chunk(CHUNK_TYPE::BOUNDS);
     REQUIRE(bounds != nullptr);
     u8 scratch[48];
     REQUIRE(reader.read_chunk(*bounds, scratch));
-    u8* again = reader.read_prelude(MEMORY::heap_allocator(), nullptr);
-    REQUIRE(again != nullptr);
-    CHECK(std::memcmp(again, prelude, prelude_size) == 0);
+    AssetView again = reader.read_prelude(MEMORY::heap_allocator());
+    REQUIRE(again.is_ok());
+    CHECK(std::memcmp(again.data, view.data, view.size) == 0);
 
-    MEMORY::heap_allocator()->free(again);
-    MEMORY::heap_allocator()->free(other);
-    MEMORY::heap_allocator()->free(prelude);
+    ASSET_FILE::free_prelude(&again, MEMORY::heap_allocator());
+    ASSET_FILE::free_prelude(&other, MEMORY::heap_allocator());
+    ASSET_FILE::free_prelude(&view, MEMORY::heap_allocator());
     reader.close();
     std::filesystem::remove(path);
     MEMORY::heap_allocator()->free(bytes);
@@ -198,18 +222,15 @@ TEST_CASE("asset/asset_reader: read_chunk seeks to a chunk by its table entry") 
     usz size = 0;
     u8* bytes = write_mesh_file(path, &size);
 
-    usz prelude_size = 0;
-    u8* prelude = ASSET_FILE::read_prelude(path.c_str(), MEMORY::heap_allocator(), &prelude_size);
-    REQUIRE(prelude != nullptr);
-    AssetView view;
-    REQUIRE(view.parse(prelude, prelude_size) == ASSET_PARSE_OK);
+    AssetView view = ASSET_FILE::read_prelude(path.c_str(), MEMORY::heap_allocator());
+    REQUIRE(view.is_ok());
 
     AssetReader reader;
     REQUIRE(reader.open(path.c_str()));
     REQUIRE(reader.matches(view));
 
     SUBCASE("into caller memory, in any order") {
-        const ChunkEntry* bounds = view.find_chunk(CHUNK_TAG::BOUNDS);
+        const ChunkEntry* bounds = view.find_chunk(CHUNK_TYPE::BOUNDS);
         REQUIRE(bounds != nullptr);
         f32 box[12];
         REQUIRE(reader.read_chunk(*bounds, box));
@@ -218,7 +239,7 @@ TEST_CASE("asset/asset_reader: read_chunk seeks to a chunk by its table entry") 
         CHECK(box[9] == 3.75f);
 
         // Then something earlier in the file: the reader seeks backwards.
-        const ChunkEntry* name = view.find_chunk(CHUNK_TAG::NAME);
+        const ChunkEntry* name = view.find_chunk(CHUNK_TYPE::NAME);
         REQUIRE(name != nullptr);
         char text[8];
         REQUIRE(reader.read_chunk(*name, text));
@@ -226,12 +247,12 @@ TEST_CASE("asset/asset_reader: read_chunk seeks to a chunk by its table entry") 
     }
 
     SUBCASE("into a fresh aligned buffer, walking repeated tags") {
-        const ChunkEntry* first = view.find_chunk(CHUNK_TAG::VERTICES);
-        const ChunkEntry* second = view.find_chunk(CHUNK_TAG::VERTICES, first);
+        const ChunkEntry* first = view.find_chunk(CHUNK_TYPE::VERTICES);
+        const ChunkEntry* second = view.find_chunk(CHUNK_TYPE::VERTICES, first);
         REQUIRE(first != nullptr);
         REQUIRE(second != nullptr);
 
-        u8* normals = reader.read_chunk(*second, MEMORY::heap_allocator());
+        u8* normals = static_cast<u8*>(reader.read_chunk(*second, MEMORY::heap_allocator()));
         REQUIRE(normals != nullptr);
         CHECK(is_aligned(normals, ASSET_FILE::PAYLOAD_ALIGNMENT));
         bool intact = true;
@@ -240,7 +261,7 @@ TEST_CASE("asset/asset_reader: read_chunk seeks to a chunk by its table entry") 
         }
         CHECK(intact);
 
-        u8* positions = reader.read_chunk(*first, MEMORY::heap_allocator());
+        u8* positions = static_cast<u8*>(reader.read_chunk(*first, MEMORY::heap_allocator()));
         REQUIRE(positions != nullptr);
         CHECK(positions[119] == 119);
         CHECK(std::memcmp(positions, bytes + first->offset, first->size) == 0);
@@ -249,47 +270,52 @@ TEST_CASE("asset/asset_reader: read_chunk seeks to a chunk by its table entry") 
         MEMORY::heap_allocator()->free(normals);
     }
 
-    SUBCASE("by tag through the view") {
-        const ChunkEntry* entry = nullptr;
-        u8* positions = reader.read_chunk(view, CHUNK_TAG::VERTICES, MEMORY::heap_allocator(), &entry);
-        REQUIRE(positions != nullptr);
-        REQUIRE(entry == view.find_chunk(CHUNK_TAG::VERTICES)); // the first one
-        CHECK(entry->size == 120);
-        CHECK(positions[7] == 7);
-        MEMORY::heap_allocator()->free(positions);
+    SUBCASE("by tag through the view, with the entry read") {
+        ReadChunk positions = reader.read_chunk(view, CHUNK_TYPE::VERTICES, MEMORY::heap_allocator());
+        REQUIRE(positions.is_ok());
+        REQUIRE(positions.chunk_data != nullptr);
+        CHECK(positions.entry.tag == CHUNK_TYPE::VERTICES);
+        CHECK(positions.entry.offset == view.find_chunk(CHUNK_TYPE::VERTICES)->offset); // the first one
+        CHECK(positions.entry.size == 120);
+        CHECK(static_cast<u8*>(positions.chunk_data)[7] == 7);
+        MEMORY::heap_allocator()->free(positions.chunk_data);
 
-        // The out entry is optional.
-        u8* again = reader.read_chunk(view, CHUNK_TAG::BOUNDS, MEMORY::heap_allocator());
-        REQUIRE(again != nullptr);
-        MEMORY::heap_allocator()->free(again);
+        ReadChunk bounds = reader.read_chunk(view, CHUNK_TYPE::BOUNDS, MEMORY::heap_allocator());
+        REQUIRE(bounds.is_ok());
+        CHECK(bounds.entry.size == 48);
+        MEMORY::heap_allocator()->free(bounds.chunk_data);
     }
 
-    SUBCASE("an absent tag reads nothing and reports no entry") {
-        const ChunkEntry* entry = &view.chunks[0];
-        CHECK(reader.read_chunk(view, CHUNK_TAG::PIXELS, MEMORY::heap_allocator(), &entry) == nullptr);
-        CHECK(entry == nullptr);
+    SUBCASE("an absent tag reads nothing and says so") {
+        ReadChunk pixels = reader.read_chunk(view, CHUNK_TYPE::PIXELS, MEMORY::heap_allocator());
+        CHECK_FALSE(pixels.is_ok());
+        CHECK(pixels.read_error == ASSET_READ_NOT_FOUND);
+        CHECK(pixels.chunk_data == nullptr);
     }
 
     SUBCASE("an empty chunk succeeds into memory and allocates nothing") {
-        const ChunkEntry* indices = view.find_chunk(CHUNK_TAG::INDICES);
+        const ChunkEntry* indices = view.find_chunk(CHUNK_TYPE::INDICES);
         REQUIRE(indices != nullptr);
         CHECK(indices->size == 0);
         u8 untouched = 0xab;
         CHECK(reader.read_chunk(*indices, &untouched));
         CHECK(untouched == 0xab);
         CHECK(reader.read_chunk(*indices, MEMORY::heap_allocator()) == nullptr);
-        const ChunkEntry* entry = nullptr;
-        CHECK(reader.read_chunk(view, CHUNK_TAG::INDICES, MEMORY::heap_allocator(), &entry) == nullptr);
-        CHECK(entry == indices); // found, just empty
+
+        ReadChunk empty = reader.read_chunk(view, CHUNK_TYPE::INDICES, MEMORY::heap_allocator());
+        CHECK(empty.is_ok()); // found, just empty
+        CHECK(empty.chunk_data == nullptr);
+        CHECK(empty.entry.tag == CHUNK_TYPE::INDICES);
+        CHECK(empty.entry.size == 0);
     }
 
     SUBCASE("payloads land on an arena") {
         ArenaAllocator arena(64 * MEMORY::KB);
-        const ChunkEntry* entry = nullptr;
-        u8* normals = reader.read_chunk(view, CHUNK_TAG::VERTICES, &arena, &entry);
-        REQUIRE(normals != nullptr);
-        CHECK(normals >= reinterpret_cast<u8*>(arena.data));
-        CHECK(normals + entry->size <= reinterpret_cast<u8*>(arena.data) + arena.arena_size);
+        ReadChunk normals = reader.read_chunk(view, CHUNK_TYPE::VERTICES, &arena);
+        REQUIRE(normals.is_ok());
+        const u8* data = static_cast<const u8*>(normals.chunk_data);
+        CHECK(data >= reinterpret_cast<u8*>(arena.data));
+        CHECK(data + normals.entry.size <= reinterpret_cast<u8*>(arena.data) + arena.arena_size);
         arena.release();
     }
 
@@ -316,7 +342,7 @@ TEST_CASE("asset/asset_reader: read_chunk seeks to a chunk by its table entry") 
     }
 
     reader.close();
-    MEMORY::heap_allocator()->free(prelude);
+    ASSET_FILE::free_prelude(&view, MEMORY::heap_allocator());
     std::filesystem::remove(path);
     MEMORY::heap_allocator()->free(bytes);
 }
@@ -326,18 +352,15 @@ TEST_CASE("asset/asset_reader: a stale view is rejected until its prelude is re-
     usz size = 0;
     u8* bytes = write_mesh_file(path, &size);
 
-    usz prelude_size = 0;
-    u8* prelude = ASSET_FILE::read_prelude(path.c_str(), MEMORY::heap_allocator(), &prelude_size);
-    REQUIRE(prelude != nullptr);
-    AssetView view;
-    REQUIRE(view.parse(prelude, prelude_size) == ASSET_PARSE_OK);
+    AssetView view = ASSET_FILE::read_prelude(path.c_str(), MEMORY::heap_allocator());
+    REQUIRE(view.is_ok());
 
     // The file is re-imported: same guid, new content, new size.
     AssetWriter reimported;
     fill_mesh(reimported);
     reimported.content_hash = 0x5678;
     const u8 extra[16] = {};
-    reimported.add_chunk(CHUNK_TAG::SOURCE, 1, CHUNK_FLAG::EDITOR_ONLY, extra, sizeof(extra));
+    reimported.add_chunk(CHUNK_TYPE::SOURCE, 1, CHUNK_FLAG::EDITOR_ONLY, extra, sizeof(extra));
     usz new_size = 0;
     u8* new_bytes = reimported.write(MEMORY::heap_allocator(), &new_size);
     reimported.free();
@@ -348,7 +371,10 @@ TEST_CASE("asset/asset_reader: a stale view is rejected until its prelude is re-
     REQUIRE(reader.open(path.c_str()));
     CHECK(reader.header.guid == view.header->guid);
     CHECK_FALSE(reader.matches(view));
-    CHECK(reader.read_chunk(view, CHUNK_TAG::BOUNDS, MEMORY::heap_allocator()) == nullptr);
+    ReadChunk stale = reader.read_chunk(view, CHUNK_TYPE::BOUNDS, MEMORY::heap_allocator());
+    CHECK_FALSE(stale.is_ok());
+    CHECK(stale.read_error == ASSET_READ_STALE_VIEW);
+    CHECK(stale.chunk_data == nullptr);
 
     SUBCASE("a view of a different asset never matches") {
         AssetWriter other;
@@ -357,33 +383,29 @@ TEST_CASE("asset/asset_reader: a stale view is rejected until its prelude is re-
         usz other_size = 0;
         u8* other_bytes = other.write(MEMORY::heap_allocator(), &other_size);
         other.free();
-        AssetView other_view;
-        REQUIRE(other_view.parse(other_bytes, other_size) == ASSET_PARSE_OK);
+        AssetView other_view = AssetView::parse(other_bytes, other_size);
+        REQUIRE(other_view.is_ok());
         CHECK_FALSE(reader.matches(other_view));
         MEMORY::heap_allocator()->free(other_bytes);
     }
 
     SUBCASE("refreshing the view from the open reader") {
-        usz fresh_size = 0;
-        u8* fresh = reader.read_prelude(MEMORY::heap_allocator(), &fresh_size);
-        REQUIRE(fresh != nullptr);
-        AssetView fresh_view;
-        REQUIRE(fresh_view.parse(fresh, fresh_size) == ASSET_PARSE_OK);
+        AssetView fresh_view = reader.read_prelude(MEMORY::heap_allocator());
+        REQUIRE(fresh_view.is_ok());
         CHECK(reader.matches(fresh_view));
         CHECK(fresh_view.chunk_count() == 7);
         CHECK(fresh_view.header->content_hash == 0x5678);
 
-        const ChunkEntry* entry = nullptr;
-        u8* bounds = reader.read_chunk(fresh_view, CHUNK_TAG::BOUNDS, MEMORY::heap_allocator(), &entry);
-        REQUIRE(bounds != nullptr);
-        CHECK(entry->size == 48);
-        MEMORY::heap_allocator()->free(bounds);
-        MEMORY::heap_allocator()->free(fresh);
+        ReadChunk bounds = reader.read_chunk(fresh_view, CHUNK_TYPE::BOUNDS, MEMORY::heap_allocator());
+        REQUIRE(bounds.is_ok());
+        CHECK(bounds.entry.size == 48);
+        MEMORY::heap_allocator()->free(bounds.chunk_data);
+        ASSET_FILE::free_prelude(&fresh_view, MEMORY::heap_allocator());
     }
 
     reader.close();
     MEMORY::heap_allocator()->free(new_bytes);
-    MEMORY::heap_allocator()->free(prelude);
+    ASSET_FILE::free_prelude(&view, MEMORY::heap_allocator());
     std::filesystem::remove(path);
     MEMORY::heap_allocator()->free(bytes);
 }
@@ -393,11 +415,8 @@ TEST_CASE("asset/asset_reader: cooking copies chunks from disk one at a time") {
     usz size = 0;
     u8* bytes = write_mesh_file(path, &size);
 
-    usz prelude_size = 0;
-    u8* prelude = ASSET_FILE::read_prelude(path.c_str(), MEMORY::heap_allocator(), &prelude_size);
-    REQUIRE(prelude != nullptr);
-    AssetView source;
-    REQUIRE(source.parse(prelude, prelude_size) == ASSET_PARSE_OK);
+    AssetView source = ASSET_FILE::read_prelude(path.c_str(), MEMORY::heap_allocator());
+    REQUIRE(source.is_ok());
 
     AssetReader reader;
     REQUIRE(reader.open(path.c_str()));
@@ -413,10 +432,10 @@ TEST_CASE("asset/asset_reader: cooking copies chunks from disk one at a time") {
     }
     for (usz i = 0; i < source.chunk_count(); ++i) {
         const ChunkEntry& chunk = source.chunks[i];
-        if (chunk.is_editor_only()) {
+        if (chunk.editor_only()) {
             continue;
         }
-        u8* payload = reader.read_chunk(chunk, MEMORY::heap_allocator());
+        void* payload = reader.read_chunk(chunk, MEMORY::heap_allocator());
         REQUIRE((payload != nullptr) == (chunk.size > 0));
         cooked.add_chunk(chunk.tag, chunk.version, chunk.flags, payload, chunk.size);
         MEMORY::heap_allocator()->free(payload);
@@ -429,19 +448,19 @@ TEST_CASE("asset/asset_reader: cooking copies chunks from disk one at a time") {
     REQUIRE(cooked_bytes != nullptr);
     CHECK(cooked_size < size);
 
-    AssetView view;
-    REQUIRE(view.parse(cooked_bytes, cooked_size) == ASSET_PARSE_OK);
+    AssetView view = AssetView::parse(cooked_bytes, cooked_size);
+    REQUIRE(view.is_ok());
     CHECK(view.is_cooked());
     CHECK_FALSE(view.has_editor_chunks());
     CHECK(view.chunk_count() == 5);
-    const ChunkEntry* second = view.find_chunk(CHUNK_TAG::VERTICES, view.find_chunk(CHUNK_TAG::VERTICES));
+    const ChunkEntry* second = view.find_chunk(CHUNK_TYPE::VERTICES, view.find_chunk(CHUNK_TYPE::VERTICES));
     REQUIRE(second != nullptr);
     CHECK(second->size == 200);
-    const ChunkEntry* original = source.find_chunk(CHUNK_TAG::VERTICES, source.find_chunk(CHUNK_TAG::VERTICES));
+    const ChunkEntry* original = source.find_chunk(CHUNK_TYPE::VERTICES, source.find_chunk(CHUNK_TYPE::VERTICES));
     CHECK(std::memcmp(cooked_bytes + second->offset, bytes + original->offset, 200) == 0);
 
     MEMORY::heap_allocator()->free(cooked_bytes);
-    MEMORY::heap_allocator()->free(prelude);
+    ASSET_FILE::free_prelude(&source, MEMORY::heap_allocator());
     std::filesystem::remove(path);
     MEMORY::heap_allocator()->free(bytes);
 }

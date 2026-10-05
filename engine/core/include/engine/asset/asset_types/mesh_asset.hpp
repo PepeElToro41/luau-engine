@@ -1,6 +1,8 @@
 #pragma once
 
-#include "engine/asset/asset_file.hpp"
+#include "engine/asset/asset_reader.hpp"
+#include "engine/asset/asset_view.hpp"
+#include "engine/asset/asset_writer.hpp"
 #include "engine/defines.hpp"
 
 // Payload layout of a mesh asset (ASSET_TYPE::MESH). The `MESH` chunk holds
@@ -11,11 +13,11 @@
 //
 //     AssetView view;  ... parsed from the file's prelude ...
 //     AssetReader reader;  ... open on the same file ...
-//     u8* desc_bytes = reader.read_chunk(view, CHUNK_TAG::MESH, allocator, &desc_chunk);
+//     ReadChunk desc = reader.read_chunk(view, CHUNK_TYPE::MESH, allocator);
 //     MeshAssetView mesh;
-//     if (mesh.parse(view, desc_bytes, desc_chunk->size) == MESH_PARSE_OK) {
+//     if (mesh.parse(view, desc) == MESH_PARSE_OK) {
 //         const VertexAttributeDesc* position = mesh.find_attribute(VERTEX_SEMANTIC_POSITION, 0);
-//         u8* stream = reader.read_chunk(*mesh.vertex_chunks[position->stream], allocator);
+//         void* stream = reader.read_chunk(*mesh.vertex_chunks[position->stream], allocator);
 //         MeshBounds bounds;
 //         reader.read_chunk(*mesh.bounds_chunk, &bounds);
 //     }
@@ -216,6 +218,9 @@ struct MeshAssetView {
     // (`size` of them, 8-byte aligned, as read_chunk returns them). On any
     // error the view is reset to empty.
     MeshParseError parse(const AssetView& file, const void* payload, usz size);
+    // The same from what read_chunk(file, CHUNK_TYPE::MESH, ...) returned; a
+    // chunk that is not ok() parses as MESH_PARSE_BAD_DESC.
+    MeshParseError parse(const AssetView& file, const ReadChunk& chunk);
     void reset();
 
     bool is_parsed() const { return this->desc != nullptr; }

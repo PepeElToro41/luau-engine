@@ -1,4 +1,4 @@
-#include "engine/asset/mesh_asset.hpp"
+#include "engine/asset/asset_types/mesh_asset.hpp"
 
 #include "engine/memory/heap_allocator.hpp"
 
@@ -115,12 +115,12 @@ bool desc_is_valid(const MeshDesc& desc) {
 MeshParseError MeshAssetView::parse(const AssetView& file, const void* payload, const usz size) {
     this->reset();
 
-    if (!file.is_parsed() || file.header->type != ASSET_TYPE::MESH) {
+    if (!file.is_ok() || file.header->type != ASSET_TYPE::MESH) {
         return MESH_PARSE_NOT_A_MESH;
     }
-    const ChunkEntry* desc_chunk = file.find_chunk(CHUNK_TAG::MESH);
-    const ChunkEntry* index_chunk = file.find_chunk(CHUNK_TAG::INDICES);
-    const ChunkEntry* bounds_chunk = file.find_chunk(CHUNK_TAG::BOUNDS);
+    const ChunkEntry* desc_chunk = file.find_chunk(CHUNK_TYPE::MESH);
+    const ChunkEntry* index_chunk = file.find_chunk(CHUNK_TYPE::INDICES);
+    const ChunkEntry* bounds_chunk = file.find_chunk(CHUNK_TYPE::BOUNDS);
     if (desc_chunk == nullptr || index_chunk == nullptr || bounds_chunk == nullptr) {
         return MESH_PARSE_MISSING_CHUNK;
     }
@@ -154,7 +154,7 @@ MeshParseError MeshAssetView::parse(const AssetView& file, const void* payload, 
     const ChunkEntry* vertex_chunks[MESH_ASSET::MAX_STREAMS] = {};
     const ChunkEntry* vertex_chunk = nullptr;
     for (u32 i = 0; i < desc.stream_count; ++i) {
-        vertex_chunk = file.find_chunk(CHUNK_TAG::VERTICES, vertex_chunk);
+        vertex_chunk = file.find_chunk(CHUNK_TYPE::VERTICES, vertex_chunk);
         if (vertex_chunk == nullptr) {
             return MESH_PARSE_MISSING_CHUNK;
         }
@@ -171,7 +171,7 @@ MeshParseError MeshAssetView::parse(const AssetView& file, const void* payload, 
         }
         vertex_chunks[i] = vertex_chunk;
     }
-    if (file.find_chunk(CHUNK_TAG::VERTICES, vertex_chunk) != nullptr) {
+    if (file.find_chunk(CHUNK_TYPE::VERTICES, vertex_chunk) != nullptr) {
         return MESH_PARSE_BAD_DESC;
     }
 
@@ -233,6 +233,14 @@ MeshParseError MeshAssetView::parse(const AssetView& file, const void* payload, 
     this->index_chunk = index_chunk;
     this->bounds_chunk = bounds_chunk;
     return MESH_PARSE_OK;
+}
+
+MeshParseError MeshAssetView::parse(const AssetView& file, const ReadChunk& chunk) {
+    if (!chunk.is_ok()) {
+        this->reset();
+        return MESH_PARSE_BAD_DESC;
+    }
+    return this->parse(file, chunk.chunk_data, static_cast<usz>(chunk.entry.size));
 }
 
 const VertexAttributeDesc* MeshAssetView::find_attribute(const u32 semantic, const u32 semantic_index) const {
@@ -517,14 +525,14 @@ void MeshAssetWriter::add_chunks(AssetWriter& file) const {
     DynamicArray<u8> payload(this->allocator);
     payload.resize(this->desc_size());
     this->write_desc(payload.data);
-    file.add_chunk(CHUNK_TAG::MESH, MESH_ASSET::VERSION, 0, payload.data, payload.count);
+    file.add_chunk(CHUNK_TYPE::MESH, MESH_ASSET::VERSION, 0, payload.data, payload.count);
     payload.free();
 
     for (u32 i = 0; i < this->desc.stream_count; ++i) {
-        file.add_chunk(CHUNK_TAG::VERTICES, MESH_ASSET::VERSION, 0, this->stream_data(i), static_cast<usz>(this->stream_size(i)));
+        file.add_chunk(CHUNK_TYPE::VERTICES, MESH_ASSET::VERSION, 0, this->stream_data(i), static_cast<usz>(this->stream_size(i)));
     }
-    file.add_chunk(CHUNK_TAG::INDICES, MESH_ASSET::VERSION, 0, this->indices.data, this->indices.count);
-    file.add_chunk(CHUNK_TAG::BOUNDS, MESH_ASSET::VERSION, 0, &this->bounds, sizeof(MeshBounds));
+    file.add_chunk(CHUNK_TYPE::INDICES, MESH_ASSET::VERSION, 0, this->indices.data, this->indices.count);
+    file.add_chunk(CHUNK_TYPE::BOUNDS, MESH_ASSET::VERSION, 0, &this->bounds, sizeof(MeshBounds));
 }
 
 void MeshAssetWriter::clear() {

@@ -1,7 +1,7 @@
 #pragma once
 
-#include "engine/asset/asset_file.hpp"
 #include "engine/asset/asset_reader.hpp"
+#include "engine/asset/asset_view.hpp"
 #include "engine/defines.hpp"
 #include "engine/memory/base_allocator.hpp"
 #include "engine/templates/hash_map.hpp"
@@ -16,12 +16,14 @@
 //     ...
 //     AssetResource* rock = provider->get(view);             // loads on first use, returns the same object after
 //     const ChunkEntry* entry = nullptr;
-//     const u8* mesh = rock->find_payload(CHUNK_TAG::MESH, &entry);
+//     const u8* mesh = rock->find_payload(CHUNK_TYPE::MESH, &entry);
+//     MeshAssetView geometry;
+//     geometry.parse(rock->view, mesh, entry->size);
 //     ...
 //     provider->unload(rock->guid);                          // streams the payloads out; the asset stays known
 //
 // An asset enters the provider through add(view, path): the AssetView is
-// the prelude an asset scan produced (see asset_file.hpp), its header's
+// the prelude an asset scan produced (ASSET_FILE::read_prelude), its header's
 // GUID is the key, and the provider copies the prelude so the view it keeps
 // outlives whatever buffer the caller parsed. Nothing is read from disk
 // until get() or get_chunk() asks for it: get() opens the file with an
@@ -52,9 +54,8 @@ struct AssetResource {
     // UTF-8 path add() was given, owned by the provider.
     const char* path = nullptr;
 
-    // The prelude bytes and the view over them. The view is always parsed.
-    u8* prelude = nullptr;
-    usz prelude_size = 0;
+    // The view over the provider's copy of the prelude; always ok(). Its
+    // `data` / `size` are the copied bytes.
     AssetView view;
 
     // One entry per chunk in `view`: the payload bytes, or nullptr when the
@@ -104,7 +105,7 @@ struct AssetResourceProvider {
     // if `view` additionally describes a different version of the file
     // (size or content hash differ) the stored prelude is replaced and any
     // resident payloads are dropped. nullptr (and a message on stderr) when
-    // `view` is not parsed, or is not cooked while require_cooked is set.
+    // `view` is not ok, or is not cooked while require_cooked is set.
     AssetResource* add(const AssetView& view, const char* path);
     // The resource for `guid`, loaded or not, or nullptr if never added.
     AssetResource* find(const AssetGuid& guid) const;
@@ -161,8 +162,13 @@ private:
     HashMap<AssetGuid, AssetResource*, AssetGuidHash> resources;
     u64 resident_total = 0;
 
-    // Copies `view`'s bytes into `resource` and sizes its payload table.
-    // `resource` must hold no payloads. False when the copy does not parse.
+    // Gives `resource` the prelude `view` points into, which must be a
+    // PAYLOAD_ALIGNMENT aligned buffer from `allocator` that the resource
+    // now owns, and an empty payload table sized for it. `resource` must
+    // hold no prelude or payloads.
+    void adopt_prelude(AssetResource* resource, const AssetView& view);
+    // Copies `view`'s bytes and adopts the copy. False when the copy does
+    // not parse, which cannot happen for an ok view.
     bool store_prelude(AssetResource* resource, const AssetView& view);
     void free_prelude(AssetResource* resource);
     // Opens `resource`'s file and refreshes the prelude if the file changed.

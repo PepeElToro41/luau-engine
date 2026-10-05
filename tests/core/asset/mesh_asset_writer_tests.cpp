@@ -1,7 +1,8 @@
 #include "support/test_support.hpp"
 
-#include "engine/asset/asset_file.hpp"
-#include "engine/asset/mesh_asset.hpp"
+#include "engine/asset/asset_view.hpp"
+#include "engine/asset/asset_writer.hpp"
+#include "engine/asset/asset_types/mesh_asset.hpp"
 #include "engine/memory/heap_allocator.hpp"
 
 #include <cstring>
@@ -69,8 +70,8 @@ MeshParseError round_trip(const MeshAssetWriter& mesh, AssetView& file, MeshAsse
     *bytes = writer.write(MEMORY::heap_allocator(), &size);
     writer.free();
     REQUIRE(*bytes != nullptr);
-    REQUIRE(file.parse(*bytes, size) == ASSET_PARSE_OK);
-    const ChunkEntry* desc_chunk = file.find_chunk(CHUNK_TAG::MESH);
+    REQUIRE((file = AssetView::parse(*bytes, size)).is_ok());
+    const ChunkEntry* desc_chunk = file.find_chunk(CHUNK_TYPE::MESH);
     REQUIRE(desc_chunk != nullptr);
     return view.parse(file, *bytes + desc_chunk->offset, static_cast<usz>(desc_chunk->size));
 }

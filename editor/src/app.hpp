@@ -5,9 +5,11 @@
 #include "engine/gpu/device.hpp"
 #include "engine/gpu/render_target.hpp"
 #include "engine/gpu/window_presenter.hpp"
+#include "file_dialog.hpp"
 #include "project.hpp"
 #include "ui/asset_browser_panel.hpp"
 #include "ui/explorer_panel.hpp"
+#include "ui/import/import_panel.hpp"
 #include "ui/output_panel.hpp"
 
 #include <imgui.h>
@@ -20,7 +22,9 @@
 //
 // Panels: Explorer (left), Viewport (center), Asset Browser, Output and Stats
 // (bottom), laid out by DOCK_LAYOUT::build_default on first run and restorable
-// from the View menu. Each panel with state of its own lives in ui/.
+// from the View menu. Each panel with state of its own lives in ui/. Import
+// is a floating window that shows up when File > Import... (the OS file
+// picker) or a double-click in the Asset Browser queues a source file.
 //
 // The project being edited is the engine's Project singleton. There is no
 // open-project page yet, so init() opens TEST_PROJECT_DIR (the repository
@@ -59,6 +63,13 @@ private:
 
     // Polls SDL, feeding every event to ImGui before acting on it.
     void poll_events();
+    // Shows the OS picker for importable files, starting in the project.
+    void open_import_dialog();
+    // Moves files picked in the OS dialog into the Import panel.
+    void poll_import_dialog();
+    // Queues `source` (absolute, or relative to the project root) in the
+    // Import panel with the Asset Browser's folder as destination.
+    void queue_import(const std::filesystem::path& source);
     void frame(f32 dt);
 
     // Builds the ImGui frame: dockspace, main menu, panels.
@@ -74,6 +85,8 @@ private:
     OutputPanel output;
     ExplorerPanel explorer;
     AssetBrowserPanel asset_browser;
+    ImportPanel import_panel;
+    NativeFileDialog file_dialog;
 
     // Formats. ImGui's colors are already display-encoded, so the swapchain
     // it draws into is _UNORM (no second encode). The engine renders linear
@@ -95,6 +108,7 @@ private:
     bool show_output = true;
     bool show_stats = true;
     bool show_asset_browser = true;
+    bool show_import = false;
     bool show_demo_window = false;
 
     f32 frame_dt = 0.0f;

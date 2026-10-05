@@ -1,6 +1,8 @@
 #pragma once
 
-#include "engine/asset/asset_file.hpp"
+#include "engine/asset/asset_reader.hpp"
+#include "engine/asset/asset_view.hpp"
+#include "engine/asset/asset_writer.hpp"
 #include "engine/defines.hpp"
 
 // Payload layout of a texture asset (ASSET_TYPE::TEXTURE): the `TEX2` chunk
@@ -9,10 +11,10 @@
 //
 //     AssetView view;  ... parsed from the file's prelude ...
 //     AssetReader reader;  ... open on the same file ...
-//     u8* desc_bytes = reader.read_chunk(view, CHUNK_TAG::TEXTURE, allocator, &desc_chunk);
+//     ReadChunk desc = reader.read_chunk(view, CHUNK_TYPE::TEXTURE, allocator);
 //     TextureAssetView texture;
-//     if (texture.parse(view, desc_bytes, desc_chunk->size) == TEXTURE_PARSE_OK) {
-//         u8* pixels = reader.read_chunk(*texture.pixels_chunk, allocator);
+//     if (texture.parse(view, desc) == TEXTURE_PARSE_OK) {
+//         u8* pixels = static_cast<u8*>(reader.read_chunk(*texture.pixels_chunk, allocator));
 //         const u8* mip0 = texture.mip_data(pixels, 0);
 //     }
 //
@@ -209,6 +211,9 @@ struct TextureAssetView {
     // (`size` of them, 8-byte aligned, as read_chunk returns them). On any
     // error the view is reset to empty.
     TextureParseError parse(const AssetView& file, const void* payload, usz size);
+    // The same from what read_chunk(file, CHUNK_TYPE::TEXTURE, ...) returned;
+    // a chunk that is not ok() parses as TEXTURE_PARSE_BAD_DESC.
+    TextureParseError parse(const AssetView& file, const ReadChunk& chunk);
     void reset();
 
     bool is_parsed() const { return this->desc != nullptr; }

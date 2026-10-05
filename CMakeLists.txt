@@ -45,6 +45,7 @@ find_package(volk CONFIG REQUIRED)
 find_package(SDL3 CONFIG REQUIRED)
 
 add_subdirectory(vendor/imgui)
+add_subdirectory(vendor/stb)
 add_subdirectory(engine)
 add_subdirectory(standalone)
 add_subdirectory(editor)

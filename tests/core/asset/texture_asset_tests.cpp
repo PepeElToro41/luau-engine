@@ -1,8 +1,9 @@
 #include "support/test_support.hpp"
 
-#include "engine/asset/asset_file.hpp"
+#include "engine/asset/asset_view.hpp"
+#include "engine/asset/asset_writer.hpp"
 #include "engine/asset/asset_reader.hpp"
-#include "engine/asset/texture_asset.hpp"
+#include "engine/asset/asset_types/texture_asset.hpp"
 #include "engine/memory/heap_allocator.hpp"
 #include "engine/templates/dynamic_array.hpp"
 
@@ -72,8 +73,8 @@ struct TextureBuilder {
         writer.guid = TEXTURE_GUID;
         usz payload_size = 0;
         u8* payload = this->build_payload(&payload_size);
-        writer.add_chunk(CHUNK_TAG::TEXTURE, version, 0, payload, payload_size);
-        writer.add_chunk(CHUNK_TAG::PIXELS, version, 0, this->pixels.data, this->pixels.count);
+        writer.add_chunk(CHUNK_TYPE::TEXTURE, version, 0, payload, payload_size);
+        writer.add_chunk(CHUNK_TYPE::PIXELS, version, 0, this->pixels.data, this->pixels.count);
         MEMORY::heap_allocator()->free(payload);
     }
 
@@ -93,7 +94,7 @@ TextureParseError round_trip(const TextureBuilder& builder, AssetView& file, Tex
     *bytes = writer.write(MEMORY::heap_allocator(), &size);
     writer.free();
     REQUIRE(*bytes != nullptr);
-    REQUIRE(file.parse(*bytes, ASSET_FILE::prelude_size(0, 2)) == ASSET_PARSE_OK);
+    REQUIRE((file = AssetView::parse(*bytes, ASSET_FILE::prelude_size(0, 2))).is_ok());
     usz payload_size = 0;
     *payload = builder.build_payload(&payload_size);
     return texture.parse(file, *payload, payload_size);
@@ -181,7 +182,7 @@ TEST_CASE("asset/texture_asset: a view starts empty and rejects files of other t
     writer.free();
     REQUIRE(bytes != nullptr);
     AssetView file;
-    REQUIRE(file.parse(bytes, size) == ASSET_PARSE_OK);
+    REQUIRE((file = AssetView::parse(bytes, size)).is_ok());
     CHECK(texture.parse(file, &desc, sizeof(desc)) == TEXTURE_PARSE_NOT_A_TEXTURE);
     MEMORY::heap_allocator()->free(bytes);
 
@@ -207,7 +208,7 @@ TEST_CASE("asset/texture_asset: a 2D texture with a full mip chain parses from i
     CHECK(texture.desc->height == 4);
     CHECK(texture.desc->format == TEXTURE_FORMAT_RGBA8_SRGB);
     CHECK(texture.desc->compression == TEXTURE_COMPRESSION_NONE);
-    CHECK(texture.pixels_chunk == file.find_chunk(CHUNK_TAG::PIXELS));
+    CHECK(texture.pixels_chunk == file.find_chunk(CHUNK_TYPE::PIXELS));
     CHECK(texture.pixels_size() == builder.pixels.count);
 
     // 8x4, 4x2, 2x1, 1x1 at 16-byte aligned offsets.
@@ -257,22 +258,19 @@ TEST_CASE("asset/texture_asset: loading through a file reads only the chunks ask
     MEMORY::heap_allocator()->free(bytes);
 
     // The scan: just the prelude.
-    usz prelude_size = 0;
-    u8* prelude = ASSET_FILE::read_prelude(path.c_str(), MEMORY::heap_allocator(), &prelude_size);
-    REQUIRE(prelude != nullptr);
-    AssetView file;
-    REQUIRE(file.parse(prelude, prelude_size) == ASSET_PARSE_OK);
+    AssetView file = ASSET_FILE::read_prelude(path.c_str(), MEMORY::heap_allocator());
+    REQUIRE(file.is_ok());
 
     // The load: TEX2 first, then PIXL into a buffer sized from the view.
     AssetReader reader;
     REQUIRE(reader.open(path.c_str()));
-    const ChunkEntry* desc_chunk = nullptr;
-    u8* payload = reader.read_chunk(file, CHUNK_TAG::TEXTURE, MEMORY::heap_allocator(), &desc_chunk);
-    REQUIRE(payload != nullptr);
-    REQUIRE(desc_chunk != nullptr);
+    ReadChunk desc_chunk = reader.read_chunk(file, CHUNK_TYPE::TEXTURE, MEMORY::heap_allocator());
+    REQUIRE(desc_chunk.is_ok());
+    REQUIRE(desc_chunk.chunk_data != nullptr);
+    CHECK(desc_chunk.entry.tag == CHUNK_TYPE::TEXTURE);
 
     TextureAssetView texture;
-    REQUIRE(texture.parse(file, payload, desc_chunk->size) == TEXTURE_PARSE_OK);
+    REQUIRE(texture.parse(file, desc_chunk) == TEXTURE_PARSE_OK);
     CHECK(texture.mip_count() == 3);
     CHECK(texture.pixels_size() == builder.pixels.count);
 
@@ -284,8 +282,8 @@ TEST_CASE("asset/texture_asset: loading through a file reads only the chunks ask
     CHECK(texture.mip_data(pixels, 2)[0] == static_cast<u8>(texture.mips[2].offset * 7 + 3));
 
     MEMORY::heap_allocator()->free(pixels);
-    MEMORY::heap_allocator()->free(payload);
-    MEMORY::heap_allocator()->free(prelude);
+    MEMORY::heap_allocator()->free(desc_chunk.chunk_data);
+    ASSET_FILE::free_prelude(&file, MEMORY::heap_allocator());
     std::filesystem::remove(path);
     builder.free();
 }
@@ -352,12 +350,12 @@ TEST_CASE("asset/texture_asset: parse rejects missing chunks, unknown versions a
         AssetWriter writer;
         writer.type = ASSET_TYPE::TEXTURE;
         writer.guid = TEXTURE_GUID;
-        writer.add_chunk(CHUNK_TAG::TEXTURE, TEXTURE_ASSET::VERSION, 0, payload, payload_size);
+        writer.add_chunk(CHUNK_TYPE::TEXTURE, TEXTURE_ASSET::VERSION, 0, payload, payload_size);
         usz size = 0;
         u8* bytes = writer.write(MEMORY::heap_allocator(), &size);
         writer.free();
         AssetView file;
-        REQUIRE(file.parse(bytes, size) == ASSET_PARSE_OK);
+        REQUIRE((file = AssetView::parse(bytes, size)).is_ok());
         TextureAssetView texture;
         CHECK(texture.parse(file, payload, payload_size) == TEXTURE_PARSE_MISSING_CHUNK);
         MEMORY::heap_allocator()->free(bytes);
@@ -367,13 +365,13 @@ TEST_CASE("asset/texture_asset: parse rejects missing chunks, unknown versions a
         AssetWriter writer;
         writer.type = ASSET_TYPE::TEXTURE;
         writer.guid = TEXTURE_GUID;
-        writer.add_chunk(CHUNK_TAG::TEXTURE, 0, 0, nullptr, 0);
-        writer.add_chunk(CHUNK_TAG::PIXELS, 0, 0, nullptr, 0);
+        writer.add_chunk(CHUNK_TYPE::TEXTURE, 0, 0, nullptr, 0);
+        writer.add_chunk(CHUNK_TYPE::PIXELS, 0, 0, nullptr, 0);
         usz size = 0;
         u8* bytes = writer.write(MEMORY::heap_allocator(), &size);
         writer.free();
         AssetView file;
-        REQUIRE(file.parse(bytes, size) == ASSET_PARSE_OK);
+        REQUIRE((file = AssetView::parse(bytes, size)).is_ok());
         TextureAssetView texture;
         CHECK(texture.parse(file, nullptr, 0) == TEXTURE_PARSE_UNSUPPORTED_VERSION);
         MEMORY::heap_allocator()->free(bytes);
@@ -386,7 +384,7 @@ TEST_CASE("asset/texture_asset: parse rejects missing chunks, unknown versions a
         u8* bytes = writer.write(MEMORY::heap_allocator(), &size);
         writer.free();
         AssetView file;
-        REQUIRE(file.parse(bytes, size) == ASSET_PARSE_OK);
+        REQUIRE((file = AssetView::parse(bytes, size)).is_ok());
         TextureAssetView texture;
         CHECK(texture.parse(file, payload, payload_size) == TEXTURE_PARSE_UNSUPPORTED_VERSION);
         MEMORY::heap_allocator()->free(bytes);
@@ -399,7 +397,7 @@ TEST_CASE("asset/texture_asset: parse rejects missing chunks, unknown versions a
         u8* bytes = writer.write(MEMORY::heap_allocator(), &size);
         writer.free();
         AssetView file;
-        REQUIRE(file.parse(bytes, size) == ASSET_PARSE_OK);
+        REQUIRE((file = AssetView::parse(bytes, size)).is_ok());
         TextureAssetView texture;
         CHECK(texture.parse(file, payload, payload_size - 1) == TEXTURE_PARSE_BAD_DESC);
         CHECK(texture.parse(file, nullptr, payload_size) == TEXTURE_PARSE_BAD_DESC);

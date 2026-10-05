@@ -17,11 +17,14 @@ to the settings and the source in the same file, and the editor rewrites the
 compiled chunks in place when the settings change. Shipping is a *cook*: a copy
 of the file without its editor-only chunks (see [Cooking](#cooking)).
 
-The container is implemented in `engine/core/include/engine/asset/asset_file.hpp`
-(`AssetView` over the prelude, `AssetWriter` writes) and
+The container is implemented in `engine/core/include/engine/asset/`:
+`asset_view.hpp` (the byte layout and `AssetView` over the prelude),
+`asset_writer.hpp` (`AssetWriter` writes, `ASSET_FILE::write_file`),
 `asset_reader.hpp` (`AssetReader` reads chunk payloads from the file on
-demand). Core has no external dependencies, so the container stays a pure
-byte-layout description; importers live in other modules.
+demand, `ASSET_FILE::read_prelude`) and `asset_types/` (the texture and mesh
+payload layouts, each with its view and writer). Core has no external
+dependencies, so the container stays a pure byte-layout description;
+importers live in other modules.
 
 ## Design decisions
 
@@ -446,15 +449,19 @@ one covering every index with no material.
 Reading is two steps with two types, so the cheap one can be done for every
 file in a project and the expensive one only for what is used.
 
-**The prelude: `ASSET_FILE::read_prelude` + `AssetView`.** `read_prelude`
-opens the file, reads the header, and then exactly the bytes the tables
-need. `AssetView::parse(data, size)` validates that buffer and points into
-it:
+**The prelude: `ASSET_FILE::read_prelude` + `AssetView`.** `read_prelude(path,
+allocator)` opens the file, reads the header, then exactly the bytes the
+tables need, and returns the parsed `AssetView` over them (`free_prelude`
+releases the buffer, which is the view's `data`). `AssetView::parse(data,
+size)` is the validation on its own, for a buffer from anywhere; it returns
+a view whose `is_ok()` says whether it passed and whose `parse_error` says
+why not:
 
 1. `size >= sizeof(AssetHeader)`, magic matches, `format_version` is supported.
-2. `file_size` is at least the prelude size, and `size <= file_size` (a buffer
-   longer than the declared file is not this file).
-3. `size` covers the prelude.
+2. the guid is not null and `file_size` is at least the prelude size
+   (`parse_header`, the checks that need only the header).
+3. `size <= file_size` (a buffer longer than the declared file is not this
+   file) and `size` covers the prelude.
 4. every chunk entry is 64-byte aligned, starts at or after `payload_start`,
    ends at or before `file_size`, and does not overlap the previous entry.
 
@@ -462,10 +469,10 @@ A view is what the asset browser lists and what a reference to an asset
 holds. It never touches a payload; it has no way to.
 
 **Payloads: `AssetReader`.** `open(path)` reopens the file, reads the header
-back and checks that the file on disk is exactly `file_size` bytes, so a
-truncated or half-written file is refused before any seek. `matches(view)`
-checks the open file against a view (GUID, `file_size`, `content_hash`),
-which catches a view from a stale scan. Then:
+back (`parse_header`) and checks that the file on disk is exactly
+`file_size` bytes, so a truncated or half-written file is refused before
+any seek. `matches(view)` checks the open file against a view (GUID,
+`file_size`, `content_hash`), which catches a view from a stale scan. Then:
 
 - `read_chunk(entry, out)` seeks to `entry.offset` and reads `entry.size`
   bytes into caller memory (a struct on the stack for `BBOX`, a mapped
@@ -473,18 +480,22 @@ which catches a view from a stale scan. Then:
 - `read_chunk(entry, allocator)` does the same into a fresh 64-byte aligned
   buffer;
 - `read_chunk(view, tag, allocator)` finds the first chunk with `tag` in the
-  view and reads it, refusing a view that does not match the file;
-- `read_prelude(allocator)` re-reads the tables, which is how a provider
-  refreshes a view after the file changed.
+  view and reads it into a fresh buffer, returning a `ReadChunk`: the bytes
+  plus the entry they belong to, or a `read_error` saying the view is stale
+  (`ASSET_READ_STALE_VIEW`), the tag is absent (`ASSET_READ_NOT_FOUND`) or
+  the read failed. An empty chunk is ok with no bytes;
+- `read_prelude(allocator)` re-reads the tables into a new view, which is
+  how a view is refreshed after the file changed.
 
 Every entry is bounds-checked against the header read at `open`, never
 against the view, so a corrupt entry cannot read outside the file. Chunks
 are read in any order; the reader seeks for each one.
 
-The per-type views (`TextureAssetView`, `MeshAssetView`) take the prelude
-view plus the bytes of their descriptor chunk, validate them against the
-other chunks' table entries, and hand back the entries of the big chunks
-for the caller to read where it wants them.
+The per-type views (`TextureAssetView`, `MeshAssetView`, in `asset_types/`)
+take the prelude view plus the bytes of their descriptor chunk (or the
+`ReadChunk` straight from the reader), validate them against the other
+chunks' table entries, and hand back the entries of the big chunks for the
+caller to read where it wants them.
 
 The runtime loader additionally rejects a file without `COOKED` set, so a
 shipped build cannot carry sources by mistake. The editor accepts both.
@@ -534,8 +545,8 @@ resources.
 `AssetWriter` collects dependencies and chunks, then `write()` emits the file
 in one pass: it computes the prelude size from the counts, places payloads in
 the order they were added, 64-byte aligned, and fills `file_size`. The writer
-never pads the end of the file. `ASSET_FILE::write_file` and `read_file` are
-the thin stdio helpers around it.
+never pads the end of the file. `ASSET_FILE::write_file` is the thin
+platform-file helper that puts the bytes on disk.
 
 ## Cooking
 

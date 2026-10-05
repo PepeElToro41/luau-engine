@@ -268,6 +268,7 @@ void App::draw_editor() {
         DOCK_LAYOUT::build_default(dockspace);
     }
 
+    this->poll_import_dialog();
     this->draw_main_menu();
     if (this->show_explorer) {
         this->explorer.draw(&this->show_explorer);
@@ -276,7 +277,18 @@ void App::draw_editor() {
         this->draw_viewport();
     }
     if (this->show_asset_browser) {
-        this->asset_browser.draw(&this->show_asset_browser, this->engine.get_singleton<Project>());
+        this->asset_browser.draw(&this->show_asset_browser, this->engine.get_singleton<Project>(), this->output);
+        if (!this->asset_browser.activated.empty()) {
+            const std::filesystem::path& file = this->asset_browser.activated;
+            if (ImportPanel::kind_of(file.extension().string()) != ImportPanel::Kind::UNSUPPORTED) {
+                this->queue_import(file);
+            }
+        }
+    }
+    if (this->show_import) {
+        if (this->import_panel.draw(&this->show_import, this->engine.get_singleton<Project>(), this->output)) {
+            this->asset_browser.refresh();
+        }
     }
     if (this->show_output) {
         this->output.draw(&this->show_output);
@@ -289,12 +301,64 @@ void App::draw_editor() {
     }
 }
 
+// --- Import -----------------------------------------------------------------
+
+// What File > Import... offers. SDL keeps the pointer until the dialog
+// closes, hence static. Patterns are extensions without the dot, ';' separated.
+static constexpr SDL_DialogFileFilter IMPORT_FILTERS[] = {
+    {"All importable (obj, png, jpg, bmp, tga)", "obj;png;jpg;jpeg;bmp;tga"},
+    {"Meshes (obj)", "obj"},
+    {"Images (png, jpg, bmp, tga)", "png;jpg;jpeg;bmp;tga"},
+};
+
+void App::open_import_dialog() {
+    const Project* project = this->engine.get_singleton<Project>();
+    std::string start;
+    if (project != nullptr && project->is_open()) {
+        start = project->root.string();
+    }
+    const int filter_count = static_cast<int>(sizeof(IMPORT_FILTERS) / sizeof(IMPORT_FILTERS[0]));
+    this->file_dialog.open_files(this->window.window, IMPORT_FILTERS, filter_count, start.empty() ? nullptr : start.c_str(), true);
+}
+
+void App::poll_import_dialog() {
+    std::vector<std::filesystem::path> picked;
+    std::string error;
+    if (!this->file_dialog.take(&picked, &error)) {
+        return;
+    }
+    if (!error.empty()) {
+        this->output.error("Import dialog: %s", error.c_str());
+        return;
+    }
+    for (const std::filesystem::path& path : picked) {
+        this->queue_import(path);
+    }
+}
+
+void App::queue_import(const std::filesystem::path& source) {
+    const Project* project = this->engine.get_singleton<Project>();
+    std::filesystem::path absolute = source;
+    if (absolute.is_relative() && project != nullptr && project->is_open()) {
+        absolute = project->root / source;
+    }
+    this->import_panel.open(absolute, this->asset_browser.current, &this->show_import);
+}
+
 void App::draw_main_menu() {
     if (!ImGui::BeginMainMenuBar()) {
         return;
     }
 
     if (ImGui::BeginMenu("File")) {
+        const Project* project = this->engine.get_singleton<Project>();
+        const bool has_project = project != nullptr && project->is_open();
+        ImGui::BeginDisabled(!has_project || this->file_dialog.is_pending());
+        if (ImGui::MenuItem("Import...")) {
+            this->open_import_dialog();
+        }
+        ImGui::EndDisabled();
+        ImGui::Separator();
         if (ImGui::MenuItem("Quit", "Alt+F4")) {
             this->running = false;
         }

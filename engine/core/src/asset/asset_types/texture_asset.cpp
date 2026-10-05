@@ -1,4 +1,4 @@
-#include "engine/asset/texture_asset.hpp"
+#include "engine/asset/asset_types/texture_asset.hpp"
 
 #include "engine/memory/heap_allocator.hpp"
 
@@ -10,61 +10,61 @@
 
 TextureFormatInfo TEXTURE_FORMAT::info(const u32 format) {
     switch (format) {
-    case TEXTURE_FORMAT_R8_UNORM: return {1, 1, 1, false};
-    case TEXTURE_FORMAT_RG8_UNORM: return {1, 1, 2, false};
-    case TEXTURE_FORMAT_RGBA8_UNORM: return {1, 1, 4, false};
-    case TEXTURE_FORMAT_RGBA8_SRGB: return {1, 1, 4, true};
-
-    case TEXTURE_FORMAT_R16_UNORM: return {1, 1, 2, false};
-    case TEXTURE_FORMAT_RG16_UNORM: return {1, 1, 4, false};
-    case TEXTURE_FORMAT_RGBA16_UNORM: return {1, 1, 8, false};
-    case TEXTURE_FORMAT_R16_FLOAT: return {1, 1, 2, false};
-    case TEXTURE_FORMAT_RG16_FLOAT: return {1, 1, 4, false};
-    case TEXTURE_FORMAT_RGBA16_FLOAT: return {1, 1, 8, false};
-
-    case TEXTURE_FORMAT_R32_FLOAT: return {1, 1, 4, false};
-    case TEXTURE_FORMAT_RG32_FLOAT: return {1, 1, 8, false};
-    case TEXTURE_FORMAT_RGBA32_FLOAT: return {1, 1, 16, false};
-
-    case TEXTURE_FORMAT_BC1_RGB_UNORM: return {4, 4, 8, false};
-    case TEXTURE_FORMAT_BC1_RGB_SRGB: return {4, 4, 8, true};
-    case TEXTURE_FORMAT_BC3_UNORM: return {4, 4, 16, false};
-    case TEXTURE_FORMAT_BC3_SRGB: return {4, 4, 16, true};
-    case TEXTURE_FORMAT_BC4_UNORM: return {4, 4, 8, false};
-    case TEXTURE_FORMAT_BC5_UNORM: return {4, 4, 16, false};
-    case TEXTURE_FORMAT_BC6H_UFLOAT: return {4, 4, 16, false};
-    case TEXTURE_FORMAT_BC7_UNORM: return {4, 4, 16, false};
-    case TEXTURE_FORMAT_BC7_SRGB: return {4, 4, 16, true};
-    default: return {};
+	    case TEXTURE_FORMAT_R8_UNORM: return {1, 1, 1, false};
+	    case TEXTURE_FORMAT_RG8_UNORM: return {1, 1, 2, false};
+	    case TEXTURE_FORMAT_RGBA8_UNORM: return {1, 1, 4, false};
+	    case TEXTURE_FORMAT_RGBA8_SRGB: return {1, 1, 4, true};
+	
+	    case TEXTURE_FORMAT_R16_UNORM: return {1, 1, 2, false};
+	    case TEXTURE_FORMAT_RG16_UNORM: return {1, 1, 4, false};
+	    case TEXTURE_FORMAT_RGBA16_UNORM: return {1, 1, 8, false};
+	    case TEXTURE_FORMAT_R16_FLOAT: return {1, 1, 2, false};
+	    case TEXTURE_FORMAT_RG16_FLOAT: return {1, 1, 4, false};
+	    case TEXTURE_FORMAT_RGBA16_FLOAT: return {1, 1, 8, false};
+	
+	    case TEXTURE_FORMAT_R32_FLOAT: return {1, 1, 4, false};
+	    case TEXTURE_FORMAT_RG32_FLOAT: return {1, 1, 8, false};
+	    case TEXTURE_FORMAT_RGBA32_FLOAT: return {1, 1, 16, false};
+	
+	    case TEXTURE_FORMAT_BC1_RGB_UNORM: return {4, 4, 8, false};
+	    case TEXTURE_FORMAT_BC1_RGB_SRGB: return {4, 4, 8, true};
+	    case TEXTURE_FORMAT_BC3_UNORM: return {4, 4, 16, false};
+	    case TEXTURE_FORMAT_BC3_SRGB: return {4, 4, 16, true};
+	    case TEXTURE_FORMAT_BC4_UNORM: return {4, 4, 8, false};
+	    case TEXTURE_FORMAT_BC5_UNORM: return {4, 4, 16, false};
+	    case TEXTURE_FORMAT_BC6H_UFLOAT: return {4, 4, 16, false};
+	    case TEXTURE_FORMAT_BC7_UNORM: return {4, 4, 16, false};
+	    case TEXTURE_FORMAT_BC7_SRGB: return {4, 4, 16, true};
+	    default: return {};
     }
 }
 
 const char* TEXTURE_FORMAT::name(const u32 format) {
     switch (format) {
-    case TEXTURE_FORMAT_NONE: return "none";
-    case TEXTURE_FORMAT_R8_UNORM: return "R8_UNORM";
-    case TEXTURE_FORMAT_RG8_UNORM: return "RG8_UNORM";
-    case TEXTURE_FORMAT_RGBA8_UNORM: return "RGBA8_UNORM";
-    case TEXTURE_FORMAT_RGBA8_SRGB: return "RGBA8_SRGB";
-    case TEXTURE_FORMAT_R16_UNORM: return "R16_UNORM";
-    case TEXTURE_FORMAT_RG16_UNORM: return "RG16_UNORM";
-    case TEXTURE_FORMAT_RGBA16_UNORM: return "RGBA16_UNORM";
-    case TEXTURE_FORMAT_R16_FLOAT: return "R16_FLOAT";
-    case TEXTURE_FORMAT_RG16_FLOAT: return "RG16_FLOAT";
-    case TEXTURE_FORMAT_RGBA16_FLOAT: return "RGBA16_FLOAT";
-    case TEXTURE_FORMAT_R32_FLOAT: return "R32_FLOAT";
-    case TEXTURE_FORMAT_RG32_FLOAT: return "RG32_FLOAT";
-    case TEXTURE_FORMAT_RGBA32_FLOAT: return "RGBA32_FLOAT";
-    case TEXTURE_FORMAT_BC1_RGB_UNORM: return "BC1_RGB_UNORM";
-    case TEXTURE_FORMAT_BC1_RGB_SRGB: return "BC1_RGB_SRGB";
-    case TEXTURE_FORMAT_BC3_UNORM: return "BC3_UNORM";
-    case TEXTURE_FORMAT_BC3_SRGB: return "BC3_SRGB";
-    case TEXTURE_FORMAT_BC4_UNORM: return "BC4_UNORM";
-    case TEXTURE_FORMAT_BC5_UNORM: return "BC5_UNORM";
-    case TEXTURE_FORMAT_BC6H_UFLOAT: return "BC6H_UFLOAT";
-    case TEXTURE_FORMAT_BC7_UNORM: return "BC7_UNORM";
-    case TEXTURE_FORMAT_BC7_SRGB: return "BC7_SRGB";
-    default: return "unknown";
+	    case TEXTURE_FORMAT_NONE: return "none";
+	    case TEXTURE_FORMAT_R8_UNORM: return "R8_UNORM";
+	    case TEXTURE_FORMAT_RG8_UNORM: return "RG8_UNORM";
+	    case TEXTURE_FORMAT_RGBA8_UNORM: return "RGBA8_UNORM";
+	    case TEXTURE_FORMAT_RGBA8_SRGB: return "RGBA8_SRGB";
+	    case TEXTURE_FORMAT_R16_UNORM: return "R16_UNORM";
+	    case TEXTURE_FORMAT_RG16_UNORM: return "RG16_UNORM";
+	    case TEXTURE_FORMAT_RGBA16_UNORM: return "RGBA16_UNORM";
+	    case TEXTURE_FORMAT_R16_FLOAT: return "R16_FLOAT";
+	    case TEXTURE_FORMAT_RG16_FLOAT: return "RG16_FLOAT";
+	    case TEXTURE_FORMAT_RGBA16_FLOAT: return "RGBA16_FLOAT";
+	    case TEXTURE_FORMAT_R32_FLOAT: return "R32_FLOAT";
+	    case TEXTURE_FORMAT_RG32_FLOAT: return "RG32_FLOAT";
+	    case TEXTURE_FORMAT_RGBA32_FLOAT: return "RGBA32_FLOAT";
+	    case TEXTURE_FORMAT_BC1_RGB_UNORM: return "BC1_RGB_UNORM";
+	    case TEXTURE_FORMAT_BC1_RGB_SRGB: return "BC1_RGB_SRGB";
+	    case TEXTURE_FORMAT_BC3_UNORM: return "BC3_UNORM";
+	    case TEXTURE_FORMAT_BC3_SRGB: return "BC3_SRGB";
+	    case TEXTURE_FORMAT_BC4_UNORM: return "BC4_UNORM";
+	    case TEXTURE_FORMAT_BC5_UNORM: return "BC5_UNORM";
+	    case TEXTURE_FORMAT_BC6H_UFLOAT: return "BC6H_UFLOAT";
+	    case TEXTURE_FORMAT_BC7_UNORM: return "BC7_UNORM";
+	    case TEXTURE_FORMAT_BC7_SRGB: return "BC7_SRGB";
+	    default: return "unknown";
     }
 }
 
@@ -83,12 +83,12 @@ u32 TEXTURE_ASSET::full_mip_count(const u32 width, const u32 height, const u32 d
 
 const char* TEXTURE_ASSET::parse_error_name(const TextureParseError error) {
     switch (error) {
-    case TEXTURE_PARSE_OK: return "ok";
-    case TEXTURE_PARSE_NOT_A_TEXTURE: return "not a texture asset";
-    case TEXTURE_PARSE_MISSING_CHUNK: return "missing TEX2 or PIXL chunk";
-    case TEXTURE_PARSE_UNSUPPORTED_VERSION: return "unsupported texture payload version";
-    case TEXTURE_PARSE_BAD_DESC: return "invalid texture description";
-    case TEXTURE_PARSE_BAD_MIP: return "invalid mip table";
+	    case TEXTURE_PARSE_OK: return "ok";
+	    case TEXTURE_PARSE_NOT_A_TEXTURE: return "not a texture asset";
+	    case TEXTURE_PARSE_MISSING_CHUNK: return "missing TEX2 or PIXL chunk";
+	    case TEXTURE_PARSE_UNSUPPORTED_VERSION: return "unsupported texture payload version";
+	    case TEXTURE_PARSE_BAD_DESC: return "invalid texture description";
+	    case TEXTURE_PARSE_BAD_MIP: return "invalid mip table";
     }
     return "unknown error";
 }
@@ -124,10 +124,10 @@ bool desc_is_valid(const TextureDesc& desc) {
         return false;
     }
     switch (desc.dimension) {
-    case TEXTURE_DIMENSION_2D: return desc.depth == 1;
-    case TEXTURE_DIMENSION_CUBE: return desc.depth == 1 && desc.layers % TEXTURE_ASSET::CUBE_FACES == 0;
-    case TEXTURE_DIMENSION_3D: return desc.layers == 1;
-    default: return false;
+	    case TEXTURE_DIMENSION_2D: return desc.depth == 1;
+	    case TEXTURE_DIMENSION_CUBE: return desc.depth == 1 && desc.layers % TEXTURE_ASSET::CUBE_FACES == 0;
+	    case TEXTURE_DIMENSION_3D: return desc.layers == 1;
+	    default: return false;
     }
 }
 
@@ -161,11 +161,11 @@ bool mip_is_valid(const TextureDesc& desc, const TextureMip& mip, const u32 leve
 TextureParseError TextureAssetView::parse(const AssetView& file, const void* payload, const usz size) {
     this->reset();
 
-    if (!file.is_parsed() || file.header->type != ASSET_TYPE::TEXTURE) {
+    if (!file.is_ok() || file.header->type != ASSET_TYPE::TEXTURE) {
         return TEXTURE_PARSE_NOT_A_TEXTURE;
     }
-    const ChunkEntry* desc_chunk = file.find_chunk(CHUNK_TAG::TEXTURE);
-    const ChunkEntry* pixel_chunk = file.find_chunk(CHUNK_TAG::PIXELS);
+    const ChunkEntry* desc_chunk = file.find_chunk(CHUNK_TYPE::TEXTURE);
+    const ChunkEntry* pixel_chunk = file.find_chunk(CHUNK_TYPE::PIXELS);
     if (desc_chunk == nullptr || pixel_chunk == nullptr) {
         return TEXTURE_PARSE_MISSING_CHUNK;
     }
@@ -178,8 +178,13 @@ TextureParseError TextureAssetView::parse(const AssetView& file, const void* pay
     if (payload == nullptr || size != desc_chunk->size || size < sizeof(TextureDesc)) {
         return TEXTURE_PARSE_BAD_DESC;
     }
-    ENGINE_ASSERT(reinterpret_cast<uintptr_t>(payload) % alignof(TextureDesc) == 0,
-                  "TextureAssetView::parse: the payload must be %zu-byte aligned (any allocator gives this)", alignof(TextureDesc));
+    
+    ENGINE_ASSERT(
+    	reinterpret_cast<uintptr_t>(payload) % alignof(TextureDesc) == 0,
+        "TextureAssetView::parse: the payload must be %zu-byte aligned (any allocator gives this)", 
+        alignof(TextureDesc)
+    );
+    
     const u8* desc_bytes = static_cast<const u8*>(payload);
     TextureDesc desc;
     std::memcpy(&desc, desc_bytes, sizeof(TextureDesc));
@@ -212,6 +217,14 @@ TextureParseError TextureAssetView::parse(const AssetView& file, const void* pay
     return TEXTURE_PARSE_OK;
 }
 
+TextureParseError TextureAssetView::parse(const AssetView& file, const ReadChunk& chunk) {
+    if (!chunk.is_ok()) {
+        this->reset();
+        return TEXTURE_PARSE_BAD_DESC;
+    }
+    return this->parse(file, chunk.chunk_data, static_cast<usz>(chunk.entry.size));
+}
+
 const u8* TextureAssetView::mip_data(const u8* pixels, const u32 mip) const {
     if (pixels == nullptr || this->desc == nullptr || mip >= this->desc->mip_count) {
         return nullptr;
@@ -239,20 +252,20 @@ u64 TextureAssetView::layer_size(const u32 mip) const {
 
 u32 TEXTURE_FORMAT::srgb_variant(const u32 format) {
     switch (format) {
-    case TEXTURE_FORMAT_RGBA8_UNORM: return TEXTURE_FORMAT_RGBA8_SRGB;
-    case TEXTURE_FORMAT_BC1_RGB_UNORM: return TEXTURE_FORMAT_BC1_RGB_SRGB;
-    case TEXTURE_FORMAT_BC3_UNORM: return TEXTURE_FORMAT_BC3_SRGB;
-    case TEXTURE_FORMAT_BC7_UNORM: return TEXTURE_FORMAT_BC7_SRGB;
-    default: return format;
+	    case TEXTURE_FORMAT_RGBA8_UNORM: return TEXTURE_FORMAT_RGBA8_SRGB;
+	    case TEXTURE_FORMAT_BC1_RGB_UNORM: return TEXTURE_FORMAT_BC1_RGB_SRGB;
+	    case TEXTURE_FORMAT_BC3_UNORM: return TEXTURE_FORMAT_BC3_SRGB;
+	    case TEXTURE_FORMAT_BC7_UNORM: return TEXTURE_FORMAT_BC7_SRGB;
+	    default: return format;
     }
 }
 
 const char* TEXTURE_ASSET::write_error_name(const TextureWriteError error) {
     switch (error) {
-    case TEXTURE_WRITE_OK: return "ok";
-    case TEXTURE_WRITE_BAD_SOURCE: return "invalid source dimensions or format";
-    case TEXTURE_WRITE_BAD_SIZE: return "source pixel size does not match its dimensions";
-    case TEXTURE_WRITE_CANNOT_GENERATE_MIPS: return "mips cannot be generated for a block compressed format";
+	    case TEXTURE_WRITE_OK: return "ok";
+	    case TEXTURE_WRITE_BAD_SOURCE: return "invalid source dimensions or format";
+	    case TEXTURE_WRITE_BAD_SIZE: return "source pixel size does not match its dimensions";
+	    case TEXTURE_WRITE_CANNOT_GENERATE_MIPS: return "mips cannot be generated for a block compressed format";
     }
     return "unknown error";
 }
@@ -282,20 +295,20 @@ struct ChannelLayout {
 // False for block compressed formats, which cannot be filtered.
 bool channel_layout(const u32 format, ChannelLayout* out) {
     switch (format) {
-    case TEXTURE_FORMAT_R8_UNORM: *out = {CHANNEL_UNORM8, 1, 1, false}; return true;
-    case TEXTURE_FORMAT_RG8_UNORM: *out = {CHANNEL_UNORM8, 2, 1, false}; return true;
-    case TEXTURE_FORMAT_RGBA8_UNORM: *out = {CHANNEL_UNORM8, 4, 1, false}; return true;
-    case TEXTURE_FORMAT_RGBA8_SRGB: *out = {CHANNEL_UNORM8, 4, 1, true}; return true;
-    case TEXTURE_FORMAT_R16_UNORM: *out = {CHANNEL_UNORM16, 1, 2, false}; return true;
-    case TEXTURE_FORMAT_RG16_UNORM: *out = {CHANNEL_UNORM16, 2, 2, false}; return true;
-    case TEXTURE_FORMAT_RGBA16_UNORM: *out = {CHANNEL_UNORM16, 4, 2, false}; return true;
-    case TEXTURE_FORMAT_R16_FLOAT: *out = {CHANNEL_FLOAT16, 1, 2, false}; return true;
-    case TEXTURE_FORMAT_RG16_FLOAT: *out = {CHANNEL_FLOAT16, 2, 2, false}; return true;
-    case TEXTURE_FORMAT_RGBA16_FLOAT: *out = {CHANNEL_FLOAT16, 4, 2, false}; return true;
-    case TEXTURE_FORMAT_R32_FLOAT: *out = {CHANNEL_FLOAT32, 1, 4, false}; return true;
-    case TEXTURE_FORMAT_RG32_FLOAT: *out = {CHANNEL_FLOAT32, 2, 4, false}; return true;
-    case TEXTURE_FORMAT_RGBA32_FLOAT: *out = {CHANNEL_FLOAT32, 4, 4, false}; return true;
-    default: return false;
+	    case TEXTURE_FORMAT_R8_UNORM: *out = {CHANNEL_UNORM8, 1, 1, false}; return true;
+	    case TEXTURE_FORMAT_RG8_UNORM: *out = {CHANNEL_UNORM8, 2, 1, false}; return true;
+	    case TEXTURE_FORMAT_RGBA8_UNORM: *out = {CHANNEL_UNORM8, 4, 1, false}; return true;
+	    case TEXTURE_FORMAT_RGBA8_SRGB: *out = {CHANNEL_UNORM8, 4, 1, true}; return true;
+	    case TEXTURE_FORMAT_R16_UNORM: *out = {CHANNEL_UNORM16, 1, 2, false}; return true;
+	    case TEXTURE_FORMAT_RG16_UNORM: *out = {CHANNEL_UNORM16, 2, 2, false}; return true;
+	    case TEXTURE_FORMAT_RGBA16_UNORM: *out = {CHANNEL_UNORM16, 4, 2, false}; return true;
+	    case TEXTURE_FORMAT_R16_FLOAT: *out = {CHANNEL_FLOAT16, 1, 2, false}; return true;
+	    case TEXTURE_FORMAT_RG16_FLOAT: *out = {CHANNEL_FLOAT16, 2, 2, false}; return true;
+	    case TEXTURE_FORMAT_RGBA16_FLOAT: *out = {CHANNEL_FLOAT16, 4, 2, false}; return true;
+	    case TEXTURE_FORMAT_R32_FLOAT: *out = {CHANNEL_FLOAT32, 1, 4, false}; return true;
+	    case TEXTURE_FORMAT_RG32_FLOAT: *out = {CHANNEL_FLOAT32, 2, 4, false}; return true;
+	    case TEXTURE_FORMAT_RGBA32_FLOAT: *out = {CHANNEL_FLOAT32, 4, 4, false}; return true;
+	    default: return false;
     }
 }
 
@@ -462,8 +475,17 @@ void store_unorm(u8* texel, const ChannelLayout& layout, const u32 channel, cons
 // it covers (2x2 for 2D). A source extent that is already 1 contributes the
 // same texel twice, which keeps the weights uniform; the last row or column
 // of an odd extent is dropped, as the halve-and-clamp mip rule implies.
-void downsample_layer(const ChannelLayout& layout, const u8* source, const u32 source_width, const u32 source_height,
-                      const u32 source_depth, u8* target, const u32 target_width, const u32 target_height, const u32 target_depth) {
+void downsample_layer(
+	const ChannelLayout& layout, 
+	const u8* source, 
+	const u32 source_width, 
+	const u32 source_height,
+    const u32 source_depth, 
+    u8* target, 
+    const u32 target_width, 
+    const u32 target_height, 
+    const u32 target_depth
+) {
     const usz texel_bytes = layout.count * layout.bytes;
     const usz source_row = texel_bytes * source_width;
     const usz source_slice = source_row * source_height;
@@ -575,16 +597,23 @@ TextureWriteError TextureAssetWriter::build(const TextureSource& source, const T
     if (mip_count > 1) {
         ChannelLayout layout;
         const bool filterable = channel_layout(format, &layout);
+        
         ENGINE_ASSERT(filterable, "TextureAssetWriter::build: every uncompressed format has a channel layout");
         (void)filterable;
+        
         for (u32 level = 1; level < mip_count; ++level) {
             const TextureMip& from = this->mips[level - 1];
             const TextureMip& to = this->mips[level];
             const usz from_layer = static_cast<usz>(TEXTURE_FORMAT::layer_size(format, from.width, from.height, from.depth));
             const usz to_layer = static_cast<usz>(TEXTURE_FORMAT::layer_size(format, to.width, to.height, to.depth));
             for (u32 layer = 0; layer < source.layers; ++layer) {
-                downsample_layer(layout, this->pixels.data + from.offset + from_layer * layer, from.width, from.height, from.depth,
-                                 this->pixels.data + to.offset + to_layer * layer, to.width, to.height, to.depth);
+                downsample_layer(
+                	layout, 
+                 	this->pixels.data + from.offset + from_layer * layer,
+                  	from.width, from.height, from.depth,
+                   	this->pixels.data + to.offset + to_layer * layer, 
+                    to.width, to.height, to.depth
+                );
             }
         }
     }
@@ -615,8 +644,8 @@ void TextureAssetWriter::add_chunks(AssetWriter& file) const {
     }
     alignas(8) u8 payload[TEXTURE_ASSET::desc_size(TEXTURE_ASSET::MAX_MIPS)];
     this->write_desc(payload);
-    file.add_chunk(CHUNK_TAG::TEXTURE, TEXTURE_ASSET::VERSION, 0, payload, this->desc_size());
-    file.add_chunk(CHUNK_TAG::PIXELS, TEXTURE_ASSET::VERSION, 0, this->pixels.data, this->pixels.count);
+    file.add_chunk(CHUNK_TYPE::TEXTURE, TEXTURE_ASSET::VERSION, 0, payload, this->desc_size());
+    file.add_chunk(CHUNK_TYPE::PIXELS, TEXTURE_ASSET::VERSION, 0, this->pixels.data, this->pixels.count);
 }
 
 void TextureAssetWriter::clear() {

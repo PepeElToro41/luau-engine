@@ -2,7 +2,6 @@
 
 #include "engine/memory/heap_allocator.hpp"
 
-#include <cstring>
 #include <new>
 
 // --- AssetResource ----------------------------------------------------------
@@ -10,7 +9,7 @@
 bool AssetResource::is_loaded() const {
     const usz chunk_count = this->view.chunk_count();
     for (usz i = 0; i < chunk_count; ++i) {
-        if (!this->view.chunks[i].is_editor_only() && !this->is_resident(i)) {
+        if (!this->view.chunks[i].editor_only() && !this->is_resident(i)) {
             return false;
         }
     }
@@ -45,13 +44,18 @@ AssetResourceProvider::AssetResourceProvider() : AssetResourceProvider(MEMORY::h
 
 AssetResourceProvider::AssetResourceProvider(BaseAllocator* allocator) : allocator(allocator), resources(allocator) {}
 
-static void print_guid(char* out, const usz out_size, const AssetGuid& guid) {
+namespace {
+
+void print_guid(char* out, const usz out_size, const AssetGuid& guid) {
     snprintf(out, out_size, "%016llx%016llx", static_cast<unsigned long long>(guid.hi), static_cast<unsigned long long>(guid.lo));
 }
 
+} // namespace
+
 AssetResource* AssetResourceProvider::add(const AssetView& view, const char* path) {
-    if (!view.is_parsed()) {
-        fprintf(stderr, "[asset] error: cannot add %s: the view is not parsed\n", path != nullptr ? path : "(null)");
+    if (!view.is_ok()) {
+        fprintf(stderr, "[asset] error: cannot add %s: the view is not valid (%s)\n", path != nullptr ? path : "(null)",
+                ASSET_FILE::parse_error_name(view.parse_error));
         return nullptr;
     }
     if (path == nullptr) {
@@ -90,7 +94,7 @@ AssetResource* AssetResourceProvider::add(const AssetView& view, const char* pat
         this->unload(resource);
         this->free_prelude(resource);
         if (!this->store_prelude(resource, view)) {
-            // Cannot happen for a parsed view, but never keep a resource
+            // Cannot happen for an ok view, but never keep a resource
             // without a prelude.
             this->release(resource);
             if (known) {
@@ -121,31 +125,35 @@ bool AssetResourceProvider::remove(const AssetGuid& guid) {
     return true;
 }
 
-bool AssetResourceProvider::store_prelude(AssetResource* resource, const AssetView& view) {
-    u8* copy = static_cast<u8*>(this->allocator->allocate(view.size, ASSET_FILE::PAYLOAD_ALIGNMENT));
-    std::memcpy(copy, view.data, view.size);
-    if (resource->view.parse(copy, view.size) != ASSET_PARSE_OK) {
-        this->allocator->free(copy);
-        return false;
-    }
-    resource->prelude = copy;
-    resource->prelude_size = view.size;
-
-    const usz chunk_count = resource->view.chunk_count();
+void AssetResourceProvider::adopt_prelude(AssetResource* resource, const AssetView& view) {
+    resource->view = view;
+    const usz chunk_count = view.chunk_count();
     resource->payloads = this->allocator->allocate_array<u8*>(chunk_count);
     if (chunk_count > 0) {
         std::memset(resource->payloads, 0, sizeof(u8*) * chunk_count);
     }
+}
+
+bool AssetResourceProvider::store_prelude(AssetResource* resource, const AssetView& view) {
+    u8* copy = static_cast<u8*>(this->allocator->allocate(view.size, ASSET_FILE::PAYLOAD_ALIGNMENT));
+    if (copy == nullptr) {
+        return false;
+    }
+    std::memcpy(copy, view.data, view.size);
+    const AssetView own = AssetView::parse(copy, view.size);
+    if (!own.is_ok()) {
+        this->allocator->free(copy);
+        return false;
+    }
+    this->adopt_prelude(resource, own);
     return true;
 }
 
 void AssetResourceProvider::free_prelude(AssetResource* resource) {
     this->allocator->free(resource->payloads);
-    this->allocator->free(resource->prelude);
+    this->allocator->free(const_cast<u8*>(resource->view.data));
     resource->payloads = nullptr;
-    resource->prelude = nullptr;
-    resource->prelude_size = 0;
-    resource->view.reset();
+    resource->view = AssetView{};
 }
 
 void AssetResourceProvider::release(AssetResource* resource) {
@@ -173,8 +181,8 @@ AssetResource* AssetResourceProvider::get(const AssetGuid& guid) {
 }
 
 AssetResource* AssetResourceProvider::get(const AssetView& view) {
-    if (!view.is_parsed()) {
-        fprintf(stderr, "[asset] error: get on a view that is not parsed\n");
+    if (!view.is_ok()) {
+        fprintf(stderr, "[asset] error: get on a view that is not valid\n");
         return nullptr;
     }
     return this->get(view.header->guid);
@@ -197,40 +205,25 @@ bool AssetResourceProvider::open(AssetResource* resource, AssetReader* reader, b
     }
 
     // The file was re-imported since the prelude was taken: take it again
-    // and drop payloads that belong to the old chunk table.
-    usz size = 0;
-    u8* prelude = reader->read_prelude(this->allocator, &size);
-    if (prelude == nullptr) {
-        reader->close();
-        return false;
-    }
-    AssetView fresh;
-    const AssetParseError error = fresh.parse(prelude, size);
-    if (error != ASSET_PARSE_OK) {
-        fprintf(stderr, "[asset] error: %s: %s\n", resource->path, ASSET_FILE::parse_error_name(error));
-        this->allocator->free(prelude);
+    // and drop payloads that belong to the old chunk table. The reader's
+    // buffer already has the alignment a prelude needs; keep it rather
+    // than copy.
+    AssetView fresh = reader->read_prelude(this->allocator);
+    if (!fresh.is_ok()) {
+        fprintf(stderr, "[asset] error: %s: %s\n", resource->path, ASSET_FILE::parse_error_name(fresh.parse_error));
         reader->close();
         return false;
     }
     if (this->require_cooked && !fresh.is_cooked()) {
         fprintf(stderr, "[asset] error: %s is no longer cooked; the runtime only loads cooked assets\n", resource->path);
-        this->allocator->free(prelude);
+        ASSET_FILE::free_prelude(&fresh, this->allocator);
         reader->close();
         return false;
     }
 
     this->unload(resource);
     this->free_prelude(resource);
-    // `prelude` already has the alignment store_prelude would give it; keep
-    // it rather than copy.
-    resource->prelude = prelude;
-    resource->prelude_size = size;
-    resource->view = fresh;
-    const usz chunk_count = fresh.chunk_count();
-    resource->payloads = this->allocator->allocate_array<u8*>(chunk_count);
-    if (chunk_count > 0) {
-        std::memset(resource->payloads, 0, sizeof(u8*) * chunk_count);
-    }
+    this->adopt_prelude(resource, fresh);
     *out_refreshed = true;
     return true;
 }
@@ -268,7 +261,7 @@ bool AssetResourceProvider::load(AssetResource* resource) {
     bool ok = true;
     const usz chunk_count = resource->view.chunk_count();
     for (usz i = 0; i < chunk_count && ok; ++i) {
-        if (!resource->view.chunks[i].is_editor_only()) {
+        if (!resource->view.chunks[i].editor_only()) {
             ok = this->read_chunk(resource, reader, i);
         }
     }
