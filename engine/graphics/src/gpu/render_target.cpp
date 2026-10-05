@@ -4,10 +4,41 @@
 
 #include <cstdio>
 
+// --- Clear values and formats ----------------------------------------------------
+
+void render_target_clear_values(const f32 color[4], VkClearValue out[RENDER_TARGET_ATTACHMENT_COUNT]) {
+    out[0] = VkClearValue{};
+    out[0].color.float32[0] = color[0];
+    out[0].color.float32[1] = color[1];
+    out[0].color.float32[2] = color[2];
+    out[0].color.float32[3] = color[3];
+    out[1] = VkClearValue{};
+    out[1].depthStencil.depth = 1.0f;
+    out[1].depthStencil.stencil = 0;
+}
+
+VkFormat find_depth_format(const GpuDevice* gpu) {
+    const VkFormat candidates[] = {VK_FORMAT_D32_SFLOAT, VK_FORMAT_D32_SFLOAT_S8_UINT, VK_FORMAT_D24_UNORM_S8_UINT};
+    for (const VkFormat candidate : candidates) {
+        VkFormatProperties properties;
+        vkGetPhysicalDeviceFormatProperties(gpu->physical_device, candidate, &properties);
+        if (properties.optimalTilingFeatures & VK_FORMAT_FEATURE_DEPTH_STENCIL_ATTACHMENT_BIT) {
+            return candidate;
+        }
+    }
+    fprintf(stderr, "[vulkan] no supported depth attachment format\n");
+    return VK_FORMAT_UNDEFINED;
+}
+
+static bool has_stencil(const VkFormat depth_format) {
+    return depth_format == VK_FORMAT_D32_SFLOAT_S8_UINT || depth_format == VK_FORMAT_D24_UNORM_S8_UINT;
+}
+
 // --- Render pass ---------------------------------------------------------------
 
-VkRenderPass create_color_render_pass(const GpuDevice* gpu, const VkFormat format, const VkImageLayout final_layout) {
-    VkAttachmentDescription color{};
+VkRenderPass create_target_render_pass(const GpuDevice* gpu, const VkFormat format, const VkFormat depth_format, const VkImageLayout final_layout) {
+    VkAttachmentDescription attachments[RENDER_TARGET_ATTACHMENT_COUNT] = {};
+    VkAttachmentDescription& color = attachments[0];
     color.format = format;
     color.samples = VK_SAMPLE_COUNT_1_BIT;
     color.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
@@ -17,28 +48,51 @@ VkRenderPass create_color_render_pass(const GpuDevice* gpu, const VkFormat forma
     color.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
     color.finalLayout = final_layout;
 
+    // Depth only matters inside the pass: cleared on load, never stored.
+    VkAttachmentDescription& depth = attachments[1];
+    depth.format = depth_format;
+    depth.samples = VK_SAMPLE_COUNT_1_BIT;
+    depth.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
+    depth.storeOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
+    depth.stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
+    depth.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
+    depth.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+    depth.finalLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
+
     VkAttachmentReference color_ref{};
     color_ref.attachment = 0;
     color_ref.layout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+
+    VkAttachmentReference depth_ref{};
+    depth_ref.attachment = 1;
+    depth_ref.layout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
 
     VkSubpassDescription subpass{};
     subpass.pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS;
     subpass.colorAttachmentCount = 1;
     subpass.pColorAttachments = &color_ref;
+    subpass.pDepthStencilAttachment = &depth_ref;
+
+    constexpr VkPipelineStageFlags depth_stages = VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT;
 
     VkSubpassDependency dependencies[2] = {};
     u32 dependency_count = 1;
 
-    // Before: wait for whoever last touched the image. For a present target
-    // that is the acquire semaphore (waited at color-attachment-output); for a
-    // sampled target it is the fragment shader that read it last frame.
+    // Before: wait for whoever last touched the images. For the color image of
+    // a present target that is the acquire semaphore (waited at
+    // color-attachment-output); for a sampled target it is the fragment
+    // shader that read it last frame. The depth image is shared by every
+    // frame, so also wait for the previous frame's depth tests before
+    // clearing it.
     dependencies[0].srcSubpass = VK_SUBPASS_EXTERNAL;
     dependencies[0].dstSubpass = 0;
-    dependencies[0].dstStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
-    dependencies[0].dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+    dependencies[0].srcStageMask = depth_stages;
+    dependencies[0].srcAccessMask = VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
+    dependencies[0].dstStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT | depth_stages;
+    dependencies[0].dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
     if (final_layout == VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL) {
-        dependencies[0].srcStageMask = VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT;
-        dependencies[0].srcAccessMask = VK_ACCESS_SHADER_READ_BIT;
+        dependencies[0].srcStageMask |= VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT;
+        dependencies[0].srcAccessMask |= VK_ACCESS_SHADER_READ_BIT;
 
         // After: make the writes visible to the fragment shader that samples
         // the result later in the same command buffer.
@@ -50,14 +104,13 @@ VkRenderPass create_color_render_pass(const GpuDevice* gpu, const VkFormat forma
         dependencies[1].dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
         dependency_count = 2;
     } else {
-        dependencies[0].srcStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
-        dependencies[0].srcAccessMask = 0;
+        dependencies[0].srcStageMask |= VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
     }
 
     VkRenderPassCreateInfo info{};
     info.sType = VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO;
-    info.attachmentCount = 1;
-    info.pAttachments = &color;
+    info.attachmentCount = RENDER_TARGET_ATTACHMENT_COUNT;
+    info.pAttachments = attachments;
     info.subpassCount = 1;
     info.pSubpasses = &subpass;
     info.dependencyCount = dependency_count;
@@ -70,12 +123,13 @@ VkRenderPass create_color_render_pass(const GpuDevice* gpu, const VkFormat forma
     return render_pass;
 }
 
-static VkFramebuffer create_framebuffer(const GpuDevice* gpu, VkRenderPass render_pass, VkImageView view, VkExtent2D extent) {
+static VkFramebuffer create_framebuffer(const GpuDevice* gpu, VkRenderPass render_pass, VkImageView view, VkImageView depth_view, VkExtent2D extent) {
+    const VkImageView attachments[RENDER_TARGET_ATTACHMENT_COUNT] = {view, depth_view};
     VkFramebufferCreateInfo info{};
     info.sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO;
     info.renderPass = render_pass;
-    info.attachmentCount = 1;
-    info.pAttachments = &view;
+    info.attachmentCount = RENDER_TARGET_ATTACHMENT_COUNT;
+    info.pAttachments = attachments;
     info.width = extent.width;
     info.height = extent.height;
     info.layers = 1;
@@ -85,6 +139,110 @@ static VkFramebuffer create_framebuffer(const GpuDevice* gpu, VkRenderPass rende
         return VK_NULL_HANDLE;
     }
     return framebuffer;
+}
+
+// --- DepthAttachment -----------------------------------------------------------
+
+bool DepthAttachment::init(GpuDevice* gpu, const VkFormat format, const VkExtent2D extent) {
+    this->gpu = gpu;
+    this->format = format;
+    if (format == VK_FORMAT_UNDEFINED) {
+        fprintf(stderr, "[vulkan] depth attachment needs a format\n");
+        return false;
+    }
+    return this->create_image(extent);
+}
+
+void DepthAttachment::shutdown() {
+    if (this->gpu == nullptr) {
+        return;
+    }
+    this->destroy_image();
+    this->format = VK_FORMAT_UNDEFINED;
+    this->gpu = nullptr;
+}
+
+bool DepthAttachment::resize(const VkExtent2D extent) {
+    this->destroy_image();
+    return this->create_image(extent);
+}
+
+bool DepthAttachment::create_image(const VkExtent2D extent) {
+    if (extent.width == 0 || extent.height == 0) {
+        fprintf(stderr, "[vulkan] depth attachment needs a non-zero extent\n");
+        return false;
+    }
+    VkDevice device = this->gpu->device;
+
+    VkImageCreateInfo image_info{};
+    image_info.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
+    image_info.imageType = VK_IMAGE_TYPE_2D;
+    image_info.format = this->format;
+    image_info.extent = {extent.width, extent.height, 1};
+    image_info.mipLevels = 1;
+    image_info.arrayLayers = 1;
+    image_info.samples = VK_SAMPLE_COUNT_1_BIT;
+    image_info.tiling = VK_IMAGE_TILING_OPTIMAL;
+    image_info.usage = VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT;
+    image_info.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+    image_info.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+    if (!vk_check(vkCreateImage(device, &image_info, nullptr, &this->image), "vkCreateImage (depth)")) {
+        this->image = VK_NULL_HANDLE;
+        return false;
+    }
+
+    VkMemoryRequirements requirements;
+    vkGetImageMemoryRequirements(device, this->image, &requirements);
+    const u32 memory_type = this->gpu->find_memory_type(requirements.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+    if (memory_type == UINT32_MAX) {
+        fprintf(stderr, "[vulkan] no device-local memory type for the depth attachment\n");
+        return false;
+    }
+
+    VkMemoryAllocateInfo alloc_info{};
+    alloc_info.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+    alloc_info.allocationSize = requirements.size;
+    alloc_info.memoryTypeIndex = memory_type;
+    if (!vk_check(vkAllocateMemory(device, &alloc_info, nullptr, &this->memory), "vkAllocateMemory (depth)")) {
+        this->memory = VK_NULL_HANDLE;
+        return false;
+    }
+    if (!vk_check(vkBindImageMemory(device, this->image, this->memory, 0), "vkBindImageMemory (depth)")) {
+        return false;
+    }
+
+    VkImageViewCreateInfo view_info{};
+    view_info.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
+    view_info.image = this->image;
+    view_info.viewType = VK_IMAGE_VIEW_TYPE_2D;
+    view_info.format = this->format;
+    view_info.subresourceRange.aspectMask = VK_IMAGE_ASPECT_DEPTH_BIT | (has_stencil(this->format) ? VK_IMAGE_ASPECT_STENCIL_BIT : 0);
+    view_info.subresourceRange.levelCount = 1;
+    view_info.subresourceRange.layerCount = 1;
+    if (!vk_check(vkCreateImageView(device, &view_info, nullptr, &this->view), "vkCreateImageView (depth)")) {
+        this->view = VK_NULL_HANDLE;
+        return false;
+    }
+
+    this->extent = extent;
+    return true;
+}
+
+void DepthAttachment::destroy_image() {
+    VkDevice device = this->gpu->device;
+    if (this->view != VK_NULL_HANDLE) {
+        vkDestroyImageView(device, this->view, nullptr);
+        this->view = VK_NULL_HANDLE;
+    }
+    if (this->image != VK_NULL_HANDLE) {
+        vkDestroyImage(device, this->image, nullptr);
+        this->image = VK_NULL_HANDLE;
+    }
+    if (this->memory != VK_NULL_HANDLE) {
+        vkFreeMemory(device, this->memory, nullptr);
+        this->memory = VK_NULL_HANDLE;
+    }
+    this->extent = {0, 0};
 }
 
 // --- SwapchainTargets ----------------------------------------------------------
@@ -100,6 +258,7 @@ void SwapchainTargets::shutdown() {
         return;
     }
     this->destroy_framebuffers();
+    this->depth.shutdown();
     if (this->render_pass != VK_NULL_HANDLE) {
         vkDestroyRenderPass(this->gpu->device, this->render_pass, nullptr);
         this->render_pass = VK_NULL_HANDLE;
@@ -116,16 +275,24 @@ bool SwapchainTargets::recreate() {
         vkDestroyRenderPass(this->gpu->device, this->render_pass, nullptr);
         this->render_pass = VK_NULL_HANDLE;
     }
+    const VkFormat depth_format = this->depth.format != VK_FORMAT_UNDEFINED ? this->depth.format : find_depth_format(this->gpu);
     if (this->render_pass == VK_NULL_HANDLE) {
-        this->render_pass = create_color_render_pass(this->gpu, this->swapchain->format, VK_IMAGE_LAYOUT_PRESENT_SRC_KHR);
+        this->render_pass = create_target_render_pass(this->gpu, this->swapchain->format, depth_format, VK_IMAGE_LAYOUT_PRESENT_SRC_KHR);
         if (this->render_pass == VK_NULL_HANDLE) {
             return false;
         }
         this->format = this->swapchain->format;
     }
 
+    const bool depth_ok = this->depth.image == VK_NULL_HANDLE
+        ? this->depth.init(this->gpu, depth_format, this->swapchain->extent)
+        : this->depth.resize(this->swapchain->extent);
+    if (!depth_ok) {
+        return false;
+    }
+
     for (u32 i = 0; i < this->swapchain->image_count; ++i) {
-        this->framebuffers[i] = create_framebuffer(this->gpu, this->render_pass, this->swapchain->views[i], this->swapchain->extent);
+        this->framebuffers[i] = create_framebuffer(this->gpu, this->render_pass, this->swapchain->views[i], this->depth.view, this->swapchain->extent);
         if (this->framebuffers[i] == VK_NULL_HANDLE) {
             return false;
         }
@@ -139,6 +306,8 @@ RenderTarget SwapchainTargets::target(const u32 image_index) const {
     target.framebuffer = this->framebuffers[image_index];
     target.view = this->swapchain->views[image_index];
     target.format = this->format;
+    target.depth_view = this->depth.view;
+    target.depth_format = this->depth.format;
     target.extent = this->swapchain->extent;
     return target;
 }
@@ -159,8 +328,12 @@ bool OffscreenTarget::init(GpuDevice* gpu, const VkFormat format, const VkExtent
     this->format = format;
     this->sampled_format = sampled_format == VK_FORMAT_UNDEFINED ? format : sampled_format;
 
-    this->render_pass = create_color_render_pass(gpu, format, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+    const VkFormat depth_format = find_depth_format(gpu);
+    this->render_pass = create_target_render_pass(gpu, format, depth_format, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
     if (this->render_pass == VK_NULL_HANDLE) {
+        return false;
+    }
+    if (!this->depth.init(gpu, depth_format, extent)) {
         return false;
     }
 
@@ -186,6 +359,7 @@ void OffscreenTarget::shutdown() {
         return;
     }
     this->destroy_image();
+    this->depth.shutdown();
     if (this->sampler != VK_NULL_HANDLE) {
         vkDestroySampler(this->gpu->device, this->sampler, nullptr);
         this->sampler = VK_NULL_HANDLE;
@@ -199,6 +373,9 @@ void OffscreenTarget::shutdown() {
 
 bool OffscreenTarget::resize(const VkExtent2D extent) {
     this->destroy_image();
+    if (!this->depth.resize(extent)) {
+        return false;
+    }
     return this->create_image(extent);
 }
 
@@ -208,6 +385,8 @@ RenderTarget OffscreenTarget::target() const {
     target.framebuffer = this->framebuffer;
     target.view = this->view;
     target.format = this->format;
+    target.depth_view = this->depth.view;
+    target.depth_format = this->depth.format;
     target.extent = this->extent;
     return target;
 }
@@ -282,7 +461,7 @@ bool OffscreenTarget::create_image(const VkExtent2D extent) {
         this->sampled_view = this->view;
     }
 
-    this->framebuffer = create_framebuffer(this->gpu, this->render_pass, this->view, extent);
+    this->framebuffer = create_framebuffer(this->gpu, this->render_pass, this->view, this->depth.view, extent);
     if (this->framebuffer == VK_NULL_HANDLE) {
         return false;
     }

@@ -238,15 +238,16 @@ void App::frame(const f32 dt) {
     this->draw_editor();
     ImGui::Render();
 
-    VkClearValue clear{};
-    clear.color = {{0.1f, 0.1f, 0.1f, 1.0f}};
+    const f32 ui_clear_color[4] = {0.1f, 0.1f, 0.1f, 1.0f};
+    VkClearValue clear[RENDER_TARGET_ATTACHMENT_COUNT];
+    render_target_clear_values(ui_clear_color, clear);
     VkRenderPassBeginInfo pass_info{};
     pass_info.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
     pass_info.renderPass = frame.target.render_pass;
     pass_info.framebuffer = frame.target.framebuffer;
     pass_info.renderArea.extent = frame.target.extent;
-    pass_info.clearValueCount = 1;
-    pass_info.pClearValues = &clear;
+    pass_info.clearValueCount = RENDER_TARGET_ATTACHMENT_COUNT;
+    pass_info.pClearValues = clear;
     vkCmdBeginRenderPass(frame.cmd, &pass_info, VK_SUBPASS_CONTENTS_INLINE);
     ImGui_ImplVulkan_RenderDrawData(ImGui::GetDrawData(), frame.cmd);
     vkCmdEndRenderPass(frame.cmd);

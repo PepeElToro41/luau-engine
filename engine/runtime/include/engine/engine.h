@@ -4,6 +4,7 @@
 #include "engine/defines.hpp"
 #include "engine/gpu/device.hpp"
 #include "engine/gpu/render_target.hpp"
+#include "engine/gpu/resource_manager.hpp"
 #include "engine/utils/singletons.hpp"
 
 #include <utility>
@@ -28,9 +29,14 @@
 // once and engine.get_singleton<T>() returns that same object afterwards
 // (see singletons.hpp). They are released by shutdown(); anything a singleton
 // owns must be released before that, explicitly, like any other engine
-// resource. init() creates the engine's own singletons, currently the
-// AssetResourceProvider that streams asset payloads (get_singleton<AssetResourceProvider>()),
-// and shutdown() frees what they own before destroying them.
+// resource. init() creates the engine's own singletons: the
+// AssetResourceProvider that streams asset payloads
+// (get_singleton<AssetResourceProvider>()) and the GpuResourceManager that
+// owns buffers and textures and defers their destruction until the frame
+// slot that could still use them has completed
+// (get_singleton<GpuResourceManager>()). shutdown() frees what they own
+// before destroying them, so the app must have waited for the GPU to go idle
+// before calling it.
 struct Engine {
     // Creates the engine's GPU resources on `gpu`, which must outlive it,
     // and the engine's own singletons.
@@ -41,7 +47,8 @@ struct Engine {
     // Advances the simulation by `dt` seconds.
     void update(f32 dt);
     // Records the frame into frame.cmd, drawing into frame.target. Resources
-    // written per frame are indexed by frame.slot.
+    // written per frame are indexed by frame.slot. Starts by retiring the
+    // GPU resources released the last time frame.slot was current.
     void render(const FrameContext& frame);
 
     // --- Singletons ----------------------------------------------------------

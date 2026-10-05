@@ -6,6 +6,10 @@ bool Engine::init(GpuDevice* gpu) {
     if (this->create_singleton<AssetResourceProvider>() == nullptr) {
         return false;
     }
+    GpuResourceManager* resources = this->create_singleton<GpuResourceManager>();
+    if (resources == nullptr || !resources->init(gpu)) {
+        return false;
+    }
     return true;
 }
 
@@ -13,6 +17,9 @@ void Engine::shutdown() {
     // Singletons that own memory release it before the store destroys them.
     if (AssetResourceProvider* assets = this->get_singleton<AssetResourceProvider>()) {
         assets->free();
+    }
+    if (GpuResourceManager* resources = this->get_singleton<GpuResourceManager>()) {
+        resources->shutdown();
     }
     this->singletons.free();
     this->gpu = nullptr;
@@ -23,19 +30,22 @@ void Engine::update(const f32 dt) {
 }
 
 void Engine::render(const FrameContext& frame) {
-    VkClearValue clear{};
-    clear.color.float32[0] = this->clear_color[0];
-    clear.color.float32[1] = this->clear_color[1];
-    clear.color.float32[2] = this->clear_color[2];
-    clear.color.float32[3] = this->clear_color[3];
+    // frame.slot's fence was waited on by FrameScheduler::begin, so whatever
+    // was released when this slot was last current can go now.
+    if (GpuResourceManager* resources = this->get_singleton<GpuResourceManager>()) {
+        resources->begin_frame(frame.slot);
+    }
+
+    VkClearValue clear[RENDER_TARGET_ATTACHMENT_COUNT];
+    render_target_clear_values(this->clear_color, clear);
 
     VkRenderPassBeginInfo pass_info{};
     pass_info.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
     pass_info.renderPass = frame.target.render_pass;
     pass_info.framebuffer = frame.target.framebuffer;
     pass_info.renderArea.extent = frame.target.extent;
-    pass_info.clearValueCount = 1;
-    pass_info.pClearValues = &clear;
+    pass_info.clearValueCount = RENDER_TARGET_ATTACHMENT_COUNT;
+    pass_info.pClearValues = clear;
 
     vkCmdBeginRenderPass(frame.cmd, &pass_info, VK_SUBPASS_CONTENTS_INLINE);
 
