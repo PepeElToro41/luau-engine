@@ -1,9 +1,16 @@
-cmake_minimum_required(VERSION 3.20)
+cmake_minimum_required(VERSION 3.25)
 
 project(LuauEngine
     VERSION 0.1.0
     LANGUAGES CXX
 )
+
+# The Windows Vulkan SDK ships MSVC-built libraries (shaderc_combined, volk);
+# MinGW's linker cannot use them and stalls instead of failing.
+if(WIN32 AND NOT MSVC)
+    message(FATAL_ERROR "On Windows, configure with the Visual Studio toolchain (cl.exe or clang-cl). "
+        "The Vulkan SDK libraries are MSVC builds and do not link with MinGW.")
+endif()
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -41,7 +48,14 @@ set(CMAKE_LIBRARY_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/lib)
 set(CMAKE_ARCHIVE_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/lib)
 
 # volk and SDL3 are shared by the vendored ImGui and the engine.
-find_package(volk CONFIG REQUIRED)
+# volk and shaderc come from the SDK through CMake's FindVulkan, which picks the
+# debug-CRT libraries (volkd, shaderc_combinedd) for Debug builds on Windows.
+find_package(Vulkan REQUIRED COMPONENTS volk shaderc_combined)
+# The Windows SDK keeps volk.h under Include/Volk; the Linux SDK has it in include/.
+if(EXISTS "${Vulkan_INCLUDE_DIR}/Volk/volk.h")
+    set_property(TARGET Vulkan::volk APPEND PROPERTY
+        INTERFACE_INCLUDE_DIRECTORIES "${Vulkan_INCLUDE_DIR}/Volk")
+endif()
 find_package(SDL3 CONFIG REQUIRED)
 
 add_subdirectory(vendor/imgui)

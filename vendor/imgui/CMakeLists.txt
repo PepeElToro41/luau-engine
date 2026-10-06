@@ -26,6 +26,6 @@ target_compile_definitions(imgui PUBLIC IMGUI_IMPL_VULKAN_USE_VOLK)
 
 target_link_libraries(imgui
     PUBLIC
-        volk::volk
+        Vulkan::volk
         SDL3::SDL3
 )
