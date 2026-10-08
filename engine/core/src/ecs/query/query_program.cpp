@@ -176,6 +176,7 @@ QueryProgram compile(World* world, const QueryTerm* terms, const usz term_count,
         }
     }
     program.with_ids = allocator->allocate_array<Id>(term_count + 1);
+    program.without_ids = allocator->allocate_array<Id>(term_count + 1);
     program.this_terms = allocator->allocate_array<u32>(term_count + 1);
     program.ops = allocator->allocate_array<QueryOp>(term_count + 2);
     program.op_count = 0;
@@ -186,8 +187,6 @@ QueryProgram compile(World* world, const QueryTerm* terms, const usz term_count,
     }
 
     // --- Split: matcher / plain THIS terms / units for the VM ---------------
-    Id* without_ids = allocator->allocate_array<Id>(term_count + 1);
-    usz without_count = 0;
     Unit* units = allocator->allocate_array<Unit>(term_count + 1);
     usz unit_count = 0;
 
@@ -225,7 +224,7 @@ QueryProgram compile(World* world, const QueryTerm* terms, const usz term_count,
             program.this_terms[program.this_term_count++] = index;
             if (!term.is_optional()) {
                 if (term.is_excluded()) {
-                    without_ids[without_count++] = term.id;
+                    program.without_ids[program.without_count++] = term.id;
                 } else {
                     program.with_ids[program.with_count++] = term.id;
                 }
@@ -250,8 +249,7 @@ QueryProgram compile(World* world, const QueryTerm* terms, const usz term_count,
     }
 
     program.matcher.free();
-    program.matcher = ArchetypeMatcher::create(allocator, program.with_ids, program.with_count, without_ids, without_count);
-    allocator->free(without_ids);
+    program.matcher = ArchetypeMatcher::create(allocator, program.with_ids, program.with_count, program.without_ids, program.without_count);
 
     // --- Schedule the ops ----------------------------------------------------
     u64 bound = 0;
@@ -330,17 +328,20 @@ void QueryProgram::free() {
     this->allocator->free(this->terms);
     this->allocator->free(this->term_fields);
     this->allocator->free(this->with_ids);
+    this->allocator->free(this->without_ids);
     this->allocator->free(this->this_terms);
     this->allocator->free(this->ops);
     this->terms = nullptr;
     this->term_fields = nullptr;
     this->with_ids = nullptr;
+    this->without_ids = nullptr;
     this->this_terms = nullptr;
     this->ops = nullptr;
     this->term_count = 0;
     this->field_count = 0;
     this->var_count = 0;
     this->with_count = 0;
+    this->without_count = 0;
     this->this_term_count = 0;
     this->op_count = 0;
     this->binds_this = false;

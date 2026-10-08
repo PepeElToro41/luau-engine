@@ -47,6 +47,8 @@ struct TrivialTerm {
     u32 field = QUERY_OP_NONE;
     Id pattern = 0;
     bool is_record_term = false;
+    // Position among program->this_terms: the cache keeps columns in that order.
+    usz this_index = 0;
 };
 
 struct VmState {
@@ -67,6 +69,13 @@ struct VmState {
     // SELECT bound last, NO_COLUMN when it came from elsewhere.
     u32 record_term = QUERY_OP_NONE;
     usz candidate_column = NO_COLUMN;
+    // Cached mode: SELECT walks `cache->matches` up to `cache_limit` (the
+    // count at begin()) instead of the candidates, and `cached_columns` is
+    // the column slice of the match bound last, one entry per plain THIS
+    // term in program->this_terms order (id count for none).
+    const QueryScanCache* cache = nullptr;
+    usz cache_limit = 0;
+    const usz* cached_columns = nullptr;
     // begin_for(): THIS is this entity alone.
     EntityId this_entity = 0;
     // Trivial mode (program is SELECT + YIELD, THIS not pre-bound): the
@@ -250,13 +259,44 @@ bool traverse_up(World* world, const Archetype* archetype, const EntityIdLow rel
 
 // --- Ops ---------------------------------------------------------------------
 
+// The column of plain THIS term `this_index` in the archetype SELECT bound
+// last, from the cache; NO_COLUMN when the term is missing (optional) or
+// there is no cache.
+usz cached_column(const VmState* state, const usz this_index, const Archetype* archetype) {
+    if (state->cached_columns == nullptr) {
+        return NO_COLUMN;
+    }
+    const usz column = state->cached_columns[this_index];
+    return column == archetype->type.id_count ? NO_COLUMN : column;
+}
+
 // The next candidate archetype that is non-empty and passes the matcher,
 // advancing `cursor`; nullptr when there are none left. `out_column` gets
 // the column the candidate list names, NO_COLUMN on the dense-list walk.
+// With a cache the matches are walked instead: already accepted, and the
+// columns of every plain THIS term are set from the cache.
 Archetype* select_next(VmState* state, usz& cursor, usz* out_column) {
     const QueryProgram* program = state->program;
     World* world = state->world;
     const SparseList<Archetype>& archetypes = world->archetypes;
+    *out_column = NO_COLUMN;
+    state->cached_columns = nullptr;
+
+    if (state->cache != nullptr) {
+        const QueryScanCache* cache = state->cache;
+        while (cursor < state->cache_limit && cursor < cache->matches.count) {
+            const QueryScanMatch& match = cache->matches[cursor];
+            const usz index = cursor;
+            cursor++;
+            if (archetypes.get_element_alive(match.id) != match.archetype || match.archetype->data.entity_count == 0) {
+                continue;
+            }
+            state->cached_columns = cache->columns.data + index * cache->term_count;
+            return match.archetype;
+        }
+        return nullptr;
+    }
+
     while (cursor < state->candidate_count) {
         Archetype* archetype;
         usz column = NO_COLUMN;
@@ -515,9 +555,14 @@ void fill_chunk(QueryIter* it, VmState* state) {
             write_none(state, index);
             continue;
         }
-        const usz column = index == state->record_term && state->candidate_column != NO_COLUMN
-            ? state->candidate_column
-            : find_column(self.archetype, ECS::FOLD_ANY(term.id), 0);
+        usz column;
+        if (state->cached_columns != nullptr) {
+            column = cached_column(state, i, self.archetype);
+        } else if (index == state->record_term && state->candidate_column != NO_COLUMN) {
+            column = state->candidate_column;
+        } else {
+            column = find_column(self.archetype, ECS::FOLD_ANY(term.id), 0);
+        }
         write_result(state, index, self.archetype, self.row, column, 0, true);
     }
 
@@ -604,9 +649,14 @@ bool next_trivial(QueryIter* it) {
     it->count = archetype->data.entity_count;
     for (usz i = 0; i < state->trivial_count; i++) {
         const TrivialTerm& term = state->trivial_terms[i];
-        const usz column = term.is_record_term && record_column != NO_COLUMN
-            ? record_column
-            : find_column(archetype, term.pattern, 0);
+        usz column;
+        if (state->cached_columns != nullptr) {
+            column = cached_column(state, term.this_index, archetype);
+        } else if (term.is_record_term && record_column != NO_COLUMN) {
+            column = record_column;
+        } else {
+            column = find_column(archetype, term.pattern, 0);
+        }
         if (column == NO_COLUMN) {
             // Only an optional term gets here: the matcher vouched for the rest.
             state->ids[term.term] = 0;
@@ -642,6 +692,7 @@ void prepare_trivial(VmState* state, BaseAllocator* allocator) {
         out.field = program->term_fields[index];
         out.pattern = ECS::FOLD_ANY(term.id);
         out.is_record_term = index == state->record_term;
+        out.this_index = i;
     }
 }
 
@@ -650,12 +701,16 @@ bool is_trivial(const QueryProgram* program) {
     return program->op_count == 2 && program->ops[0].kind == QUERY_OP_SELECT && program->ops[1].kind == QUERY_OP_YIELD;
 }
 
-QueryIter start(World* world, const QueryProgram* program, const EntityId entity, BaseAllocator* allocator) {
+QueryIter start(World* world, const QueryProgram* program, const QueryScanCache* cache, const EntityId entity, BaseAllocator* allocator) {
     QueryIter it;
     it.world = world;
     it.next = next_nothing;
     if (!program->ok) {
         return it;
+    }
+    if (cache != nullptr && (!cache->ok || cache->term_count != program->this_term_count)) {
+        fprintf(stderr, "[ecs] error: query VM given a cache that was not built from its program; ignoring it\n");
+        cache = nullptr;
     }
 
     VmState* state = allocator->allocate_array<VmState>(1);
@@ -687,7 +742,10 @@ QueryIter start(World* world, const QueryProgram* program, const EntityId entity
         state->shared[i] = false;
     }
 
-    if (program->binds_this && entity == 0) {
+    if (program->binds_this && entity == 0 && cache != nullptr) {
+        state->cache = cache;
+        state->cache_limit = cache->matches.count;
+    } else if (program->binds_this && entity == 0) {
         const ArchetypeCandidates candidates = ARCHETYPE_CANDIDATES::collect(world, program->with_ids, program->with_count, allocator);
         if (candidates.narrowed) {
             state->candidates = candidates.entries;
@@ -726,7 +784,11 @@ QueryIter start(World* world, const QueryProgram* program, const EntityId entity
 } // namespace
 
 QueryIter begin(World* world, const QueryProgram* program, BaseAllocator* allocator) {
-    return start(world, program, 0, allocator);
+    return start(world, program, nullptr, 0, allocator);
+}
+
+QueryIter begin(World* world, const QueryProgram* program, const QueryScanCache* cache, BaseAllocator* allocator) {
+    return start(world, program, cache, 0, allocator);
 }
 
 QueryIter begin_for(World* world, const QueryProgram* program, const EntityId entity, BaseAllocator* allocator) {
@@ -736,7 +798,7 @@ QueryIter begin_for(World* world, const QueryProgram* program, const EntityId en
         it.next = next_nothing;
         return it;
     }
-    return start(world, program, entity, allocator);
+    return start(world, program, nullptr, entity, allocator);
 }
 
 bool matches(World* world, const QueryProgram* program, const EntityId entity) {

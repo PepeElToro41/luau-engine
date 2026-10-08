@@ -9,7 +9,7 @@ struct Archetype;
 // Cursor over the results of any query: a sequence of chunks, each one
 // archetype's rows with the data pointers of the output terms. Who produces
 // the chunks does not matter to the consumer: an uncached Query<Ts...> walks
-// the world's archetypes, a cached one walks its QueryCache, a DynamicQuery
+// the world's archetypes, a cached one walks its QueryScanCache, a DynamicQuery
 // steps its program. The producer sets `next` and keeps its cursor in `state`;
 // everything that consumes results (each(), the QUERY:: utilities, monitors)
 // is written once against this struct.

@@ -2,7 +2,9 @@
 
 #include "engine/ecs/query/query.hpp"
 #include "engine/ecs/query/query_iter.hpp"
+#include "engine/ecs/query/query_scan.hpp"
 #include "engine/ecs/query/query_term.hpp"
+#include "engine/memory/heap_allocator.hpp"
 
 #include <type_traits>
 
@@ -506,6 +508,186 @@ TEST_CASE("ecs/query: the handle keeps matching as the world changes") {
     CHECK(positions.count() == 1);
     CHECK(positions.first() == b);
 
+    world.free();
+    CHECK_ARENA_CLEAN();
+}
+
+// --- Cached handles ----------------------------------------------------------
+
+TEST_CASE("ecs/query: a cached query builds its cache on the first run and keeps matching as the world changes") {
+    World world;
+    world.init();
+
+    Query<Position> positions = world.query<Position>(QUERY_CACHED);
+    CHECK(positions.flags == QUERY_CACHED);
+    CHECK(positions.cache == nullptr);
+    CHECK(positions.cache_allocator == nullptr);
+
+    CHECK(positions.count() == 0);
+    REQUIRE(positions.cache != nullptr);
+    CHECK(positions.cache->ok);
+    CHECK(positions.cache->allocator == world.allocator);
+    const QueryScanCache* cache = positions.cache;
+
+    const EntityId a = world.new_entity();
+    world.set(a, Position { 1, 0 });
+    CHECK(positions.count() == 1);
+    // Later runs reuse the same cache.
+    CHECK(positions.cache == cache);
+
+    // A new archetype after the first run is picked up by the next one.
+    const EntityId b = world.new_entity();
+    world.set(b, Position { 2, 0 });
+    world.set(b, Health { });
+    CHECK(positions.count() == 2);
+    CHECK(cache->matches.count == 2);
+
+    f32 sum = 0;
+    positions.each([&](const Position& position) { sum += position.x; });
+    CHECK(sum == 3);
+    usz chunks = 0;
+    positions.iter([&](const QueryIter& it, Position* data) {
+        chunks++;
+        CHECK(it.count == 1);
+        CHECK(data != nullptr);
+    });
+    CHECK(chunks == 2);
+
+    CHECK(positions.matches(a));
+    world.delete_entity(a);
+    CHECK_FALSE(positions.matches(a));
+    CHECK(positions.count() == 1);
+    CHECK(positions.first() == b);
+
+    positions.cleanup();
+    CHECK(positions.cache == nullptr);
+    // cleanup() is idempotent and the next run builds a fresh cache.
+    positions.cleanup();
+    CHECK(positions.count() == 1);
+    CHECK(positions.cache != nullptr);
+    positions.cleanup();
+
+    world.free();
+    CHECK_ARENA_CLEAN();
+}
+
+TEST_CASE("ecs/query: a cached query delivers the same results as the scan") {
+    World world;
+    world.init();
+
+    const EntityId bob = world.new_entity();
+    const EntityId e = world.new_entity();
+    world.set(e, Position { 1, 2 });
+    world.set(e, Velocity { 3, 4 });
+    world.add<Likes>(e, bob);
+    const EntityId other = world.new_entity();
+    world.set(other, Position { 5, 6 });
+    world.set(other, Velocity { 7, 8 });
+    world.add<Likes>(other, bob);
+    world.add<TagB>(other);
+    const EntityId third = world.new_entity();
+    world.set(third, Position { });
+    world.set(third, Velocity { });
+
+    Query<Position, Velocity> scanned = world.query<Position, Velocity>().with<Likes>(bob).without<TagB>();
+    Query<Position, Velocity> cached = world.query<Position, Velocity>(QUERY_CACHED).with<Likes>(bob).without<TagB>();
+
+    usz calls = 0;
+    cached.each([&](const EntityId entity, const Position& position, const Velocity& velocity) {
+        calls++;
+        CHECK(entity == e);
+        CHECK(position.x == 1);
+        CHECK(velocity.dy == 4);
+    });
+    CHECK(calls == 1);
+    CHECK(cached.count() == scanned.count());
+    CHECK(cached.first() == scanned.first());
+    CHECK(cached.matches(e) == scanned.matches(e));
+    CHECK(cached.matches(other) == scanned.matches(other));
+    CHECK(cached.matches(third) == scanned.matches(third));
+
+    {
+        TemporalAllocator temp = TemporalAllocator::create();
+        QueryIter it = cached.begin(&temp);
+        REQUIRE(it.next(&it));
+        CHECK(it.ids[2] == world.pair<Likes>(bob));
+        CHECK(it.ids[3] == 0);
+        CHECK_FALSE(it.next(&it));
+    }
+
+    cached.cleanup();
+    scanned.cleanup();
+    world.free();
+    CHECK_ARENA_CLEAN();
+}
+
+TEST_CASE("ecs/query: with and without are ignored once the cache exists") {
+    World world;
+    world.init();
+
+    const EntityId a = world.new_entity();
+    world.set(a, Position { });
+    const EntityId b = world.new_entity();
+    world.set(b, Position { });
+    world.add<TagA>(b);
+
+    Query<Position> query = world.query<Position>(QUERY_CACHED);
+    CHECK(query.count() == 2);
+
+    // Prints an error; the term list and the results do not change.
+    query.with<TagA>();
+    CHECK(query.with_count == 0);
+    query.without<TagA>();
+    CHECK(query.without_count == 0);
+    CHECK(query.count() == 2);
+
+    // After cleanup() the handle is open again and the next run rebuilds.
+    query.cleanup();
+    query.with<TagA>();
+    CHECK(query.with_count == 1);
+    CHECK(query.count() == 1);
+    CHECK(query.first() == b);
+
+    query.cleanup();
+    world.free();
+    CHECK_ARENA_CLEAN();
+}
+
+TEST_CASE("ecs/query: cached handles copy the cache pointer and take their allocator from World::query") {
+    World world;
+    world.init();
+
+    const EntityId a = world.new_entity();
+    world.set(a, Position { });
+
+    Query<Position> uncached = world.query<Position>();
+    CHECK(uncached.count() == 1);
+    CHECK(uncached.cache == nullptr);
+    // A no-op without a cache.
+    uncached.cleanup();
+
+    BaseAllocator* heap = MEMORY::heap_allocator();
+    Query<Position> query = world.query<Position>(QUERY_CACHED, heap);
+    CHECK(query.cache_allocator == heap);
+
+    // A copy made before the first run builds its own cache.
+    Query<Position> early = query;
+    CHECK(query.count() == 1);
+    REQUIRE(query.cache != nullptr);
+    CHECK(query.cache->allocator == heap);
+    CHECK(early.cache == nullptr);
+    CHECK(early.count() == 1);
+    REQUIRE(early.cache != nullptr);
+    CHECK(early.cache != query.cache);
+
+    // A copy made after aliases it.
+    Query<Position> late = query;
+    CHECK(late.cache == query.cache);
+    CHECK(late.count() == 1);
+
+    early.cleanup();
+    query.cleanup();
+    // `late` still points at the released cache; it is not used again.
     world.free();
     CHECK_ARENA_CLEAN();
 }

@@ -104,11 +104,14 @@ struct QueryProgram {
     // Variables, THIS included.
     usz var_count = 0;
 
-    // The prefilter every THIS archetype has to pass, and the with ids it
-    // was built from (for the candidate list).
+    // The prefilter every THIS archetype has to pass, and the id lists it
+    // was built from: the with ids pick the candidate archetypes, and both
+    // rebuild the same matcher for a query cache (see QueryScanCache).
     ArchetypeMatcher matcher;
     Id* with_ids = nullptr;
     usz with_count = 0;
+    Id* without_ids = nullptr;
+    usz without_count = 0;
     // Terms on THIS that no op evaluates: the matcher answered them (or they
     // are optional and plain). YIELD resolves their column in the bound
     // archetype.

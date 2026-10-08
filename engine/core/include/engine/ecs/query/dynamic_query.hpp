@@ -5,6 +5,7 @@
 #include "engine/ecs/ecs_types.hpp"
 #include "engine/ecs/query/query_iter.hpp"
 #include "engine/ecs/query/query_program.hpp"
+#include "engine/ecs/query/query_scan.hpp"
 #include "engine/ecs/query/query_term.hpp"
 #include "engine/ecs/query/query_vm.hpp"
 #include "engine/memory/base_allocator.hpp"
@@ -48,10 +49,20 @@ struct World;
 // The handle owns memory: call free(). It cannot be copied; move it. A query
 // whose terms were rejected at build() has is_ok() false and matches
 // nothing; the errors were printed by build().
+//
+// Built with QUERY_CACHED (world.query_build(QUERY_CACHED)), the query keeps
+// the archetypes its program's matcher accepts in a QueryScanCache (see
+// query_scan.hpp) on the program's allocator, built by the first run and
+// kept current by an archetype listener; SELECT then walks that list and
+// the rest of the program still runs per archetype. cleanup() drops the
+// cache (the next run rebuilds it) and free() does too. A query with no
+// term on THIS has nothing to select and caches nothing.
 struct DynamicQuery {
     World* world = nullptr;
     u32 flags = QUERY_NONE;
     QueryProgram program;
+    // QUERY_CACHED only: the cache once a run built it.
+    QueryScanCache* cache = nullptr;
     // Names of the variables the builder handed out; entry i names variable
     // i + 1 (THIS is variable 0).
     DynamicArray<char*> var_names;
@@ -62,8 +73,16 @@ struct DynamicQuery {
     DynamicQuery(DynamicQuery&& other) noexcept;
     DynamicQuery& operator=(DynamicQuery&& other) noexcept;
 
-    // Releases the program and the names. The query is empty afterwards.
+    // Releases the program, the names and the cache. The query is empty
+    // afterwards.
     void free();
+    // Releases the cache of a QUERY_CACHED query; the next run builds a
+    // fresh one. A no-op for a query without one.
+    void cleanup();
+    // Builds the cache if the query is QUERY_CACHED, ok, selects THIS and
+    // has none yet. Every run calls it; call it yourself to pay the build
+    // up front.
+    void ensure_cache();
 
     bool is_ok() const { return this->program.ok; }
     usz field_count() const { return this->program.field_count; }

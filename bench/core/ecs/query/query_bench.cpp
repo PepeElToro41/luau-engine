@@ -36,7 +36,7 @@ static void populate(World& world, const usz count, const u32 tag_bits) {
 }
 
 // Per-entity cost of each() over a single archetype and over many, next to
-// the bare loop it has to compete with.
+// the bare loop it has to compete with, scanned and cached.
 BENCH_CASE("ecs/query: each over N entities") {
     constexpr usz count = 100000;
 
@@ -45,9 +45,15 @@ BENCH_CASE("ecs/query: each over N entities") {
         world.init();
         populate(world, count, 0);
         Query<Position, Velocity> movers = world.query<Position, Velocity>();
+        Query<Position, Velocity> cached = world.query<Position, Velocity>(QUERY_CACHED);
 
         bench.batch(count).run("each, 1 archetype", [&] {
             movers.each([](Position& position, const Velocity& velocity) {
+                position.x += velocity.dx;
+            });
+        });
+        bench.batch(count).run("each, 1 archetype, cached", [&] {
+            cached.each([](Position& position, const Velocity& velocity) {
                 position.x += velocity.dx;
             });
         });
@@ -58,6 +64,7 @@ BENCH_CASE("ecs/query: each over N entities") {
                 }
             });
         });
+        cached.cleanup();
         world.free();
     }
 
@@ -66,10 +73,17 @@ BENCH_CASE("ecs/query: each over N entities") {
         world.init();
         populate(world, count, 4);
         Query<Position, Velocity> movers = world.query<Position, Velocity>();
+        Query<Position, Velocity> movers_cached = world.query<Position, Velocity>(QUERY_CACHED);
         Query<Position, Velocity> tagged = world.query<Position, Velocity>().with<TagA>().without<TagB>();
+        Query<Position, Velocity> tagged_cached = world.query<Position, Velocity>(QUERY_CACHED).with<TagA>().without<TagB>();
 
         bench.batch(count).run("each, 16 archetypes", [&] {
             movers.each([](Position& position, const Velocity& velocity) {
+                position.x += velocity.dx;
+            });
+        });
+        bench.batch(count).run("each, 16 archetypes, cached", [&] {
+            movers_cached.each([](Position& position, const Velocity& velocity) {
                 position.x += velocity.dx;
             });
         });
@@ -79,12 +93,20 @@ BENCH_CASE("ecs/query: each over N entities") {
                 position.x += velocity.dx;
             });
         });
+        bench.batch(count / 4).run("each, 16 archetypes, with + without, cached", [&] {
+            tagged_cached.each([](Position& position, const Velocity& velocity) {
+                position.x += velocity.dx;
+            });
+        });
+        movers_cached.cleanup();
+        tagged_cached.cleanup();
         world.free();
     }
 }
 
 // The fixed cost of a run: building the matcher and scanning the archetype
-// list, with no rows to visit. One empty table per tag subset.
+// list, with no rows to visit, against walking the cached list. One empty
+// table per tag subset.
 BENCH_CASE("ecs/query: scan overhead") {
     World world;
     world.init();
@@ -97,16 +119,24 @@ BENCH_CASE("ecs/query: scan overhead") {
         }
     }
     Query<Position> query = world.query<Position>().with<TagA>();
+    Query<Position> cached = world.query<Position>(QUERY_CACHED).with<TagA>();
 
     bench.run("count over 16 empty archetypes", [&] {
         ankerl::nanobench::doNotOptimizeAway(query.count());
+    });
+    bench.run("count over 16 empty archetypes, cached", [&] {
+        ankerl::nanobench::doNotOptimizeAway(cached.count());
     });
     const EntityId e = world.new_entity();
     world.set<Position>(e, { 0, 0 });
     bench.run("matches(entity)", [&] {
         ankerl::nanobench::doNotOptimizeAway(query.matches(e));
     });
+    bench.run("matches(entity), cached", [&] {
+        ankerl::nanobench::doNotOptimizeAway(cached.matches(e));
+    });
 
+    cached.cleanup();
     world.free();
 }
 
@@ -154,6 +184,22 @@ BENCH_CASE("ecs/query: scan narrowed by the rarest term") {
     bench.run("monitor + unmonitor, Position + Health (1 table)", [&] {
         world.unmonitor(rare.monitor(noop_monitor));
     });
+
+    // Building a cache tests the same candidates, keeping the matches.
+    Query<Position> common_cached = world.query<Position>(QUERY_CACHED);
+    Query<Position> rare_cached = world.query<Position>(QUERY_CACHED).with<Health>();
+    bench.run("cache build + cleanup, Position over 256 tables", [&] {
+        common_cached.ensure_cache();
+        common_cached.cleanup();
+    });
+    bench.run("cache build + cleanup, Position + Health (1 table)", [&] {
+        rare_cached.ensure_cache();
+        rare_cached.cleanup();
+    });
+    bench.run("count, Position over 256 tables, cached", [&] {
+        ankerl::nanobench::doNotOptimizeAway(common_cached.count());
+    });
+    common_cached.cleanup();
 
     world.free();
 }

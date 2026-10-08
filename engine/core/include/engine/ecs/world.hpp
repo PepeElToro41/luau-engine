@@ -301,9 +301,10 @@ struct World {
     // The trivial query (see query.hpp): the types listed are the outputs,
     // with() / without() on the returned handle add constraints, and the
     // handle iterates (each / iter / begin), counts and monitors. `flags`
-    // are QueryFlags.
+    // are QueryFlags; a QUERY_CACHED query keeps its cache on `allocator`,
+    // the world's when nullptr, and needs cleanup().
     template <typename... Ts>
-    Query<Ts...> query(u32 flags = QUERY_NONE);
+    Query<Ts...> query(u32 flags = QUERY_NONE, BaseAllocator* allocator = nullptr);
     // A builder for an engine-evaluated query (see query_builder.hpp):
     // optionals, variables, traversal, other sources. The builder owns its
     // term list; free() it or build() it.

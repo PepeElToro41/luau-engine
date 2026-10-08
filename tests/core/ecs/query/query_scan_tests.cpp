@@ -1,5 +1,6 @@
 #include "support/test_support.hpp"
 
+#include "engine/ecs/archetype/archetype.hpp"
 #include "engine/ecs/component_record.hpp"
 #include "engine/ecs/query/query_iter.hpp"
 #include "engine/ecs/query/query_scan.hpp"
@@ -405,6 +406,323 @@ TEST_CASE("ecs/query_scan: wildcard terms narrow through their alias record or f
         CHECK(QUERY::count(it) == 0);
     }
 
+    world.free();
+    CHECK_ARENA_CLEAN();
+}
+
+// --- Cache -------------------------------------------------------------------
+// The cached producer: QUERY_SCAN::create_cache() keeps the matched
+// archetypes and their columns, the listener keeps the list current, and
+// begin(cache) walks it.
+
+TEST_CASE("ecs/query_scan: the cache holds the matched archetypes with their columns") {
+    World world;
+    world.init();
+
+    const EntityId bob = world.new_entity();
+    const EntityId e = world.new_entity();
+    world.set(e, Position { 1, 2 });
+    world.add<Likes>(e, bob);
+
+    const EntityId other = world.new_entity();
+    world.set(other, Position { 3, 4 });
+    world.add<Likes>(other, bob);
+    world.add<TagB>(other);
+
+    const QueryTerm terms[] = {
+        QueryTerm::make(world.id<Position>(), TERM_OUTPUT),
+        QueryTerm::make(world.pair<Likes>(ECS::WILDCARD), 0),
+        QueryTerm::make(world.id<TagB>(), TERM_EXCLUDE),
+    };
+
+    QueryScanCache* cache = QUERY_SCAN::create_cache(&world, terms, 3, world.allocator);
+    REQUIRE(cache != nullptr);
+    CHECK(cache->ok);
+    CHECK(cache->world == &world);
+    CHECK(cache->allocator == world.allocator);
+    CHECK(cache->term_count == 3);
+    CHECK(cache->field_count == 1);
+    CHECK(cache->listener != 0);
+    // Only [Position, (Likes, bob)] passes: the other table holds TagB.
+    REQUIRE(cache->matches.count == 1);
+    REQUIRE(cache->columns.count == 3);
+    const Archetype* archetype = cache->matches[0].archetype;
+    CHECK(cache->matches[0].id == archetype->archetype_id);
+    CHECK(archetype->type.ids[cache->columns[0]] == world.id<Position>());
+    CHECK(archetype->type.ids[cache->columns[1]] == world.pair<Likes>(bob));
+    // An excluded term has no column: the sentinel is the id count.
+    CHECK(cache->columns[2] == archetype->type.id_count);
+
+    {
+        TemporalAllocator temp = TemporalAllocator::create();
+        QueryIter it = QUERY_SCAN::begin(cache, &temp);
+        CHECK(it.world == &world);
+        CHECK(it.field_count == 1);
+        CHECK(it.term_count == 3);
+        CHECK(it.var_count == 1);
+
+        REQUIRE(it.next(&it));
+        CHECK(it.archetype == archetype);
+        CHECK(it.count == 1);
+        CHECK(it.entities[0] == e);
+        CHECK(it.ids[0] == world.id<Position>());
+        CHECK(it.ids[1] == world.pair<Likes>(bob));
+        CHECK(it.ids[2] == 0);
+        CHECK(it.field<0, Position>()[0].x == 1);
+        CHECK(it.field<0, Position>()[0].y == 2);
+        CHECK_FALSE(it.next(&it));
+
+        // Same answer as the scan over the same terms.
+        QueryIter scan = QUERY_SCAN::begin(&world, terms, 3, &temp);
+        CHECK(QUERY::count(scan) == 1);
+    }
+
+    QUERY_SCAN::destroy_cache(cache);
+    world.free();
+    CHECK_ARENA_CLEAN();
+}
+
+TEST_CASE("ecs/query_scan: a cached wildcard output takes the first matching column") {
+    World world;
+    world.init();
+
+    const EntityId low = world.new_entity();
+    const EntityId high = world.new_entity();
+    REQUIRE(low < high);
+
+    const EntityId e = world.new_entity();
+    world.set<Health>(e, high, Health { 7 });
+    world.set<Health>(e, low, Health { 5 });
+
+    const QueryTerm terms[] = { QueryTerm::make(world.pair<Health>(ECS::ANY), TERM_OUTPUT) };
+    QueryScanCache* cache = QUERY_SCAN::create_cache(&world, terms, 1, world.allocator);
+    // [(Health, high)], which e passed through, is empty but still matches.
+    REQUIRE(cache->matches.count == 2);
+
+    {
+        TemporalAllocator temp = TemporalAllocator::create();
+        QueryIter it = QUERY_SCAN::begin(cache, &temp);
+        REQUIRE(it.next(&it));
+        CHECK(it.ids[0] == world.pair<Health>(low));
+        CHECK(it.field<0, Health>()[0].value == 5);
+        CHECK_FALSE(it.next(&it));
+    }
+
+    QUERY_SCAN::destroy_cache(cache);
+    world.free();
+    CHECK_ARENA_CLEAN();
+}
+
+TEST_CASE("ecs/query_scan: the cache follows archetypes created and destroyed after it") {
+    World world;
+    world.init();
+
+    const EntityId a = world.new_entity();
+    world.set(a, Position { });
+
+    const QueryTerm terms[] = { QueryTerm::make(world.id<Position>(), TERM_OUTPUT) };
+    QueryScanCache* cache = QUERY_SCAN::create_cache(&world, terms, 1, world.allocator);
+    REQUIRE(cache->matches.count == 1);
+
+    SUBCASE("a matching archetype created later is appended, one that does not match is not") {
+        const EntityId b = world.new_entity();
+        world.set(b, Position { });
+        world.set(b, Health { });
+        CHECK(cache->matches.count == 2);
+        CHECK(cache->columns.count == 2);
+
+        const EntityId c = world.new_entity();
+        world.set(c, Velocity { });
+        CHECK(cache->matches.count == 2);
+
+        TemporalAllocator temp = TemporalAllocator::create();
+        QueryIter it = QUERY_SCAN::begin(cache, &temp);
+        CHECK(QUERY::count(it) == 2);
+    }
+
+    SUBCASE("a walk begun before does not visit archetypes cached during it") {
+        TemporalAllocator temp = TemporalAllocator::create();
+        QueryIter it = QUERY_SCAN::begin(cache, &temp);
+
+        const EntityId b = world.new_entity();
+        world.set(b, Position { });
+        world.set(b, Health { });
+        CHECK(cache->matches.count == 2);
+
+        usz seen = 0;
+        while (it.next(&it)) {
+            seen += it.count;
+        }
+        CHECK(seen == 1);
+
+        QueryIter again = QUERY_SCAN::begin(cache, &temp);
+        CHECK(QUERY::count(again) == 2);
+    }
+
+    SUBCASE("a destroyed archetype is dropped and the last match takes its slot") {
+        // Deleting a tag entity empties and destroys every archetype holding
+        // it; its entities land in tables without the tag.
+        const EntityId tag = world.new_entity();
+        const EntityId b = world.new_entity();
+        world.set(b, Position { });
+        world.add(b, tag);
+        const EntityId c = world.new_entity();
+        world.set(c, Position { });
+        world.set(c, Health { });
+        world.add(c, tag);
+        // [Position], [Position, tag], [Position, Health] (empty, c passed
+        // through it) and [Position, Health, tag].
+        REQUIRE(cache->matches.count == 4);
+        usz tagged = 0;
+        for (const QueryScanMatch& match : cache->matches) {
+            tagged += match.archetype->contains(tag) ? 1 : 0;
+        }
+        REQUIRE(tagged == 2);
+
+        CHECK(world.delete_entity(tag));
+        // The two tagged tables are gone; b joined a's table, c went back to
+        // [Position, Health].
+        REQUIRE(cache->matches.count == 2);
+        for (const QueryScanMatch& match : cache->matches) {
+            CHECK_FALSE(match.archetype->contains(tag));
+            CHECK(world.archetypes.get_element_alive(match.id) == match.archetype);
+        }
+
+        TemporalAllocator temp = TemporalAllocator::create();
+        QueryIter it = QUERY_SCAN::begin(cache, &temp);
+        usz seen = 0;
+        bool saw_b = false;
+        bool saw_c = false;
+        while (it.next(&it)) {
+            // The column slice moved with its match: it still names
+            // Position in the surviving table.
+            CHECK(it.ids[0] == world.id<Position>());
+            for (usz i = 0; i < cache->matches.count; i++) {
+                if (cache->matches[i].archetype == it.archetype) {
+                    CHECK(it.archetype->type.ids[cache->columns[i]] == world.id<Position>());
+                }
+            }
+            for (usz row = 0; row < it.count; row++) {
+                seen++;
+                saw_b = saw_b || it.entities[row] == b;
+                saw_c = saw_c || it.entities[row] == c;
+            }
+        }
+        CHECK(seen == 3);
+        CHECK(saw_b);
+        CHECK(saw_c);
+    }
+
+    SUBCASE("empty archetypes stay cached but yield nothing") {
+        const EntityId b = world.new_entity();
+        world.set(b, Position { });
+        world.set(b, Velocity { });
+        world.remove<Velocity>(b);
+        CHECK(cache->matches.count == 2);
+
+        TemporalAllocator temp = TemporalAllocator::create();
+        QueryIter it = QUERY_SCAN::begin(cache, &temp);
+        REQUIRE(it.next(&it));
+        CHECK(it.count == 2);
+        CHECK_FALSE(it.next(&it));
+    }
+
+    QUERY_SCAN::destroy_cache(cache);
+    world.free();
+    CHECK_ARENA_CLEAN();
+}
+
+TEST_CASE("ecs/query_scan: a cache with no with-term listens to every archetype") {
+    World world;
+    world.init();
+
+    const EntityId a = world.new_entity();
+    world.set(a, Position { });
+    world.add<TagA>(a);
+
+    const QueryTerm terms[] = { QueryTerm::make(world.id<TagA>(), TERM_EXCLUDE) };
+    QueryScanCache* cache = QUERY_SCAN::create_cache(&world, terms, 1, world.allocator);
+    // Built-in entities live in tables of their own; a's table is excluded
+    // and the root is never cached.
+    const usz before = cache->matches.count;
+    CHECK(before > 0);
+    for (const QueryScanMatch& match : cache->matches) {
+        CHECK_FALSE(match.archetype == world.root_archetype);
+        CHECK_FALSE(match.archetype->contains(world.id<TagA>()));
+    }
+
+    const EntityId b = world.new_entity();
+    world.set(b, Velocity { });
+    CHECK(cache->matches.count == before + 1);
+    world.add<TagA>(b);
+    // [Velocity, TagA] is new and excluded; [Velocity] stays, empty.
+    CHECK(cache->matches.count == before + 1);
+
+    QUERY_SCAN::destroy_cache(cache);
+    world.free();
+    CHECK_ARENA_CLEAN();
+}
+
+TEST_CASE("ecs/query_scan: a cache over rejected terms yields nothing and listens to nothing") {
+    World world;
+    world.init();
+
+    const EntityId e = world.new_entity();
+    world.set(e, Position { });
+
+    QueryTerm optional = QueryTerm::make(world.id<Position>(), TERM_OUTPUT | TERM_OPTIONAL);
+    QueryScanCache* cache = QUERY_SCAN::create_cache(&world, &optional, 1, world.allocator);
+    REQUIRE(cache != nullptr);
+    CHECK_FALSE(cache->ok);
+    CHECK(cache->listener == 0);
+    CHECK(cache->matches.count == 0);
+
+    {
+        TemporalAllocator temp = TemporalAllocator::create();
+        QueryIter it = QUERY_SCAN::begin(cache, &temp);
+        CHECK_FALSE(it.next(&it));
+    }
+    CHECK_FALSE(QUERY_SCAN::matches(cache, e));
+
+    // Nothing is listening: a new table changes nothing.
+    const EntityId f = world.new_entity();
+    world.set(f, Position { });
+    world.set(f, Health { });
+    CHECK(cache->matches.count == 0);
+
+    QUERY_SCAN::destroy_cache(cache);
+    QUERY_SCAN::destroy_cache(nullptr);
+    world.free();
+    CHECK_ARENA_CLEAN();
+}
+
+TEST_CASE("ecs/query_scan: the cache's matches tests a single entity's archetype") {
+    World world;
+    world.init();
+
+    const EntityId e = world.new_entity();
+    world.set(e, Position { });
+    const EntityId empty = world.new_entity();
+    const EntityId dead = world.new_entity();
+    world.delete_entity(dead);
+
+    const QueryTerm position[] = { QueryTerm::make(world.id<Position>(), TERM_OUTPUT) };
+    const QueryTerm not_position[] = { QueryTerm::make(world.id<Position>(), TERM_EXCLUDE) };
+    QueryScanCache* has = QUERY_SCAN::create_cache(&world, position, 1, world.allocator);
+    QueryScanCache* lacks = QUERY_SCAN::create_cache(&world, not_position, 1, world.allocator);
+
+    CHECK(QUERY_SCAN::matches(has, e));
+    CHECK_FALSE(QUERY_SCAN::matches(lacks, e));
+    CHECK_FALSE(QUERY_SCAN::matches(lacks, empty));
+    CHECK_FALSE(QUERY_SCAN::matches(has, dead));
+    CHECK_FALSE(QUERY_SCAN::matches(has, 0));
+
+    // Membership follows the entity, not the snapshot taken at creation.
+    world.remove<Position>(e);
+    CHECK_FALSE(QUERY_SCAN::matches(has, e));
+
+    QUERY_SCAN::destroy_cache(has);
+    QUERY_SCAN::destroy_cache(lacks);
     world.free();
     CHECK_ARENA_CLEAN();
 }

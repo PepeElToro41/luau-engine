@@ -4,6 +4,7 @@
 #include "engine/ecs/ecs_types.hpp"
 #include "engine/ecs/query/query_iter.hpp"
 #include "engine/ecs/query/query_program.hpp"
+#include "engine/ecs/query/query_scan.hpp"
 #include "engine/memory/base_allocator.hpp"
 
 struct World;
@@ -39,17 +40,26 @@ struct World;
 // the chunk filled in place, no op dispatch, no backtracking. The results
 // are the same; it is just the scan's cost.
 //
+// With a QueryScanCache built from the program (DynamicQuery::ensure_cache),
+// SELECT walks the cached matches instead of the candidates: no matcher
+// test, and the columns of the plain THIS terms come from the cache instead
+// of a lookup per archetype. The rest of the program runs as before.
+//
 // Everything the iterator needs is on `allocator`, which must outlive the
-// iteration; nothing is freed explicitly. The candidate archetypes are
-// fixed when begin() is called, like QUERY_SCAN; pair targets and sources
-// are looked up live, so structural changes during a walk have the same
-// caveats.
+// iteration; nothing is freed explicitly. The candidate archetypes (or the
+// cached matches) are fixed when begin() is called, like QUERY_SCAN; pair
+// targets and sources are looked up live, so structural changes during a
+// walk have the same caveats.
 namespace QUERY_VM {
 
 // Depth at which an up() walk gives up and reports a cycle.
 constexpr usz MAX_TRAVERSAL_DEPTH = 1024;
 
 QueryIter begin(World* world, const QueryProgram* program, BaseAllocator* allocator);
+// The same over `cache`, whose matcher is the program's and whose terms are
+// the program's plain THIS terms in order (program->this_terms). nullptr
+// means no cache.
+QueryIter begin(World* world, const QueryProgram* program, const QueryScanCache* cache, BaseAllocator* allocator);
 
 // Like begin(), with THIS bound to `entity` alone instead of to every
 // candidate archetype: SELECT checks that entity's archetype against the

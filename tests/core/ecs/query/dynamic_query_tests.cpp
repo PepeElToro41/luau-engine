@@ -3,7 +3,9 @@
 #include "engine/ecs/query/dynamic_query.hpp"
 #include "engine/ecs/query/query_builder.hpp"
 #include "engine/ecs/query/query_iter.hpp"
+#include "engine/ecs/query/query_scan.hpp"
 #include "engine/ecs/query/query_term.hpp"
+#include "engine/ecs/query/query_vm.hpp"
 
 #include <cstring>
 #include <utility>
@@ -836,6 +838,259 @@ TEST_CASE("ecs/dynamic_query: the trivial mode walks every archetype when no ter
     CHECK(with_position == 1);
     CHECK(without_position == 1);
 
+    query.free();
+    builder.free();
+    world.free();
+    CHECK_ARENA_CLEAN();
+}
+
+// --- Cached queries ----------------------------------------------------------
+
+TEST_CASE("ecs/dynamic_query: a cached query builds its cache on the first run and selects from it") {
+    World world;
+    world.init();
+
+    const EntityId a = world.new_entity();
+    world.set<Position>(a, { 1, 0 });
+    world.set<Velocity>(a, { 1, 1 });
+    const EntityId b = world.new_entity();
+    world.set<Position>(b, { 2, 0 });
+    world.set<Velocity>(b, { 1, 1 });
+    world.add<TagB>(b);
+
+    QueryBuilder builder = world.query_build(QUERY_CACHED);
+    builder.term<Position>().with<Velocity>().without<TagB>();
+    DynamicQuery query = builder.build();
+    REQUIRE(query.is_ok());
+    CHECK(query.flags == QUERY_CACHED);
+    CHECK(query.cache == nullptr);
+
+    CHECK(query.count() == 1);
+    REQUIRE(query.cache != nullptr);
+    const QueryScanCache* cache = query.cache;
+    CHECK(cache->ok);
+    CHECK(cache->allocator == query.program.allocator);
+    // One column per plain THIS term, matcher from the program's ids.
+    CHECK(cache->term_count == query.program.this_term_count);
+    CHECK(cache->term_count == 3);
+    CHECK(cache->matches.count == 1);
+    CHECK(cache->matches[0].archetype->contains(world.id<Velocity>()));
+    CHECK_FALSE(cache->matches[0].archetype->contains(world.id<TagB>()));
+
+    // Later runs reuse it and deliver the cached columns.
+    f32 sum = 0;
+    query.each<Position>([&](const EntityId entity, const Position& position) {
+        CHECK(entity == a);
+        sum += position.x;
+    });
+    CHECK(sum == 1);
+    CHECK(query.cache == cache);
+    {
+        TemporalAllocator temp = TemporalAllocator::create();
+        QueryIter it = query.begin(&temp);
+        REQUIRE(it.next(&it));
+        CHECK(it.ids[0] == world.id<Position>());
+        CHECK(it.ids[1] == world.id<Velocity>());
+        CHECK(it.ids[2] == 0);
+        CHECK(it.field<0, Position>()[0].x == 1);
+        CHECK_FALSE(it.next(&it));
+    }
+
+    // A new archetype after the first run is picked up by the next one.
+    const EntityId c = world.new_entity();
+    world.set<Position>(c, { 3, 0 });
+    world.set<Velocity>(c, { 1, 1 });
+    world.set<Health>(c, { 1 });
+    CHECK(cache->matches.count == 2);
+    CHECK(query.count() == 2);
+    CHECK(query.matches(c));
+    world.add<TagB>(c);
+    CHECK_FALSE(query.matches(c));
+    CHECK(query.count() == 1);
+
+    query.cleanup();
+    CHECK(query.cache == nullptr);
+    CHECK(query.count() == 1);
+    CHECK(query.cache != nullptr);
+
+    // free() releases the cache too.
+    query.free();
+    CHECK(query.cache == nullptr);
+    builder.free();
+    world.free();
+    CHECK_ARENA_CLEAN();
+}
+
+TEST_CASE("ecs/dynamic_query: a cached query still binds variables and evaluates its ops per archetype") {
+    World world;
+    world.init();
+
+    const EntityId apple = world.new_entity();
+    world.set<Health>(apple, { 10 });
+    const EntityId pear = world.new_entity();
+    world.set<Health>(pear, { 20 });
+    const EntityId alice = world.new_entity();
+    world.set<Position>(alice, { 1, 0 });
+    world.add<Likes>(alice, apple);
+    world.add<Likes>(alice, pear);
+    const EntityId bob = world.new_entity();
+    world.set<Position>(bob, { 2, 0 });
+    world.set<Velocity>(bob, { 5, 5 });
+    world.add<Likes>(bob, apple);
+    const EntityId carol = world.new_entity();
+    world.set<Position>(carol, { 3, 0 });
+
+    // Plain output, optional plain output (cached column or sentinel), a
+    // variable bound from a pair, and a field read from the variable.
+    QueryBuilder builder = world.query_build(QUERY_CACHED);
+    const QueryVar food = builder.var("food");
+    builder.term<Position>().term<Velocity>().optional().with<Likes>(food).term<Health>().src(food);
+    DynamicQuery cached = builder.build();
+    REQUIRE(cached.is_ok());
+
+    QueryBuilder builder2 = world.query_build();
+    const QueryVar food2 = builder2.var("food");
+    builder2.term<Position>().term<Velocity>().optional().with<Likes>(food2).term<Health>().src(food2);
+    DynamicQuery plain = builder2.build();
+    REQUIRE(plain.is_ok());
+
+    Seen from_cache = collect(cached, food);
+    Seen from_scan = collect(plain, food2);
+    REQUIRE(cached.cache != nullptr);
+    CHECK(cached.cache->term_count == 2);
+    REQUIRE(from_cache.entities.count == 3);
+    REQUIRE(from_scan.entities.count == 3);
+    for (usz i = 0; i < from_scan.entities.count; i++) {
+        bool found = false;
+        for (usz j = 0; j < from_cache.entities.count; j++) {
+            found = found || (from_cache.entities[j] == from_scan.entities[i] && from_cache.vars[j] == from_scan.vars[i]);
+        }
+        CHECK(found);
+    }
+    CHECK_FALSE(from_cache.has(carol));
+
+    usz calls = 0;
+    i32 health_sum = 0;
+    usz with_velocity = 0;
+    cached.each<Position, Velocity*, Health>([&](const EntityId entity, const Position& position, const Velocity* velocity, const Health& health) {
+        calls++;
+        health_sum += health.value;
+        if (velocity != nullptr) {
+            CHECK(entity == bob);
+            CHECK(velocity->dx == 5);
+            with_velocity++;
+        }
+        (void)position;
+    });
+    CHECK(calls == 3);
+    CHECK(health_sum == 40);
+    CHECK(with_velocity == 1);
+
+    // A later pair shows up through the live binding, not the cache.
+    world.add<Likes>(carol, pear);
+    CHECK(cached.count() == 4);
+    CHECK(cached.matches(carol));
+
+    from_cache.free();
+    from_scan.free();
+    cached.free();
+    plain.free();
+    builder.free();
+    builder2.free();
+    world.free();
+    CHECK_ARENA_CLEAN();
+}
+
+TEST_CASE("ecs/dynamic_query: a query with no THIS term or that failed to build caches nothing") {
+    World world;
+    world.init();
+
+    const EntityId gate = world.new_entity();
+    world.add<TagA>(gate);
+
+    QueryBuilder builder = world.query_build(QUERY_CACHED);
+    builder.with<TagA>().src(gate);
+    DynamicQuery gated = builder.build();
+    REQUIRE(gated.is_ok());
+    CHECK_FALSE(gated.program.binds_this);
+    // Its terms hold, but with nothing selected there are no rows.
+    CHECK(gated.count() == 0);
+    CHECK(gated.cache == nullptr);
+
+    QueryBuilder builder2 = world.query_build(QUERY_CACHED);
+    const QueryVar ghost = builder2.var("ghost");
+    builder2.term<Position>().with<TagA>().src(ghost);
+    DynamicQuery broken = builder2.build();
+    CHECK_FALSE(broken.is_ok());
+    CHECK(broken.count() == 0);
+    CHECK(broken.cache == nullptr);
+
+    gated.free();
+    broken.free();
+    builder.free();
+    builder2.free();
+    world.free();
+    CHECK_ARENA_CLEAN();
+}
+
+TEST_CASE("ecs/dynamic_query: a moved query carries its cache") {
+    World world;
+    world.init();
+
+    const EntityId a = world.new_entity();
+    world.set<Position>(a, { 1, 0 });
+
+    QueryBuilder builder = world.query_build(QUERY_CACHED);
+    builder.term<Position>();
+    DynamicQuery query = builder.build();
+    CHECK(query.count() == 1);
+    QueryScanCache* cache = query.cache;
+    REQUIRE(cache != nullptr);
+
+    DynamicQuery moved = std::move(query);
+    CHECK(moved.cache == cache);
+    CHECK(query.cache == nullptr);
+    CHECK(moved.count() == 1);
+
+    DynamicQuery assigned;
+    assigned = std::move(moved);
+    CHECK(assigned.cache == cache);
+    CHECK(moved.cache == nullptr);
+    CHECK(assigned.count() == 1);
+
+    assigned.free();
+    builder.free();
+    world.free();
+    CHECK_ARENA_CLEAN();
+}
+
+TEST_CASE("ecs/dynamic_query: the VM ignores a cache that was not built from its program") {
+    World world;
+    world.init();
+
+    const EntityId a = world.new_entity();
+    world.set<Position>(a, { 1, 0 });
+    world.set<Velocity>(a, { 1, 1 });
+
+    QueryBuilder builder = world.query_build();
+    builder.term<Position>().with<Velocity>();
+    DynamicQuery query = builder.build();
+    REQUIRE(query.is_ok());
+
+    // A cache over one term for a program with two plain terms: refused
+    // with an error, and the run falls back to the candidates.
+    const QueryTerm other[] = { QueryTerm::make(world.id<Position>(), TERM_OUTPUT) };
+    QueryScanCache* wrong = QUERY_SCAN::create_cache(&world, other, 1, world.allocator);
+    {
+        TemporalAllocator temp = TemporalAllocator::create();
+        QueryIter it = QUERY_VM::begin(&world, &query.program, wrong, &temp);
+        REQUIRE(it.next(&it));
+        CHECK(it.count == 1);
+        CHECK(it.ids[1] == world.id<Velocity>());
+        CHECK_FALSE(it.next(&it));
+    }
+
+    QUERY_SCAN::destroy_cache(wrong);
     query.free();
     builder.free();
     world.free();

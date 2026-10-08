@@ -17,9 +17,12 @@ enum QueryFlags : u32 {
     QUERY_NONE = 0,
     // Keep the list of matched archetypes up to date instead of scanning the
     // world's archetypes on every iteration. Costs a matcher test per query
-    // whenever an archetype is created. Not implemented yet: the flag is
-    // accepted and stored, and every query scans (see query_scan.hpp).
-    // Monitors do not need it; they keep their own matcher (see monitor.hpp).
+    // whenever an archetype is created, and memory the handle has to give
+    // back (Query<Ts...>::cleanup(); DynamicQuery::free() or cleanup()).
+    // Both front ends cache through QueryScanCache (see query_scan.hpp): the
+    // simple query walks it directly, the DynamicQuery's SELECT walks it and
+    // the rest of its program still runs. Monitors do not need it; they keep
+    // their own matcher (see monitor.hpp).
     QUERY_CACHED = 1 << 0,
 };
 

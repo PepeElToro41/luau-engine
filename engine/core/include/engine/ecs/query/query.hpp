@@ -42,11 +42,24 @@
 //     ObserverId watching = movers.monitor(on_enter_leave, &state);
 //     ObserverId dirtying = movers.observe(on_moved_or_changed, &state);
 //
-// The handle is a plain copyable value with nothing to destroy: the extra
-// ids live in a fixed array, and every run scans the world's archetypes
-// afresh through QUERY_SCAN, with its scratch state on a TemporalAllocator.
-// The QUERY_CACHED flag is accepted but not acted on yet; terms() is the
-// full description the cache will consume.
+// The handle is a plain copyable value: the extra ids live in a fixed
+// array, and every run scans the world's archetypes afresh through
+// QUERY_SCAN, with its scratch state on a TemporalAllocator. Nothing has to
+// be destroyed unless the query was created with QUERY_CACHED:
+//
+//     Query<Position, Velocity> movers = world.query<Position, Velocity>(QUERY_CACHED);
+//     movers.each(...);      // the first run builds the QueryScanCache
+//     ...
+//     movers.cleanup();      // before world.free()
+//
+// A cached query keeps the list of archetypes it matches (see
+// QueryScanCache in query_scan.hpp) instead of testing them every run. The
+// cache is built lazily by the first iteration (or matches()) from the terms
+// as of then, on the allocator given to World::query (the world's when
+// none), and with() / without() are errors afterwards. The handle owns it:
+// copies made before the first run build their own, copies made after
+// alias the same cache, and cleanup() on any of them releases it for all,
+// so cleanup() once, on the handle that iterates, before World::free.
 
 // How many ids with() and how many without() can hold. Past that an error is
 // printed and the id is ignored; use World::query_build() for bigger queries.
@@ -67,6 +80,10 @@ struct Query {
     Id without_ids[QUERY_MAX_EXTRA_TERMS] = {};
     usz with_count = 0;
     usz without_count = 0;
+    // QUERY_CACHED only: where the cache goes (nullptr: the world's
+    // allocator) and the cache once a run built it.
+    BaseAllocator* cache_allocator = nullptr;
+    QueryScanCache* cache = nullptr;
 
     // --- Constraints ---------------------------------------------------------
     // Ids the matched entity must hold. A 0 id is ignored, like everywhere else.
@@ -138,6 +155,15 @@ struct Query {
     // never is: the root stores no rows and is not scanned.
     bool matches(EntityId entity);
 
+    // --- Cache ---------------------------------------------------------------
+    // Releases the cache of a QUERY_CACHED query and unregisters its
+    // archetype listener; the next run builds a fresh one. A no-op for a
+    // query without one, so it is safe to call unconditionally.
+    void cleanup();
+    // Builds the cache if the query is QUERY_CACHED and has none yet. Every
+    // run calls it; call it yourself to pay the build up front.
+    void ensure_cache();
+
     // --- Monitors ------------------------------------------------------------
     // Calls `callback` whenever an entity enters or leaves this query's
     // result set from now on (see monitor.hpp for timing and what a callback
@@ -193,14 +219,19 @@ private:
     }
 
     void push_with(const Id id) {
-        Query::push_id(this->with_ids, this->with_count, id, "with");
+        this->push_id(this->with_ids, this->with_count, id, "with");
     }
     void push_without(const Id id) {
-        Query::push_id(this->without_ids, this->without_count, id, "without");
+        this->push_id(this->without_ids, this->without_count, id, "without");
     }
 
-    static void push_id(Id* list, usz& count, const Id id, const char* side) {
+    void push_id(Id* list, usz& count, const Id id, const char* side) {
         if (id == 0) {
+            return;
+        }
+        if (this->cache != nullptr) {
+            fprintf(stderr, "[ecs] error: query %s() after the cache was built; %llx was ignored. Constrain the query before its first run, or cleanup() first\n",
+                side, static_cast<unsigned long long>(id));
             return;
         }
         if (count == QUERY_MAX_EXTRA_TERMS) {
@@ -237,6 +268,10 @@ void Query<Ts...>::iter(Fn&& fn) {
 
 template <typename... Ts>
 QueryIter Query<Ts...>::begin(BaseAllocator* allocator) {
+    this->ensure_cache();
+    if (this->cache != nullptr) {
+        return QUERY_SCAN::begin(this->cache, allocator);
+    }
     QueryTerm terms[max_term_count];
     const usz count = this->terms(terms);
     return QUERY_SCAN::begin(this->world, terms, count, allocator);
@@ -272,9 +307,32 @@ EntityId Query<Ts...>::random(u64& rng_state) {
 
 template <typename... Ts>
 bool Query<Ts...>::matches(const EntityId entity) {
+    this->ensure_cache();
+    if (this->cache != nullptr) {
+        return QUERY_SCAN::matches(this->cache, entity);
+    }
     QueryTerm terms[max_term_count];
     const usz count = this->terms(terms);
     return QUERY_SCAN::matches(this->world, terms, count, entity);
+}
+
+// --- Cache -------------------------------------------------------------------
+
+template <typename... Ts>
+void Query<Ts...>::cleanup() {
+    QUERY_SCAN::destroy_cache(this->cache);
+    this->cache = nullptr;
+}
+
+template <typename... Ts>
+void Query<Ts...>::ensure_cache() {
+    if ((this->flags & QUERY_CACHED) == 0 || this->cache != nullptr) {
+        return;
+    }
+    QueryTerm terms[max_term_count];
+    const usz count = this->terms(terms);
+    BaseAllocator* allocator = this->cache_allocator != nullptr ? this->cache_allocator : this->world->allocator;
+    this->cache = QUERY_SCAN::create_cache(this->world, terms, count, allocator);
 }
 
 // --- Monitors ----------------------------------------------------------------
@@ -296,9 +354,10 @@ ObserverId Query<Ts...>::observe(const ObserverCallback callback, void* user_dat
 }
 
 template <typename... Ts>
-Query<Ts...> World::query(const u32 flags) {
+Query<Ts...> World::query(const u32 flags, BaseAllocator* allocator) {
     Query<Ts...> query;
     query.world = this;
     query.flags = flags;
+    query.cache_allocator = allocator;
     return query;
 }

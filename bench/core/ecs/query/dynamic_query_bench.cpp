@@ -49,22 +49,42 @@ BENCH_CASE("ecs/dynamic_query: plain terms per archetype, VM against the scan") 
     populate_archetypes(world, count, targets.data);
 
     Query<Position, Velocity> scan = world.query<Position, Velocity>();
+    Query<Position, Velocity> scan_cached = world.query<Position, Velocity>(QUERY_CACHED);
     QueryBuilder builder = world.query_build();
     builder.term<Position>().term<Velocity>();
     DynamicQuery vm = builder.build();
+    QueryBuilder builder_cached = world.query_build(QUERY_CACHED);
+    builder_cached.term<Position>().term<Velocity>();
+    DynamicQuery vm_cached = builder_cached.build();
 
     walks(bench, count).run("Query<>::each, 1 row per archetype", [&] {
         scan.each([](Position& position, const Velocity& velocity) { position.x += velocity.dx; });
     });
+    walks(bench, count).run("Query<>::each, cached", [&] {
+        scan_cached.each([](Position& position, const Velocity& velocity) { position.x += velocity.dx; });
+    });
     walks(bench, count).run("DynamicQuery::each, 1 row per archetype", [&] {
         vm.each<Position, Velocity>([](EntityId, Position& position, Velocity& velocity) { position.x += velocity.dx; });
+    });
+    walks(bench, count).run("DynamicQuery::each, cached", [&] {
+        vm_cached.each<Position, Velocity>([](EntityId, Position& position, Velocity& velocity) { position.x += velocity.dx; });
     });
     walks(bench, count).run("DynamicQuery::count", [&] {
         ankerl::nanobench::doNotOptimizeAway(vm.count());
     });
+    walks(bench, count).run("DynamicQuery::count, cached", [&] {
+        ankerl::nanobench::doNotOptimizeAway(vm_cached.count());
+    });
+    walks(bench, 1).run("DynamicQuery cache build + cleanup", [&] {
+        vm_cached.ensure_cache();
+        vm_cached.cleanup();
+    });
 
+    scan_cached.cleanup();
     vm.free();
+    vm_cached.free();
     builder.free();
+    builder_cached.free();
     targets.free();
     world.free();
 }
@@ -122,6 +142,10 @@ BENCH_CASE("ecs/dynamic_query: variable binding per chunk") {
     const QueryVar food = builder.var("food");
     builder.term<Position>().with<Likes>(food);
     DynamicQuery bind = builder.build();
+    QueryBuilder builder_cached = world.query_build(QUERY_CACHED);
+    const QueryVar food_cached = builder_cached.var("food");
+    builder_cached.term<Position>().with<Likes>(food_cached);
+    DynamicQuery bind_cached = builder_cached.build();
 
     QueryBuilder builder2 = world.query_build();
     const QueryVar food2 = builder2.var("food");
@@ -130,6 +154,9 @@ BENCH_CASE("ecs/dynamic_query: variable binding per chunk") {
 
     walks(bench, count).run("bind $food, 1 pair per archetype", [&] {
         bind.each<Position>([](EntityId, Position& position) { position.x += 1; });
+    });
+    walks(bench, count).run("bind $food, 1 pair per archetype, cached", [&] {
+        bind_cached.each<Position>([](EntityId, Position& position) { position.x += 1; });
     });
     walks(bench, count).run("bind $food, read Health from $food, 1 pair per archetype", [&] {
         source.each<Position, Health2>([](EntityId, Position& position, const Health2& health) { position.x += static_cast<f32>(health.value); });
@@ -152,8 +179,10 @@ BENCH_CASE("ecs/dynamic_query: variable binding per chunk") {
     });
 
     bind.free();
+    bind_cached.free();
     source.free();
     builder.free();
+    builder_cached.free();
     builder2.free();
     targets.free();
     world.free();
