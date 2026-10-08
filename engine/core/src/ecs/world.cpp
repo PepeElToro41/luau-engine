@@ -3,6 +3,7 @@
 #include "engine/ecs/archetype_listener.hpp"
 #include "engine/ecs/ecs.hpp"
 #include "engine/ecs/entity.hpp"
+#include "engine/ecs/hierarchy.hpp"
 #include "engine/ecs/hooks.hpp"
 #include "engine/ecs/monitor.hpp"
 #include "engine/ecs/observer.hpp"
@@ -147,6 +148,13 @@ EntityId World::pair_first(const Id pair) const {
 
 EntityId World::pair_second(const Id pair) const {
     return this->entity_index.get_current(ECS::PAIR_SECOND(pair));
+}
+
+u32 World::depth(const EntityId entity, const Id relation) {
+    if (relation == 0) {
+        return 0;
+    }
+    return HIERARCHY::depth(this, entity, ECS::ENTITY_LOW(relation));
 }
 
 const TypeInfo* World::get_type_info(const ComponentId id) const {
@@ -331,6 +339,7 @@ void World::free() {
     }
     this->observers.free();
     this->next_observer_id = 1;
+    this->hierarchy_generation = 0;
 
     // Nothing fires for the archetypes that just went away; whoever
     // registered a listener is being torn down with the world.

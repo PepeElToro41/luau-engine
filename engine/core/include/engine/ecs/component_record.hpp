@@ -10,6 +10,7 @@
 #include <new>
 
 struct ComponentRecord;
+struct HierarchyNode;
 struct World;
 
 // Snapshot of the traits on the id's entity (the relation, for a pair) taken
@@ -68,6 +69,10 @@ struct ComponentRecord {
     // nullptr for plain ids and for wildcard pairs.
     ComponentRecord* first_wildcard = nullptr;
     ComponentRecord* second_wildcard = nullptr;
+    // For a concrete pair (R, T) with R traversable: the cached depth of its
+    // holders and the records that depend on it (see hierarchy.hpp). Owned by
+    // HIERARCHY::, which creates it with the record. nullptr otherwise.
+    HierarchyNode* hierarchy = nullptr;
 
     // archetype id -> index of this id's column inside that archetype
     HashMap<ArchetypeId, usz> columns_index;

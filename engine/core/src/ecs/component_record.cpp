@@ -1,5 +1,7 @@
 #include "engine/ecs/component_record.hpp"
 
+#include "engine/ecs/hierarchy.hpp"
+
 #include "engine/ecs/ecs.hpp"
 #include "engine/ecs/entity.hpp"
 #include "engine/ecs/world.hpp"
@@ -86,6 +88,7 @@ void ComponentRecord::destroy() {
         this->allocator->free(this->hooks);
         this->hooks = nullptr;
     }
+    HIERARCHY::free_node(this);
     this->first_wildcard = nullptr;
     this->second_wildcard = nullptr;
     this->columns_index.free();
@@ -182,6 +185,9 @@ ComponentRecord* ComponentRecord::component_record_ensure(World* world, const Id
             second_pairs->second_records.insert(id, record);
             if (record->is_traversable()) {
                 second_pairs->trav_records.insert(id, record);
+                // The target can now have children; the record gets its
+                // hierarchy node (see hierarchy.hpp).
+                HIERARCHY::on_target_record_created(world, record);
             }
         }
     }
@@ -215,7 +221,11 @@ bool ComponentRecord::component_record_delete(World* world, ComponentRecord* rec
     }
     if (record->second_wildcard != nullptr && record->second_wildcard->pair_record != nullptr) {
         record->second_wildcard->pair_record->second_records.remove(record->id);
-        record->second_wildcard->pair_record->trav_records.remove(record->id);
+        if (record->second_wildcard->pair_record->trav_records.remove(record->id)) {
+            // Unlinks the node from its parents and frees it; maybe the last
+            // traversable pair pointing at the target.
+            HIERARCHY::on_target_record_deleted(world, record);
+        }
     }
 
     // The hooks go with the record; keep the world's totals honest.

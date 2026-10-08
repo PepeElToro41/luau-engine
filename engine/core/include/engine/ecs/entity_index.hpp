@@ -50,6 +50,11 @@ enum EntityRecordFlags : u32 {
     // ENTITY::delete_entity is running for this entity further up the stack. A
     // nested destroy of the same entity (a cycle in a cascade) is a no-op.
     ENTITY_RECORD_DELETING = 1 << 0,
+    // Some traversable pair (R, this entity) has a component record, so
+    // other entities may hang below it in a hierarchy and a move of this
+    // entity may change their depth (see hierarchy.hpp). Set and cleared by
+    // HIERARCHY:: as those records come and go.
+    ENTITY_RECORD_TRAVERSABLE_TARGET = 1 << 1,
 };
 
 // Where an entity lives. `dense` is its index in EntityIndex::dense_list

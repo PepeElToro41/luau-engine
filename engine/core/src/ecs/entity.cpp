@@ -5,6 +5,7 @@
 #include "engine/ecs/ecs.hpp"
 #include "engine/ecs/entity_cleanup.hpp"
 #include "engine/ecs/entity_index.hpp"
+#include "engine/ecs/hierarchy.hpp"
 #include "engine/ecs/hooks.hpp"
 #include "engine/ecs/monitor.hpp"
 #include "engine/ecs/observer.hpp"
@@ -35,15 +36,16 @@ void move(World* world, Archetype* source, Archetype* destination, const EntityI
     }
     if (is_root(world, source)) {
         destination->insert_entity(world, entity, record);
-        return;
-    }
-    if (is_root(world, destination)) {
+    } else if (is_root(world, destination)) {
         source->delete_entity(world, entity, record);
         record->archetype = destination;
         record->archetype_row = 0;
-        return;
+    } else {
+        source->move_entity(world, destination, entity, record);
     }
-    source->move_entity(world, destination, entity, record);
+    // Entities hanging below this one (through a traversable pair) may have
+    // changed depth; a no-op for the usual entity nothing points at.
+    HIERARCHY::on_move(world, entity, record, source, destination);
 }
 
 // IS_EXCLUSIVE and IS_TRAVERSABLE are snapshotted into an id's component

@@ -83,6 +83,11 @@ struct World {
     HashMap<ArchetypeListenerId, Id> archetype_listener_keys;
     ArchetypeListenerId next_archetype_listener_id = 1;
 
+    // Bumped every time a cached hierarchy depth is invalidated (once per
+    // dirtied pair record, see hierarchy.hpp), so anything that keeps
+    // archetypes ordered by depth can tell whether its order may be stale.
+    u64 hierarchy_generation = 0;
+
     World();
     explicit World(BaseAllocator* allocator);
 
@@ -135,6 +140,13 @@ struct World {
     // ECS::PAIR_FIRST / ECS::PAIR_SECOND for those.
     EntityId pair_first(Id pair) const;
     EntityId pair_second(Id pair) const;
+
+    // Depth of `entity` along the traversable `relation` (see hierarchy.hpp):
+    // 0 without a (relation, *) pair, 1 under a parent that has none, and so
+    // on; the deepest parent counts when there are several. Cached on the
+    // pair records and recomputed only after a parent moved. 0 if the entity
+    // is not alive or the relation is not traversable.
+    u32 depth(EntityId entity, Id relation = ECS::CHILD_OF);
 
     // The component entity for T, claiming it on first call: the next id in
     // [1, ECS::MAX_COMPONENT_ID] (already alive since init()) is bound to T's

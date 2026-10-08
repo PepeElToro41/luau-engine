@@ -85,7 +85,7 @@ struct QueryBuilder {
     // --- Modifiers of the last term ------------------------------------------
     // Each prints an error and does nothing if no term was added yet.
     QueryBuilder& optional();
-    QueryBuilder& or_();
+    QueryBuilder& bor();
     // The term is evaluated on `source` instead of the matched entity.
     QueryBuilder& src(EntityId source);
     QueryBuilder& src(QueryVar source);
