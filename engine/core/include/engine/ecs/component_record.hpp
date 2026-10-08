@@ -4,11 +4,13 @@
 #include "engine/ecs/ecs_types.hpp"
 #include "engine/ecs/hooks.hpp"
 #include "engine/memory/base_allocator.hpp"
+#include "engine/templates/dynamic_array.hpp"
 #include "engine/templates/hash_map.hpp"
 #include "engine/templates/sparse_list.hpp"
 
 #include <new>
 
+struct Archetype;
 struct ComponentRecord;
 struct HierarchyNode;
 struct World;
@@ -45,6 +47,16 @@ struct PairRecord {
     void free();
 };
 
+// Where a record's id sits in one archetype: the archetype itself and the
+// index of the column holding the id there. ComponentRecord::archetype_list
+// is the dense list of these, so a walk over a record's archetypes reaches
+// both without a lookup. A record only ever lists live archetypes:
+// Archetype::destroy unlinks the archetype from every record it is in.
+struct RecordColumn {
+    Archetype* archetype = nullptr;
+    usz column = 0;
+};
+
 // Per-id bookkeeping for the world: which archetypes contain the id, which
 // column holds it in each, and what the id is (component, tag, pair, ...).
 // Records live in a SparseList, so they arrive zeroed: call initialize()
@@ -53,7 +65,6 @@ struct ComponentRecord {
     World* world;
     BaseAllocator* allocator;
 
-    u32 archetype_count = 0;
     SparseId sparse_id = 0;      // slot in the world's component record list
     
     Id id = 0;
@@ -74,10 +85,20 @@ struct ComponentRecord {
     // HIERARCHY::, which creates it with the record. nullptr otherwise.
     HierarchyNode* hierarchy = nullptr;
 
-    // archetype id -> index of this id's column inside that archetype
+    // The archetypes holding this id, kept three ways by link_archetype /
+    // unlink_archetype: archetype id -> the index of this id's column in it,
+    // for a lookup by archetype; the dense list of (archetype, column), for
+    // walking them (candidates, cleanup) without a lookup per archetype;
+    // and archetype id -> position in that list, so unlinking is a swap
+    // with the last entry.
     HashMap<ArchetypeId, usz> columns_index;
+    DynamicArray<RecordColumn> archetype_list;
+    HashMap<ArchetypeId, usz> archetype_index;
 
     explicit ComponentRecord(World* world);
+
+    // Number of archetypes holding the id, empty ones included.
+    usz archetype_count() const { return this->archetype_list.count; }
 
     bool is_component() const { return (this->flags & IS_COMPONENT) != 0; }
     bool is_exclusive() const { return (this->flags & IS_EXCLUSIVE) != 0; }
@@ -92,11 +113,14 @@ struct ComponentRecord {
     // pointing at it; component_record_delete does the full teardown.
     void destroy();
 
-    // Points this record at `column` of `archetype` unless the archetype is
-    // already registered, in which case nothing changes. Meant for wildcard
-    // records, so (R, *) and (*, T) keep pointing at the first matching pair
-    // column of each archetype. Returns true if the entry was added.
-    bool append_to_pair(ArchetypeId archetype, usz column);
+    // Registers `archetype` as holding the id at `column`, in all three
+    // structures. Nothing changes if the archetype is already linked, which
+    // is how a wildcard record (R, *) / (*, T) keeps pointing at the first
+    // matching pair column of each archetype. Returns true if it was added.
+    bool link_archetype(Archetype* archetype, usz column);
+    // Forgets `archetype`: the last entry of archetype_list takes its place.
+    // Returns false if it was not linked.
+    bool unlink_archetype(ArchetypeId archetype);
 
     // The hook list, allocating it on first use.
     HookList* ensure_hooks();
@@ -110,7 +134,7 @@ struct ComponentRecord {
     // Removes `record` from the world: unregisters it from its wildcard
     // records, drops it from the component index, forgets the hooks
     // registered on it (adjusting the world's hook counts) and frees its slot.
-    // The id must no longer be held by any archetype (archetype_count == 0)
+    // The id must no longer be held by any archetype (archetype_count() == 0)
     // and a wildcard record must no longer cover any concrete pair; otherwise
     // an error is printed, nothing is touched and false is returned.
     static bool component_record_delete(World* world, ComponentRecord* record);

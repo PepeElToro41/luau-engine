@@ -4,6 +4,7 @@
 #include "engine/ecs/ecs_types.hpp"
 #include "engine/memory/base_allocator.hpp"
 
+struct Archetype;
 struct World;
 
 // Narrows "every archetype" down to the ones that can hold all of a
@@ -21,9 +22,20 @@ struct World;
 //     ArchetypeCandidates candidates = ARCHETYPE_CANDIDATES::collect(world, with, with_count, &temp);
 //     if (!candidates.narrowed) { /* walk world->archetypes */ }
 //     for (usz i = 0; i < candidates.count; i++) {
-//         Archetype* archetype = world->archetypes.get_element_alive(candidates.ids[i]);
+//         Archetype* archetype = ARCHETYPE_CANDIDATES::archetype_of(world, candidates.entries[i]);
 //         if (archetype != nullptr && matcher.matches(archetype)) { ... }
 //     }
+
+// One archetype of the walked record, copied from its RecordColumn: the
+// pointer and the column of the record's id in it, so neither needs a
+// lookup, plus the id to tell whether the archetype still exists (the list
+// is a snapshot; see archetype_of).
+struct ArchetypeCandidate {
+    ArchetypeId id = 0;
+    Archetype* archetype = nullptr;
+    usz column = 0;
+};
+
 struct ArchetypeCandidates {
     // Whether `ids` is the list to walk. False when no with id has a usable
     // record (none given, or wildcards only): every archetype has to be tested.
@@ -33,10 +45,10 @@ struct ArchetypeCandidates {
     // matcher over the same with ids accepted since, which is what a
     // teardown needs; see ARCHETYPE_CANDIDATES::collect_for.
     Id record_id = 0;
-    // Archetype ids copied out of the record at collect() time, in no
-    // particular order, so the list is unaffected by archetypes created or
-    // destroyed afterwards. Check each with get_element_alive before use.
-    ArchetypeId* ids = nullptr;
+    // The record's archetypes copied at collect() time, in no particular
+    // order, so the list is unaffected by archetypes created or destroyed
+    // afterwards. Go through archetype_of() to use one.
+    ArchetypeCandidate* entries = nullptr;
     usz count = 0;
 };
 
@@ -51,5 +63,9 @@ ArchetypeCandidates collect(World* world, const Id* with, usz with_count, BaseAl
 // empty, narrowed list when the record no longer exists, since then no
 // archetype holds the id.
 ArchetypeCandidates collect_for(World* world, Id record_id, BaseAllocator* allocator);
+
+// The candidate's archetype, or nullptr if it was destroyed since the list
+// was collected (its id is no longer alive in World::archetypes).
+Archetype* archetype_of(const World* world, const ArchetypeCandidate& candidate);
 
 } // namespace ARCHETYPE_CANDIDATES

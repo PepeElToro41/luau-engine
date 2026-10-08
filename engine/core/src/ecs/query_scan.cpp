@@ -26,9 +26,14 @@ struct ScanState {
     // sees that subset. nullptr means no term had a usable record and the
     // walk goes over the world's dense list instead, `archetype_count` being
     // the alive count seen at begin(). `cursor` indexes whichever is used.
-    ArchetypeId* candidates = nullptr;
+    ArchetypeCandidate* candidates = nullptr;
     usz cursor = 0;
     usz archetype_count = 0;
+    // The term whose record the candidates came from, or term_count: its
+    // column in the current candidate is known without a lookup.
+    usz record_term = 0;
+    usz candidate_column = 0;
+    bool has_candidate_column = false;
 
     // Chunk buffers the QueryIter points into.
     void** columns = nullptr;
@@ -82,9 +87,17 @@ void pick_candidates(World* world, ScanState* state, BaseAllocator* allocator) {
     }
 
     const ArchetypeCandidates candidates = ARCHETYPE_CANDIDATES::collect(world, with, with_count, allocator);
+    state->record_term = state->term_count;
     if (candidates.narrowed) {
-        state->candidates = candidates.ids;
+        state->candidates = candidates.entries;
         state->archetype_count = candidates.count;
+        for (usz i = 0; i < state->term_count; i++) {
+            const QueryTerm& term = state->terms[i];
+            if (!term.is_excluded() && ECS::FOLD_ANY(term.id) == candidates.record_id) {
+                state->record_term = i;
+                break;
+            }
+        }
     } else {
         state->candidates = nullptr;
         state->archetype_count = world->archetypes.alive_count;
@@ -122,7 +135,9 @@ void fill_chunk(QueryIter* it, ScanState* state, Archetype* archetype) {
             state->ids[i] = 0;
             continue;
         }
-        const usz column = resolve_column(archetype, ECS::FOLD_ANY(term.id));
+        const usz column = i == state->record_term && state->has_candidate_column
+            ? state->candidate_column
+            : resolve_column(archetype, ECS::FOLD_ANY(term.id));
         if (column == archetype->type.id_count) {
             // The matcher accepted the archetype, so every with-term is held;
             // a column can only be missing if the term list and the matcher
@@ -149,11 +164,14 @@ bool next(QueryIter* it) {
         Archetype* archetype;
         if (state->candidates != nullptr) {
             // A candidate destroyed during the walk is simply gone.
-            archetype = archetypes.get_element_alive(state->candidates[state->cursor]);
+            const ArchetypeCandidate& candidate = state->candidates[state->cursor];
+            archetype = ARCHETYPE_CANDIDATES::archetype_of(state->world, candidate);
             state->cursor++;
             if (archetype == nullptr) {
                 continue;
             }
+            state->candidate_column = candidate.column;
+            state->has_candidate_column = true;
         } else {
             // An archetype destroyed during the walk shrinks the alive span,
             // so the snapshot is a ceiling, not the bound.
@@ -214,14 +232,23 @@ QueryIter begin(World* world, const QueryTerm* terms, const usz term_count, Base
         }
     }
     state->columns = allocator->allocate_array<void*>(field_count + 1);
+    bool* shared = allocator->allocate_array<bool>(field_count + 1);
     for (usz i = 0; i < field_count; i++) {
         state->columns[i] = nullptr;
+        shared[i] = false;
+    }
+    // Every term is on THIS: no sources, nothing shared.
+    EntityId* sources = allocator->allocate_array<EntityId>(term_count + 1);
+    for (usz i = 0; i < term_count; i++) {
+        sources[i] = 0;
     }
     pick_candidates(world, state, allocator);
 
     it.columns = state->columns;
+    it.shared = shared;
     it.field_count = field_count;
     it.ids = state->ids;
+    it.sources = sources;
     it.term_count = term_count;
     it.vars = &state->this_var;
     it.var_count = 1;

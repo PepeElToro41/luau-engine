@@ -87,8 +87,8 @@ QueryBuilder& QueryBuilder::optional() {
     return *this;
 }
 
-QueryBuilder& QueryBuilder::or_() {
-    if (QueryTerm* term = this->last("or_")) {
+QueryBuilder& QueryBuilder::bor() {
+    if (QueryTerm* term = this->last("bor")) {
         term->flags |= TERM_OR;
     }
     return *this;

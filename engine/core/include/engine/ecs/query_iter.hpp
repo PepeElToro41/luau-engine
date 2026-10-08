@@ -39,6 +39,15 @@ struct QueryIter {
     // not match (optional, excluded).
     Id* ids = nullptr;
     usz term_count = 0;
+    // Per term, in term order: the entity the term was matched on when that
+    // is not the chunk's own rows (a fixed src(), a variable, or the
+    // ancestor an up() term found), 0 otherwise. Only a DynamicQuery sets
+    // anything here; a Query<Ts...> matches on THIS alone.
+    EntityId* sources = nullptr;
+    // Per output term: true when the field holds a single element shared by
+    // every row of the chunk (its term has a source, see `sources`) rather
+    // than one element per row. Index with field<N, T>()[shared[N] ? 0 : row].
+    bool* shared = nullptr;
     // Per query variable: the entity bound for this chunk. [0] is THIS and is
     // not meaningful per chunk (it varies per row); use entities[row].
     EntityId* vars = nullptr;
@@ -60,6 +69,16 @@ struct QueryIter {
 // Utilities over an iterator. Each one drives the iterator forward and
 // consumes it: take a fresh one from the query for every call.
 namespace QUERY {
+
+// Row `row` of field N, taking a shared field into account.
+template <usz N, typename T>
+T* field_at(const QueryIter& it, const usz row) {
+    T* column = it.template field<N, T>();
+    if (column == nullptr) {
+        return nullptr;
+    }
+    return column + (it.shared != nullptr && it.shared[N] ? 0 : row);
+}
 
 // Number of matched entities. Sums chunk counts; never touches rows.
 usz count(QueryIter& it);

@@ -236,8 +236,7 @@ Archetype* Archetype::create_archetype(World* world, const ArchetypeType archety
             new_archetype->columns_map.insert(id, &column);
 
             // Let the record reach this archetype and the column holding its id.
-            record->columns_index.insert(archetype_id, i);
-            record->archetype_count++;
+            record->link_archetype(new_archetype, i);
 
             // Ids are sorted and a pair packs its relation in the high bits,
             // so the first (R, t) seen is the lowest t and the first (r, T)
@@ -251,13 +250,13 @@ Archetype* Archetype::create_archetype(World* world, const ArchetypeType archety
                     const Id second_wildcard = ECS::PAIR(ECS::WILDCARD, second);
 
                     ComponentRecord* first_record = ComponentRecord::component_record_ensure(world, first_wildcard);
-                    if (first_record->append_to_pair(archetype_id, i)) {
+                    if (first_record->link_archetype(new_archetype, i)) {
                         new_archetype->columns_index.insert(first_wildcard, i);
                         new_archetype->columns_map.insert(first_wildcard, &column);
                     }
 
                     ComponentRecord* second_record = ComponentRecord::component_record_ensure(world, second_wildcard);
-                    if (second_record->append_to_pair(archetype_id, i)) {
+                    if (second_record->link_archetype(new_archetype, i)) {
                         new_archetype->columns_index.insert(second_wildcard, i);
                         new_archetype->columns_map.insert(second_wildcard, &column);
                     }
@@ -428,14 +427,11 @@ void Archetype::destroy() {
     }
 
     // --- Component records ---------------------------------------------------
-    // columns_index also holds the wildcard ids registered via append_to_pair.
+    // columns_index also holds the wildcard ids linked through link_archetype.
     for (auto& entry : this->columns_index) {
         ComponentRecord* record = ComponentRecord::component_record_find(world, entry.key);
-        if (record == nullptr) {
-            continue;
-        }
-        if (record->columns_index.remove(this->archetype_id)) {
-            record->archetype_count--;
+        if (record != nullptr) {
+            record->unlink_archetype(this->archetype_id);
         }
     }
 

@@ -49,7 +49,7 @@ enum QueryTermFlags : u32 {
     TERM_OPTIONAL = 1 << 1,
     // The source must not hold the id (without()).
     TERM_EXCLUDE = 1 << 2,
-    // This term or the next one must hold (or_()); the last term of a chain
+    // This term or the next one must hold (bor()); the last term of a chain
     // has the flag clear.
     TERM_OR = 1 << 3,
     // The id may be found on an entity reached by following `traverse` up

@@ -269,7 +269,7 @@ TEST_CASE("ecs/query_scan: the walk is narrowed to the archetypes of the rarest 
     const ComponentRecord* position_record = ComponentRecord::component_record_find(&world, position);
     REQUIRE(health_record != nullptr);
     REQUIRE(position_record != nullptr);
-    REQUIRE(health_record->archetype_count < position_record->archetype_count);
+    REQUIRE(health_record->archetype_count() < position_record->archetype_count());
 
     SUBCASE("the result is the same whichever term comes first") {
         const QueryTerm health_first[] = {

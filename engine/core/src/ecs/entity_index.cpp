@@ -214,6 +214,16 @@ EntityId EntityIndex::get_current(const EntityId entity) const {
     return this->dense_list[record->dense];
 }
 
+EntityRecord* EntityIndex::resolve_low(const EntityIdLow id, EntityId* out_entity) const {
+    EntityRecord* record = this->get_record_any(id);
+    if (record == nullptr || record->dense == 0 || record->dense >= this->alive_count) {
+        *out_entity = 0;
+        return nullptr;
+    }
+    *out_entity = this->dense_list[record->dense];
+    return record;
+}
+
 usz EntityIndex::count() const {
     return this->alive_count - 1;
 }

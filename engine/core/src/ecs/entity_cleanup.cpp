@@ -166,11 +166,11 @@ void clear_pattern(World* world, ComponentRecord* record, const Id pattern) {
     TemporalAllocator temp = TemporalAllocator::create();
     DynamicArray<ArchetypeId> archetype_ids(&temp);
 
-    while (record->archetype_count != 0) {
+    while (record->archetype_count() != 0) {
         archetype_ids.clear();
-        archetype_ids.reserve(record->columns_index.count);
-        for (const auto& entry : record->columns_index) {
-            archetype_ids.push(entry.key);
+        archetype_ids.reserve(record->archetype_list.count);
+        for (const RecordColumn& entry : record->archetype_list) {
+            archetype_ids.push(entry.archetype->archetype_id);
         }
 
         bool stuck = false;
@@ -224,9 +224,10 @@ void delete_pair_records(World* world, const Id wildcard, const bool use_first) 
 // Whether some entity holds the record's id. Archetypes stay registered on a
 // record after they empty out, so archetype_count alone cannot tell.
 bool record_in_use(const World* world, const ComponentRecord* record) {
-    for (const auto& entry : record->columns_index) {
-        const Archetype* archetype = world->archetypes.get_element_alive(entry.key);
-        if (archetype != nullptr && archetype->data.entity_count != 0) {
+    (void)world;
+    for (const RecordColumn& entry : record->archetype_list) {
+        // The record only lists live archetypes.
+        if (entry.archetype->data.entity_count != 0) {
             return true;
         }
     }

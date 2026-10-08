@@ -124,6 +124,13 @@ struct EntityIndex {
     // passed in, or 0 if that id is not alive.
     EntityId get_current(EntityId entity) const;
 
+    // Record of the alive entity sharing `id`'s low bits, whatever
+    // generation `id` carries, with that entity's full id written to
+    // `out_entity`; nullptr (and 0) if the id is not alive. One lookup where
+    // get_current() followed by get_record_alive() would be two: the way to
+    // reach the entity behind a pair side.
+    EntityRecord* resolve_low(EntityIdLow id, EntityId* out_entity) const;
+
     // Number of alive entities, and the id of the alive entity at `index`
     // (valid for [0, count())). Deleting an entity moves the last alive id into
     // its position.

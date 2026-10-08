@@ -95,8 +95,8 @@ u32 depth(World* world, ComponentRecord* record) {
 
     // Holders of (R, T) sit one below T. A dead or parentless T is depth 0.
     u32 target_depth = 0;
-    const EntityId target = world->pair_second(record->id);
-    const EntityRecord* target_record = target != 0 ? world->entity_index.get_record_alive(target) : nullptr;
+    EntityId target;
+    const EntityRecord* target_record = world->entity_index.resolve_low(ECS::PAIR_SECOND(record->id), &target);
     if (target_record != nullptr && target_record->archetype != nullptr) {
         target_depth = depth(world, target_record->archetype, ECS::PAIR_FIRST(record->id));
     }

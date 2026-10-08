@@ -1,5 +1,7 @@
 #include "engine/ecs/component_record.hpp"
 
+#include "engine/ecs/archetype.hpp"
+
 #include "engine/ecs/hierarchy.hpp"
 
 #include "engine/ecs/ecs.hpp"
@@ -73,7 +75,9 @@ void PairRecord::free() {
 ComponentRecord::ComponentRecord(World* world) :
     world(world),
     allocator(world->allocator),
-    columns_index(world->allocator)
+    columns_index(world->allocator),
+    archetype_list(world->allocator),
+    archetype_index(world->allocator)
 {}
 
 
@@ -92,7 +96,8 @@ void ComponentRecord::destroy() {
     this->first_wildcard = nullptr;
     this->second_wildcard = nullptr;
     this->columns_index.free();
-    this->archetype_count = 0;
+    this->archetype_list.free();
+    this->archetype_index.free();
 }
 
 HookList* ComponentRecord::ensure_hooks() {
@@ -111,12 +116,30 @@ PairRecord* ComponentRecord::ensure_pair_record() {
     return this->pair_record;
 }
 
-bool ComponentRecord::append_to_pair(const ArchetypeId archetype, const usz column) {
-    if (this->columns_index.contains(archetype)) {
+bool ComponentRecord::link_archetype(Archetype* archetype, const usz column) {
+    const ArchetypeId id = archetype->archetype_id;
+    if (this->columns_index.contains(id)) {
         return false;
     }
-    this->columns_index.insert(archetype, column);
-    this->archetype_count++;
+    this->columns_index.insert(id, column);
+    this->archetype_index.insert(id, this->archetype_list.count);
+    this->archetype_list.push(RecordColumn { archetype, column });
+    return true;
+}
+
+bool ComponentRecord::unlink_archetype(const ArchetypeId archetype) {
+    const usz* found = this->archetype_index.find(archetype);
+    if (found == nullptr) {
+        return false;
+    }
+    const usz position = *found;
+    this->columns_index.remove(archetype);
+    this->archetype_index.remove(archetype);
+    this->archetype_list.remove_swap(position);
+    if (position < this->archetype_list.count) {
+        // The former last entry now sits at `position`.
+        this->archetype_index.insert(this->archetype_list[position].archetype->archetype_id, position);
+    }
     return true;
 }
 
@@ -203,9 +226,9 @@ ComponentRecord* ComponentRecord::component_record_find(World* world, const Id i
 }
 
 bool ComponentRecord::component_record_delete(World* world, ComponentRecord* record) {
-    if (record->archetype_count != 0) {
-        fprintf(stderr, "[ecs] error: deleting component record %llx still held by %u archetypes\n",
-            record->id, record->archetype_count);
+    if (record->archetype_count() != 0) {
+        fprintf(stderr, "[ecs] error: deleting component record %llx still held by %llu archetypes\n",
+            static_cast<unsigned long long>(record->id), static_cast<unsigned long long>(record->archetype_count()));
         return false;
     }
     const PairRecord* pairs = record->pair_record;

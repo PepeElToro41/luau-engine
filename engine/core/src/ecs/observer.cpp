@@ -232,7 +232,7 @@ ObserverId create(World* world, const QueryTerm* terms, const usz term_count, co
 
     if (candidates.narrowed) {
         for (usz i = 0; i < candidates.count; i++) {
-            Archetype* archetype = world->archetypes.get_element_alive(candidates.ids[i]);
+            Archetype* archetype = ARCHETYPE_CANDIDATES::archetype_of(world, candidates.entries[i]);
             if (archetype != nullptr && stored.matcher.matches(archetype)) {
                 tag(archetype, stored);
             }
@@ -270,7 +270,7 @@ bool destroy(World* world, const ObserverId id) {
     const ArchetypeCandidates candidates = ARCHETYPE_CANDIDATES::collect_for(world, record_id, &temp);
     if (candidates.narrowed) {
         for (usz i = 0; i < candidates.count; i++) {
-            Archetype* archetype = world->archetypes.get_element_alive(candidates.ids[i]);
+            Archetype* archetype = ARCHETYPE_CANDIDATES::archetype_of(world, candidates.entries[i]);
             if (archetype != nullptr) {
                 untag(archetype, id);
             }

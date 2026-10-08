@@ -23,14 +23,16 @@
 //
 // term() adds an output term, with() / without() add constraint terms; all
 // three come in the same shapes as the World entity operations, plus shapes
-// that take a QueryVar in place of an id. optional(), or_(), src() and up()
+// that take a QueryVar in place of an id. optional(), bor(), src() and up()
 // modify the term added last, so with the variadic with(a, b) they apply to
 // `b` only. Variables come from var(); THIS (QUERY_THIS) is always variable 0.
 //
 // The builder owns its term list on the world's allocator: call free() when
-// done with it, or build() once that exists (it will consume the builder).
-// Terms are recorded as given; validating them (TRAVERSABLE relations for
-// up(), or-chains, unused variables) is build()'s job.
+// done with it, or build() to turn it into a DynamicQuery (which consumes
+// it). Terms are recorded as given; validating them (TRAVERSABLE relations
+// for up(), or-chains, variables never bound) is build()'s job.
+struct DynamicQuery;
+
 struct QueryBuilder {
     World* world = nullptr;
     u32 flags = QUERY_NONE;
@@ -43,6 +45,12 @@ struct QueryBuilder {
     // Releases the term list and the variable names. The builder is empty and
     // reusable afterwards.
     void free();
+
+    // Compiles the terms into a DynamicQuery (see dynamic_query.hpp) and
+    // empties the builder: the variable names move to the query, the terms
+    // are released. Terms that cannot be compiled are reported and leave the
+    // query not ok (is_ok() false, nothing matches); free() it either way.
+    DynamicQuery build();
 
     // --- Output terms --------------------------------------------------------
     template <typename T>

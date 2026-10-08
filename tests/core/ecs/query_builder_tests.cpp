@@ -114,7 +114,7 @@ TEST_CASE("ecs/query_builder: modifiers apply to the last term only") {
     }
 
     SUBCASE("or") {
-        builder.with<TagA>().or_().with<TagB>();
+        builder.with<TagA>().bor().with<TagB>();
         CHECK(builder.terms.data[0].is_or());
         CHECK_FALSE(builder.terms.data[1].is_or());
     }
@@ -154,7 +154,7 @@ TEST_CASE("ecs/query_builder: modifiers apply to the last term only") {
     }
 
     SUBCASE("modifiers without a term are ignored") {
-        builder.optional().or_().src(parent).up();
+        builder.optional().bor().src(parent).up();
         CHECK(builder.terms.count == 0);
     }
 

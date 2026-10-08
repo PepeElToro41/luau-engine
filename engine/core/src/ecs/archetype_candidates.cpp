@@ -1,5 +1,6 @@
 #include "engine/ecs/archetype_candidates.hpp"
 
+#include "engine/ecs/archetype.hpp"
 #include "engine/ecs/component_record.hpp"
 #include "engine/ecs/ecs.hpp"
 #include "engine/ecs/world.hpp"
@@ -22,10 +23,13 @@ ArchetypeCandidates copy_record(const ComponentRecord* record, BaseAllocator* al
     ArchetypeCandidates out;
     out.narrowed = true;
     out.record_id = record->id;
-    out.ids = allocator->allocate_array<ArchetypeId>(record->columns_index.count + 1);
+    out.entries = allocator->allocate_array<ArchetypeCandidate>(record->archetype_list.count + 1);
     out.count = 0;
-    for (const auto& entry : record->columns_index) {
-        out.ids[out.count++] = entry.key;
+    for (const RecordColumn& entry : record->archetype_list) {
+        ArchetypeCandidate& candidate = out.entries[out.count++];
+        candidate.id = entry.archetype->archetype_id;
+        candidate.archetype = entry.archetype;
+        candidate.column = entry.column;
     }
     return out;
 }
@@ -35,7 +39,7 @@ ArchetypeCandidates empty(const Id record_id, BaseAllocator* allocator) {
     ArchetypeCandidates out;
     out.narrowed = true;
     out.record_id = record_id;
-    out.ids = allocator->allocate_array<ArchetypeId>(1);
+    out.entries = allocator->allocate_array<ArchetypeCandidate>(1);
     out.count = 0;
     return out;
 }
@@ -57,7 +61,7 @@ ArchetypeCandidates collect(World* world, const Id* with, const usz with_count, 
         if (record == nullptr) {
             return empty(pattern, allocator);
         }
-        if (best == nullptr || record->archetype_count < best->archetype_count) {
+        if (best == nullptr || record->archetype_count() < best->archetype_count()) {
             best = record;
         }
     }
@@ -66,6 +70,10 @@ ArchetypeCandidates collect(World* world, const Id* with, const usz with_count, 
         return ArchetypeCandidates { };
     }
     return copy_record(best, allocator);
+}
+
+Archetype* archetype_of(const World* world, const ArchetypeCandidate& candidate) {
+    return world->archetypes.is_alive(candidate.id) ? candidate.archetype : nullptr;
 }
 
 ArchetypeCandidates collect_for(World* world, const Id record_id, BaseAllocator* allocator) {

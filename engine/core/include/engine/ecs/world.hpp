@@ -630,3 +630,4 @@ HookId World::hook_changed(const HookCallback callback, void* user_data) {
 // World::query / World::query_build; including world.hpp gives the full API.
 #include "engine/ecs/query.hpp"         // NOLINT(misc-include-cleaner)
 #include "engine/ecs/query_builder.hpp" // NOLINT(misc-include-cleaner)
+#include "engine/ecs/dynamic_query.hpp" // NOLINT(misc-include-cleaner)
