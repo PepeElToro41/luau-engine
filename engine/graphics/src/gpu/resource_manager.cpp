@@ -1,5 +1,7 @@
 #include "engine/gpu/resource_manager.hpp"
 
+#include "engine/gpu/format_utils.hpp"
+
 #include "engine/memory/temporal_allocator.hpp"
 #include "gpu/vk_check.hpp"
 
@@ -16,20 +18,7 @@ static VkDeviceSize align_up(const VkDeviceSize value, const VkDeviceSize alignm
 }
 
 static VkImageAspectFlags aspect_for_format(const VkFormat format) {
-    switch (format) {
-    case VK_FORMAT_D16_UNORM:
-    case VK_FORMAT_X8_D24_UNORM_PACK32:
-    case VK_FORMAT_D32_SFLOAT:
-        return VK_IMAGE_ASPECT_DEPTH_BIT;
-    case VK_FORMAT_S8_UINT:
-        return VK_IMAGE_ASPECT_STENCIL_BIT;
-    case VK_FORMAT_D16_UNORM_S8_UINT:
-    case VK_FORMAT_D24_UNORM_S8_UINT:
-    case VK_FORMAT_D32_SFLOAT_S8_UINT:
-        return VK_IMAGE_ASPECT_DEPTH_BIT | VK_IMAGE_ASPECT_STENCIL_BIT;
-    default:
-        return VK_IMAGE_ASPECT_COLOR_BIT;
-    }
+    return GPU_FORMAT::aspect(format);
 }
 
 static u32 mip_extent(const u32 base, const u32 level) {
@@ -475,6 +464,38 @@ void GpuResourceManager::release_texture(GpuTexture& texture) {
     texture = GpuTexture{};
 }
 
+// --- Pipelines ------------------------------------------------------------------
+
+void GpuResourceManager::release_pipeline(const VkPipeline pipeline, const VkPipelineLayout layout) {
+    if (pipeline == VK_NULL_HANDLE && layout == VK_NULL_HANDLE) {
+        return;
+    }
+    Pending pending;
+    pending.pipeline = pipeline;
+    pending.pipeline_layout = layout;
+    this->pending[this->current_slot].push(pending);
+}
+
+// --- Render passes and framebuffers -----------------------------------------------
+
+void GpuResourceManager::release_render_pass(const VkRenderPass render_pass) {
+    if (render_pass == VK_NULL_HANDLE) {
+        return;
+    }
+    Pending pending;
+    pending.render_pass = render_pass;
+    this->pending[this->current_slot].push(pending);
+}
+
+void GpuResourceManager::release_framebuffer(const VkFramebuffer framebuffer) {
+    if (framebuffer == VK_NULL_HANDLE) {
+        return;
+    }
+    Pending pending;
+    pending.framebuffer = framebuffer;
+    this->pending[this->current_slot].push(pending);
+}
+
 // --- Frames ---------------------------------------------------------------------
 
 void GpuResourceManager::begin_frame(const u32 slot) {
@@ -518,6 +539,20 @@ void GpuResourceManager::destroy(const Pending& pending) {
     // Mapped memory is unmapped implicitly by vkFreeMemory.
     if (pending.memory != VK_NULL_HANDLE) {
         vkFreeMemory(device, pending.memory, nullptr);
+    }
+    if (pending.pipeline != VK_NULL_HANDLE) {
+        vkDestroyPipeline(device, pending.pipeline, nullptr);
+    }
+    if (pending.pipeline_layout != VK_NULL_HANDLE) {
+        vkDestroyPipelineLayout(device, pending.pipeline_layout, nullptr);
+    }
+    // A framebuffer may outlive its render pass handle, but destroying both
+    // in one record is still fine in either order.
+    if (pending.framebuffer != VK_NULL_HANDLE) {
+        vkDestroyFramebuffer(device, pending.framebuffer, nullptr);
+    }
+    if (pending.render_pass != VK_NULL_HANDLE) {
+        vkDestroyRenderPass(device, pending.render_pass, nullptr);
     }
 }
 

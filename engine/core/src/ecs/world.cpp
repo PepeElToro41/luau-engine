@@ -1,12 +1,12 @@
 #include "engine/ecs/world.hpp"
 
-#include "engine/ecs/archetype_listener.hpp"
+#include "engine/ecs/archetype/archetype_listener.hpp"
 #include "engine/ecs/ecs.hpp"
 #include "engine/ecs/entity.hpp"
 #include "engine/ecs/hierarchy.hpp"
 #include "engine/ecs/hooks.hpp"
-#include "engine/ecs/monitor.hpp"
-#include "engine/ecs/observer.hpp"
+#include "engine/ecs/query/monitor.hpp"
+#include "engine/ecs/query/observer.hpp"
 #include "engine/memory/heap_allocator.hpp"
 #include "engine/memory/temporal_allocator.hpp"
 

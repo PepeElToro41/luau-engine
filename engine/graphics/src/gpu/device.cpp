@@ -314,12 +314,29 @@ bool create_gpu_device(GpuDevice& gpu) {
 
     const char* extensions[] = {VK_KHR_SWAPCHAIN_EXTENSION_NAME};
 
-    // Vulkan 1.1 target: no optional features enabled yet.
-    VkPhysicalDeviceFeatures features{};
+    // Vulkan 1.1 target. The one feature beyond the core 1.0 set is
+    // shaderDrawParameters (core in 1.1): Slang's SV_VertexID is relative to
+    // the draw's base vertex, so its SPIR-V reads BaseVertex.
+    VkPhysicalDeviceVulkan11Features available_11{};
+    available_11.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_1_FEATURES;
+    VkPhysicalDeviceFeatures2 available{};
+    available.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2;
+    available.pNext = &available_11;
+    vkGetPhysicalDeviceFeatures2(gpu.physical_device, &available);
+    if (!available_11.shaderDrawParameters) {
+        fprintf(stderr, "[vulkan] the device does not support shaderDrawParameters\n");
+        return false;
+    }
+    VkPhysicalDeviceVulkan11Features features_11{};
+    features_11.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_1_FEATURES;
+    features_11.shaderDrawParameters = VK_TRUE;
+    VkPhysicalDeviceFeatures2 features{};
+    features.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2;
+    features.pNext = &features_11;
 
     VkDeviceCreateInfo create_info{};
     create_info.sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO;
-    create_info.pEnabledFeatures = &features;
+    create_info.pNext = &features;
     create_info.queueCreateInfoCount = static_cast<uint32_t>(queue_infos.count);
     create_info.pQueueCreateInfos = queue_infos.data;
     create_info.enabledExtensionCount = 1;

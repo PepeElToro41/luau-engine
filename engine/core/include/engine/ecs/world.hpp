@@ -1,16 +1,16 @@
 #pragma once
 
-#include "engine/ecs/archetype.hpp"
-#include "engine/ecs/archetype_listener.hpp"
+#include "engine/ecs/archetype/archetype.hpp"
+#include "engine/ecs/archetype/archetype_listener.hpp"
 #include "engine/ecs/component_record.hpp"
 #include "engine/ecs/ecs.hpp"
 #include "engine/ecs/ecs_types.hpp"
 #include "engine/ecs/entity.hpp"
 #include "engine/ecs/entity_index.hpp"
 #include "engine/ecs/hooks.hpp"
-#include "engine/ecs/monitor.hpp"
-#include "engine/ecs/observer.hpp"
-#include "engine/ecs/query_term.hpp"
+#include "engine/ecs/query/monitor.hpp"
+#include "engine/ecs/query/observer.hpp"
+#include "engine/ecs/query/query_term.hpp"
 #include "engine/memory/base_allocator.hpp"
 #include "engine/memory/heap_allocator.hpp"
 #include "engine/templates/hash_map.hpp"
@@ -628,6 +628,6 @@ HookId World::hook_changed(const HookCallback callback, void* user_data) {
 
 // The query front ends need the World definition above and define
 // World::query / World::query_build; including world.hpp gives the full API.
-#include "engine/ecs/query.hpp"         // NOLINT(misc-include-cleaner)
-#include "engine/ecs/query_builder.hpp" // NOLINT(misc-include-cleaner)
-#include "engine/ecs/dynamic_query.hpp" // NOLINT(misc-include-cleaner)
+#include "engine/ecs/query/query.hpp"         // NOLINT(misc-include-cleaner)
+#include "engine/ecs/query/query_builder.hpp" // NOLINT(misc-include-cleaner)
+#include "engine/ecs/query/dynamic_query.hpp" // NOLINT(misc-include-cleaner)

@@ -94,6 +94,50 @@ const char* name(u32 format);
 
 } // namespace VERTEX_FORMAT
 
+// How a mesh's attributes reach a vertex shader: every (semantic, index)
+// pair has a fixed `layout(location = N)`, so a shader declares the inputs it
+// needs by location and the pipeline binds whichever mesh attributes match.
+//
+//     location 0  POSITION      location 4..7  TEXCOORD0..3
+//     location 1  NORMAL        location 8     JOINTS
+//     location 2  TANGENT       location 9     WEIGHTS
+//     location 3  COLOR
+namespace VERTEX_LAYOUT {
+
+constexpr u32 LOCATION_NONE = 0xffffffffu;
+constexpr u32 MAX_TEXCOORDS = 4;
+// One past the highest location in the table.
+constexpr u32 LOCATION_COUNT = 10;
+
+// The shader input location for `semantic` / `semantic_index`, or
+// LOCATION_NONE for a pair the convention does not cover (a second COLOR,
+// TEXCOORD4, an unknown semantic).
+constexpr u32 location(const u32 semantic, const u32 semantic_index) {
+    switch (semantic) {
+    case VERTEX_SEMANTIC_POSITION:
+        return semantic_index == 0 ? 0 : LOCATION_NONE;
+    case VERTEX_SEMANTIC_NORMAL:
+        return semantic_index == 0 ? 1 : LOCATION_NONE;
+    case VERTEX_SEMANTIC_TANGENT:
+        return semantic_index == 0 ? 2 : LOCATION_NONE;
+    case VERTEX_SEMANTIC_COLOR:
+        return semantic_index == 0 ? 3 : LOCATION_NONE;
+    case VERTEX_SEMANTIC_TEXCOORD:
+        return semantic_index < MAX_TEXCOORDS ? 4 + semantic_index : LOCATION_NONE;
+    case VERTEX_SEMANTIC_JOINTS:
+        return semantic_index == 0 ? 8 : LOCATION_NONE;
+    case VERTEX_SEMANTIC_WEIGHTS:
+        return semantic_index == 0 ? 9 : LOCATION_NONE;
+    default:
+        return LOCATION_NONE;
+    }
+}
+
+// "POSITION", "TEXCOORD", ... or "UNKNOWN".
+const char* semantic_name(u32 semantic);
+
+} // namespace VERTEX_LAYOUT
+
 namespace MESH_ASSET {
 
 // Bytes of one index, 0 for a value that is not a MeshIndexFormat.
@@ -157,6 +201,15 @@ struct MeshBounds {
     f32 radius = 0;
     u32 reserved[2] = {0, 0};
 };
+
+namespace VERTEX_LAYOUT {
+
+// FNV-1a over the stream strides and the attribute table, in order. Two
+// meshes with equal hashes feed a pipeline identically, so pipelines are
+// cached by this value rather than per mesh.
+u64 hash(const VertexStreamDesc* streams, u32 stream_count, const VertexAttributeDesc* attributes, u32 attribute_count);
+
+} // namespace VERTEX_LAYOUT
 
 static_assert(sizeof(MeshDesc) == 64, "MeshDesc must be 64 bytes on disk");
 static_assert(sizeof(VertexStreamDesc) == 8, "VertexStreamDesc must be 8 bytes on disk");

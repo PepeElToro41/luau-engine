@@ -1,14 +1,14 @@
 #include "engine/ecs/entity.hpp"
 
-#include "engine/ecs/archetype.hpp"
+#include "engine/ecs/archetype/archetype.hpp"
 #include "engine/ecs/component_record.hpp"
 #include "engine/ecs/ecs.hpp"
 #include "engine/ecs/entity_cleanup.hpp"
 #include "engine/ecs/entity_index.hpp"
 #include "engine/ecs/hierarchy.hpp"
 #include "engine/ecs/hooks.hpp"
-#include "engine/ecs/monitor.hpp"
-#include "engine/ecs/observer.hpp"
+#include "engine/ecs/query/monitor.hpp"
+#include "engine/ecs/query/observer.hpp"
 #include "engine/ecs/world.hpp"
 
 #include <cstdio>

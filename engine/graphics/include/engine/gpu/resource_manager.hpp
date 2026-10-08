@@ -25,6 +25,11 @@
 //     ...
 //     resources.release_buffer(vertices);   // the GPU may still be reading it; freed later
 //
+// Pipelines, render passes and framebuffers are not created here (see
+// pipeline.hpp and the render graph backend) but release_pipeline(),
+// release_render_pass() and release_framebuffer() give them the same
+// deferred destruction when one is replaced mid-run.
+//
 // Two ways to get rid of a resource:
 //
 //   destroy_*  frees it right now. Only when the caller knows the GPU is done
@@ -155,6 +160,21 @@ struct GpuResourceManager {
     // Frees the texture once the current frame slot has completed.
     void release_texture(GpuTexture& texture);
 
+    // --- Pipelines ---------------------------------------------------------
+
+    // Frees a pipeline and its layout once the current frame slot has
+    // completed: for pipelines replaced while frames that bound them are
+    // still in flight (shader reloads). GraphicsPipeline::release calls this.
+    // Either handle may be null.
+    void release_pipeline(VkPipeline pipeline, VkPipelineLayout layout);
+
+    // --- Render passes and framebuffers ------------------------------------
+
+    // Deferred destruction for the render graph's own render passes and
+    // framebuffers when a recompile replaces them. Null handles are ignored.
+    void release_render_pass(VkRenderPass render_pass);
+    void release_framebuffer(VkFramebuffer framebuffer);
+
     // --- Frames ------------------------------------------------------------
 
     // Frees what was released the last time `slot` was current and makes
@@ -170,13 +190,17 @@ struct GpuResourceManager {
     u32 current_slot = 0;
 
 private:
-    // Everything destroy_buffer / destroy_texture need, in one record. A
-    // buffer leaves `image` and `view` null; a texture leaves `buffer` null.
+    // Everything one deferred free needs, in one record; each kind of
+    // resource fills only its own handles and leaves the rest null.
     struct Pending {
         VkBuffer buffer = VK_NULL_HANDLE;
         VkImage image = VK_NULL_HANDLE;
         VkImageView view = VK_NULL_HANDLE;
         VkDeviceMemory memory = VK_NULL_HANDLE;
+        VkPipeline pipeline = VK_NULL_HANDLE;
+        VkPipelineLayout pipeline_layout = VK_NULL_HANDLE;
+        VkRenderPass render_pass = VK_NULL_HANDLE;
+        VkFramebuffer framebuffer = VK_NULL_HANDLE;
     };
 
     void destroy(const Pending& pending);

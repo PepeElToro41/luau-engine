@@ -20,6 +20,10 @@ struct App {
     const char* title = "LuauEngine";
     int width = 1280;
     int height = 720;
+    // Start with the demo's post-process pass (`--post`) or shadow pass
+    // (`--shadow`) on. F6 and F7 toggle them, F5 reloads every shader.
+    bool demo_post = false;
+    bool demo_shadow = false;
 
     DisplayWindow window;
     GpuDevice gpu;

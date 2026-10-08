@@ -20,8 +20,9 @@ namespace IMPORT {
 // zero bytes.
 u8* read_file(const char* path, BaseAllocator* allocator, usz* out_size, std::string* error);
 
-// 64-bit FNV-1a over the bytes: what goes in AssetHeader::content_hash so a
-// re-import of the same source with the same settings is recognisable.
+// 64-bit FNV-1a over the bytes (HASH::fnv1a): what goes in
+// AssetHeader::content_hash so a re-import of the same source with the same
+// settings is recognisable.
 u64 fnv1a(const void* data, usz size);
 
 // A fresh random GUID, never null.

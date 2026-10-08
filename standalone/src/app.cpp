@@ -1,5 +1,8 @@
 #include "app.hpp"
 
+#include "engine/render/demo_scene.hpp"
+#include "engine/render/renderer.hpp"
+
 #include <cstdio>
 
 bool App::init() {
@@ -21,6 +24,15 @@ bool App::init() {
     }
     // A shipped build only ever loads cooked assets (see docs/asset_format.md).
     this->engine.get_singleton<AssetResourceProvider>()->require_cooked = true;
+    if (!RENDER_DEMO::spawn(this->engine)) {
+        fprintf(stderr, "[app] demo scene could not be created\n");
+    }
+    if (this->demo_post) {
+        RENDER_DEMO::set_post_enabled(this->engine, true);
+    }
+    if (this->demo_shadow) {
+        RENDER_DEMO::set_shadow_enabled(this->engine, true);
+    }
     this->running = true;
     return true;
 }
@@ -57,6 +69,18 @@ void App::poll_events() {
             break;
         case SDL_EVENT_WINDOW_PIXEL_SIZE_CHANGED:
             this->presenter.mark_resized();
+            break;
+        case SDL_EVENT_KEY_DOWN:
+            if (event.key.repeat) {
+                break;
+            }
+            if (event.key.key == SDLK_F5) {
+                this->engine.get_singleton<Renderer>()->reload_all_shaders();
+            } else if (event.key.key == SDLK_F6) {
+                RENDER_DEMO::set_post_enabled(this->engine, !RENDER_DEMO::is_post_enabled(this->engine));
+            } else if (event.key.key == SDLK_F7) {
+                RENDER_DEMO::set_shadow_enabled(this->engine, !RENDER_DEMO::is_shadow_enabled(this->engine));
+            }
             break;
         default:
             break;

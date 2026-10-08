@@ -1,5 +1,5 @@
 # engine_graphics: the display window and the renderer backends. Owns every
-# graphics / platform dependency (volk, SDL3, shaderc, imgui).
+# graphics / platform dependency (volk, SDL3, shaderc, Slang, imgui).
 
 # --- Dependencies ------------------------------------------------------------
 
@@ -7,6 +7,31 @@
 # SDL3 are shared with vendor/imgui). volk provides the Vulkan headers and loads
 # the loader at runtime; shaderc_combined is the statically linked shaderc +
 # glslang + SPIRV-Tools archive.
+
+# Slang, the engine's shader language. The SDK ships it as a shared library
+# (libslang.so, which loads its helper libraries from its own directory at
+# runtime) with the headers under include/slang/.
+include(FindPackageHandleStandardArgs)
+find_path(SLANG_INCLUDE_DIR
+    NAMES slang/slang.h
+    HINTS "${VULKAN_SDK}/include"
+)
+find_library(SLANG_LIBRARY
+    NAMES slang
+    HINTS "${VULKAN_SDK}/lib"
+)
+find_package_handle_standard_args(slang
+    REQUIRED_VARS SLANG_LIBRARY SLANG_INCLUDE_DIR
+)
+mark_as_advanced(SLANG_INCLUDE_DIR SLANG_LIBRARY)
+
+if(NOT TARGET slang::slang)
+    add_library(slang::slang SHARED IMPORTED GLOBAL)
+    set_target_properties(slang::slang PROPERTIES
+        IMPORTED_LOCATION "${SLANG_LIBRARY}"
+        INTERFACE_INCLUDE_DIRECTORIES "${SLANG_INCLUDE_DIR}"
+    )
+endif()
 
 # --- Target ------------------------------------------------------------------
 
@@ -42,4 +67,6 @@ target_link_libraries(engine_graphics
         imgui::imgui
     PRIVATE
         Vulkan::shaderc_combined
+        slang::slang
+        spirv_reflect::spirv_reflect
 )

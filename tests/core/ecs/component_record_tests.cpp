@@ -1,6 +1,6 @@
 #include "support/test_support.hpp"
 
-#include "engine/ecs/archetype.hpp"
+#include "engine/ecs/archetype/archetype.hpp"
 #include "engine/ecs/component_record.hpp"
 
 // The three structures a ComponentRecord keeps over the archetypes holding

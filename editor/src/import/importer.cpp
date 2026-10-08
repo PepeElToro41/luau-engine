@@ -1,5 +1,7 @@
 #include "import/importer.hpp"
 
+#include "engine/utils/hash.hpp"
+
 #include "engine/memory/heap_allocator.hpp"
 #include "engine/platform/file.hpp"
 
@@ -35,13 +37,7 @@ u8* IMPORT::read_file(const char* path, BaseAllocator* allocator, usz* out_size,
 }
 
 u64 IMPORT::fnv1a(const void* data, const usz size) {
-    const u8* bytes = static_cast<const u8*>(data);
-    u64 hash = 0xcbf29ce484222325ull;
-    for (usz i = 0; i < size; ++i) {
-        hash ^= bytes[i];
-        hash *= 0x100000001b3ull;
-    }
-    return hash;
+    return HASH::fnv1a(data, size);
 }
 
 AssetGuid IMPORT::random_guid() {

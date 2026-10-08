@@ -2,6 +2,7 @@
 
 #include "engine/display_window.hpp"
 #include "engine/engine.h"
+#include "engine/render/renderer.hpp"
 #include "engine/gpu/device.hpp"
 #include "engine/gpu/render_target.hpp"
 #include "engine/gpu/window_presenter.hpp"
@@ -75,6 +76,8 @@ private:
     // Builds the ImGui frame: dockspace, main menu, panels.
     void draw_editor();
     void draw_main_menu();
+    // Renderer messages land in the Output panel.
+    static void render_log(RenderLogLevel level, const char* text, void* user_data);
     void draw_viewport();
     void draw_stats();
 
@@ -110,6 +113,8 @@ private:
     bool show_asset_browser = true;
     bool show_import = false;
     bool show_demo_window = false;
+    bool demo_post = false;
+    bool demo_shadow = false;
 
     f32 frame_dt = 0.0f;
 };

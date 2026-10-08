@@ -1,5 +1,8 @@
 #include "app.hpp"
 
+#include "engine/render/demo_scene.hpp"
+#include "engine/render/renderer.hpp"
+
 #include "ui/dock_layout.hpp"
 #include "ui/panels.hpp"
 #include "ui/themes.hpp"
@@ -26,6 +29,7 @@ bool App::init() {
     if (!this->engine.init(&this->gpu)) {
         return false;
     }
+    this->engine.get_singleton<Renderer>()->log_sink = RenderLogSink{&App::render_log, this};
     if (!this->init_ui()) {
         return false;
     }
@@ -44,6 +48,17 @@ bool App::init() {
         this->output.warning("Surface does not offer the UNORM swapchain format; UI colors will look washed out");
     }
     this->open_test_project();
+    if (!RENDER_DEMO::spawn(this->engine)) {
+        this->output.error("Demo scene could not be created");
+    } else if (const Project* project = this->engine.get_singleton<Project>(); project != nullptr && project->is_open()) {
+        // Texture the demo cube with a texture asset of the project, if it
+        // has the one the test project ships.
+        const std::string texture_path = (project->root / "meshes" / "gradient_rgb.lunaasset").string();
+        const AssetGuid texture = this->engine.load_asset_file(texture_path.c_str());
+        if (!texture.is_null()) {
+            RENDER_DEMO::set_texture(this->engine, texture);
+        }
+    }
     this->output.info("Editor ready");
 
     this->running = true;
@@ -64,6 +79,9 @@ void App::open_test_project() {
     }
     if (project->open(EDITOR_TEST_PROJECT_DIR)) {
         this->output.info("Project '%s' opened at %s", project->name.c_str(), project->root.string().c_str());
+        // The project's render/ directory overrides the engine's shaders.
+        const std::string render_dir = (project->root / "render").string();
+        this->engine.get_singleton<Renderer>()->set_project_render_dir(render_dir.c_str());
     } else {
         this->output.error("Test project directory not found: %s", EDITOR_TEST_PROJECT_DIR);
     }
@@ -366,6 +384,23 @@ void App::draw_main_menu() {
         ImGui::EndMenu();
     }
 
+    if (ImGui::BeginMenu("Render")) {
+        if (ImGui::MenuItem("Reload Shaders", "F5")) {
+            this->engine.get_singleton<Renderer>()->reload_all_shaders();
+        }
+        if (ImGui::MenuItem("Post-process Pass", nullptr, &this->demo_post)) {
+            if (!RENDER_DEMO::set_post_enabled(this->engine, this->demo_post)) {
+                this->demo_post = false;
+            }
+        }
+        if (ImGui::MenuItem("Shadow Pass", nullptr, &this->demo_shadow)) {
+            if (!RENDER_DEMO::set_shadow_enabled(this->engine, this->demo_shadow)) {
+                this->demo_shadow = false;
+            }
+        }
+        ImGui::EndMenu();
+    }
+
     if (ImGui::BeginMenu("View")) {
         ImGui::MenuItem(PANELS::EXPLORER, nullptr, &this->show_explorer);
         ImGui::MenuItem(PANELS::VIEWPORT, nullptr, &this->show_viewport);
@@ -382,6 +417,25 @@ void App::draw_main_menu() {
     }
 
     ImGui::EndMainMenuBar();
+
+    if (ImGui::IsKeyPressed(ImGuiKey_F5, false)) {
+        this->engine.get_singleton<Renderer>()->reload_all_shaders();
+    }
+}
+
+void App::render_log(const RenderLogLevel level, const char* text, void* user_data) {
+    App* app = static_cast<App*>(user_data);
+    switch (level) {
+    case RENDER_LOG_ERROR:
+        app->output.error("%s", text);
+        break;
+    case RENDER_LOG_WARNING:
+        app->output.warning("%s", text);
+        break;
+    default:
+        app->output.info("%s", text);
+        break;
+    }
 }
 
 void App::draw_viewport() {

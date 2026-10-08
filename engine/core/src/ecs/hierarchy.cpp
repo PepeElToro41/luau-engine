@@ -1,6 +1,6 @@
 #include "engine/ecs/hierarchy.hpp"
 
-#include "engine/ecs/archetype.hpp"
+#include "engine/ecs/archetype/archetype.hpp"
 #include "engine/ecs/component_record.hpp"
 #include "engine/ecs/entity_index.hpp"
 #include "engine/ecs/world.hpp"

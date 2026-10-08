@@ -1,5 +1,7 @@
 #include "engine/asset/asset_types/mesh_asset.hpp"
 
+#include "engine/utils/hash.hpp"
+
 #include "engine/memory/heap_allocator.hpp"
 
 #include <cfloat>
@@ -53,6 +55,45 @@ const char* VERTEX_FORMAT::name(const u32 format) {
 }
 
 // --- Errors -----------------------------------------------------------------------
+
+const char* VERTEX_LAYOUT::semantic_name(const u32 semantic) {
+    switch (semantic) {
+    case VERTEX_SEMANTIC_POSITION:
+        return "POSITION";
+    case VERTEX_SEMANTIC_NORMAL:
+        return "NORMAL";
+    case VERTEX_SEMANTIC_TANGENT:
+        return "TANGENT";
+    case VERTEX_SEMANTIC_COLOR:
+        return "COLOR";
+    case VERTEX_SEMANTIC_TEXCOORD:
+        return "TEXCOORD";
+    case VERTEX_SEMANTIC_JOINTS:
+        return "JOINTS";
+    case VERTEX_SEMANTIC_WEIGHTS:
+        return "WEIGHTS";
+    default:
+        return "UNKNOWN";
+    }
+}
+
+u64 VERTEX_LAYOUT::hash(const VertexStreamDesc* streams, const u32 stream_count, const VertexAttributeDesc* attributes, const u32 attribute_count) {
+    u64 hash = HASH::fnv1a(&stream_count, sizeof(stream_count));
+    for (u32 i = 0; i < stream_count; ++i) {
+        hash = HASH::fnv1a_append(hash, &streams[i].stride, sizeof(streams[i].stride));
+    }
+    hash = HASH::fnv1a_append(hash, &attribute_count, sizeof(attribute_count));
+    for (u32 i = 0; i < attribute_count; ++i) {
+        const VertexAttributeDesc& attribute = attributes[i];
+        const u32 words[2] = {
+            static_cast<u32>(attribute.semantic) | static_cast<u32>(attribute.semantic_index) << 8 |
+                static_cast<u32>(attribute.format) << 16 | static_cast<u32>(attribute.stream) << 24,
+            attribute.offset,
+        };
+        hash = HASH::fnv1a_append(hash, words, sizeof(words));
+    }
+    return hash;
+}
 
 const char* MESH_ASSET::parse_error_name(const MeshParseError error) {
     switch (error) {

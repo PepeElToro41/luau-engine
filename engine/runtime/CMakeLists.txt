@@ -19,6 +19,11 @@ target_include_directories(engine_runtime
 
 target_compile_features(engine_runtime PUBLIC cxx_std_20)
 
+# Where the engine's built-in shaders and GLSL include library live. A project
+# can override any of them by shipping a file of the same name under its own
+# render/ directory, which the Renderer searches first.
+target_compile_definitions(engine_runtime PRIVATE ENGINE_RENDER_DIR="${PROJECT_SOURCE_DIR}/render")
+
 target_link_libraries(engine_runtime
     PUBLIC
         LuauEngine::core
