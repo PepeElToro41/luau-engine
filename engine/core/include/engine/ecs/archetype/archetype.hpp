@@ -139,7 +139,13 @@ struct Archetype {
     HashMap<Id, usz> columns_index;
     HashMap<Id, ArchetypeColumn*> columns_map;
 
+    // Whether the archetype holds any entity row (see mark_alive). The root
+    // is the exception: it stores no rows but is the home of every id-less
+    // entity, so it is alive from creation and never dies.
     bool alive = false;
+    // World::clock as of the last mark_dead: when the archetype went empty,
+    // or was created (empty). Only meaningful while `alive` is false.
+    u64 died_at = 0;
     ArchetypeData data { };
 
     ArchetypeId archetype_id = 0;
@@ -188,8 +194,13 @@ struct Archetype {
     // always a power of two. Never shrinks.
     void ensure_capacity(usz capacity);
 
-    // `alive` tracks whether the archetype holds any entity row. push_row sets
-    // it on the first row and delete_entity clears it on the last.
+    // `alive` tracks whether the archetype holds any entity row: push_row
+    // marks the archetype alive on its first row and delete_entity marks it
+    // dead on its last. Both move it between the world's
+    // alive_archetype_count and dead_archetype_count, and mark_dead stamps
+    // died_at with World::clock, so the bookkeeping is a few stores on the
+    // empty <-> non-empty transitions and nothing on any other row move.
+    // Calling either in the state the archetype is already in is a no-op.
     void mark_alive();
     void mark_dead();
 

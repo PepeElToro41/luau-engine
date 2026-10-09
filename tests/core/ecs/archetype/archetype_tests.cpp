@@ -638,3 +638,138 @@ TEST_CASE("ecs/archetype: move_entity copies shared columns") {
     world.free();
     CHECK_ARENA_CLEAN();
 }
+
+// --- Liveness bookkeeping ----------------------------------------------------
+
+TEST_CASE("ecs/archetype: the world counts alive and dead archetypes") {
+    World world;
+    world.init();
+
+    // init() builds a few archetypes for the built-in ids; only the root and
+    // the tables those ids ended up in hold rows.
+    CHECK(world.alive_archetype_count + world.dead_archetype_count == world.archetypes.alive_count);
+    CHECK(world.root_archetype->alive);
+    const usz alive_baseline = world.alive_archetype_count;
+    const usz dead_baseline = world.dead_archetype_count;
+
+    const EntityId entity = world.new_entity();
+    world.set(entity, Position { 1, 2 });
+    Archetype* with_position = archetype_of(world, entity);
+
+    SUBCASE("a new archetype is alive as soon as its first row lands") {
+        CHECK(with_position->alive);
+        CHECK(world.alive_archetype_count == alive_baseline + 1);
+        CHECK(world.dead_archetype_count == dead_baseline);
+    }
+    SUBCASE("emptying it moves it to the dead count") {
+        world.remove<Position>(entity);
+        CHECK_FALSE(with_position->alive);
+        CHECK(world.alive_archetype_count == alive_baseline);
+        CHECK(world.dead_archetype_count == dead_baseline + 1);
+
+        SUBCASE("and a new row moves it back") {
+            world.set(entity, Position { 3, 4 });
+            CHECK(archetype_of(world, entity) == with_position);
+            CHECK(with_position->alive);
+            CHECK(world.alive_archetype_count == alive_baseline + 1);
+            CHECK(world.dead_archetype_count == dead_baseline);
+        }
+    }
+    SUBCASE("moving between two archetypes touches the counts only on transitions") {
+        world.set(entity, Velocity { });
+        Archetype* with_both = archetype_of(world, entity);
+        // {Position} emptied, {Position, Velocity} filled.
+        CHECK_FALSE(with_position->alive);
+        CHECK(with_both->alive);
+        CHECK(world.alive_archetype_count == alive_baseline + 1);
+        CHECK(world.dead_archetype_count == dead_baseline + 1);
+
+        // A second entity passing through populated tables changes nothing.
+        const EntityId other = world.new_entity();
+        world.set(other, Position { });
+        world.set(other, Velocity { });
+        CHECK(world.alive_archetype_count == alive_baseline + 1);
+        CHECK(world.dead_archetype_count == dead_baseline + 1);
+        world.delete_entity(other);
+        CHECK(world.alive_archetype_count == alive_baseline + 1);
+        CHECK(world.dead_archetype_count == dead_baseline + 1);
+    }
+    SUBCASE("the counts always add up to the archetype slots in use") {
+        for (usz i = 0; i < 8; i++) {
+            const EntityId e = world.new_entity();
+            world.set(e, Health { static_cast<i32>(i) });
+            if (i % 2 == 0) {
+                world.add<TagA>(e);
+            }
+            if (i % 3 == 0) {
+                world.delete_entity(e);
+            }
+        }
+        CHECK(world.alive_archetype_count + world.dead_archetype_count == world.archetypes.alive_count);
+    }
+
+    world.free();
+    CHECK(world.alive_archetype_count == 0);
+    CHECK(world.dead_archetype_count == 0);
+    CHECK_ARENA_CLEAN();
+}
+
+TEST_CASE("ecs/archetype: mark_dead stamps died_at with the world clock") {
+    World world;
+    world.init();
+
+    const EntityId entity = world.new_entity();
+    world.set(entity, Position { });
+    Archetype* archetype = archetype_of(world, entity);
+    REQUIRE(archetype->alive);
+
+    world.tick(5);
+    world.tick(2);
+    CHECK(world.clock == 7);
+
+    SUBCASE("emptying the archetype records the time of death") {
+        world.remove<Position>(entity);
+        CHECK_FALSE(archetype->alive);
+        CHECK(archetype->died_at == 7);
+
+        world.tick();
+        world.set(entity, Position { });
+        world.remove<Position>(entity);
+        CHECK(archetype->died_at == 8);
+    }
+    SUBCASE("a freshly created archetype is stamped dead at creation") {
+        // Build the table without an entity so it stays empty.
+        Archetype* fresh = archetype->traverse_add(&world, world.id<Velocity>());
+        REQUIRE(fresh != archetype);
+        CHECK_FALSE(fresh->alive);
+        CHECK(fresh->died_at == 7);
+        CHECK(fresh->data.entity_count == 0);
+    }
+    SUBCASE("mark_alive / mark_dead are idempotent") {
+        const usz alive_count = world.alive_archetype_count;
+        const usz dead_count = world.dead_archetype_count;
+        archetype->mark_alive();
+        archetype->mark_alive();
+        CHECK(world.alive_archetype_count == alive_count);
+        CHECK(world.dead_archetype_count == dead_count);
+
+        world.remove<Position>(entity);
+        REQUIRE_FALSE(archetype->alive);
+        CHECK(world.alive_archetype_count == alive_count - 1);
+        CHECK(world.dead_archetype_count == dead_count + 1);
+        world.tick();
+        archetype->mark_dead();
+        // Still stamped by the real transition, not the redundant call.
+        CHECK(archetype->died_at == 7);
+        CHECK(world.alive_archetype_count == alive_count - 1);
+        CHECK(world.dead_archetype_count == dead_count + 1);
+    }
+    SUBCASE("free() resets the clock") {
+        world.free();
+        CHECK(world.clock == 0);
+        world.init();
+    }
+
+    world.free();
+    CHECK_ARENA_CLEAN();
+}

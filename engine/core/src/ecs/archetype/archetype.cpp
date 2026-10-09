@@ -101,11 +101,22 @@ void Archetype::ensure_capacity(const usz capacity) {
 }
 
 void Archetype::mark_alive() {
+    if (this->alive) {
+        return;
+    }
     this->alive = true;
+    this->world->alive_archetype_count++;
+    this->world->dead_archetype_count--;
 }
 
 void Archetype::mark_dead() {
+    if (!this->alive) {
+        return;
+    }
     this->alive = false;
+    this->died_at = this->world->clock;
+    this->world->alive_archetype_count--;
+    this->world->dead_archetype_count++;
 }
 
 usz Archetype::push_row(const EntityId entity) {
@@ -274,6 +285,16 @@ Archetype* Archetype::create_archetype(World* world, const ArchetypeType archety
         new_archetype->data.column_count = 0;
         new_archetype->data.entity_count = 0;
         new_archetype->data.entity_capacity = 0;
+    }
+
+    // A new archetype is empty, so it starts dead as of now (a cleanup()
+    // before its first row reclaims it). The root is alive for good.
+    if (column_count > 0) {
+        new_archetype->died_at = world->clock;
+        world->dead_archetype_count++;
+    } else {
+        new_archetype->alive = true;
+        world->alive_archetype_count++;
     }
 
     // The key points at the archetype's own cloned ids, not the caller's.
@@ -446,7 +467,14 @@ void Archetype::destroy() {
 
     this->free();
 
-    this->mark_dead();
+    // Leaves whichever count it was in: the dead one, since it is empty,
+    // except for the root.
+    if (this->alive) {
+        world->alive_archetype_count--;
+    } else {
+        world->dead_archetype_count--;
+    }
+    this->alive = false;
     world->archetypes.delete_element(this->archetype_id);
 }
 

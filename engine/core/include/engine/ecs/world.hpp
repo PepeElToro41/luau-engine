@@ -88,6 +88,19 @@ struct World {
     // archetypes ordered by depth can tell whether its order may be stale.
     u64 hierarchy_generation = 0;
 
+    // Archetype liveness (see Archetype::mark_alive): how many archetypes
+    // hold entity rows and how many are empty. Together they equal
+    // archetypes.alive_count, the number of archetype slots in use. The
+    // root always counts as alive. The archetypes keep them current on
+    // their empty <-> non-empty transitions, so reading them costs nothing.
+    usz alive_archetype_count = 0;
+    usz dead_archetype_count = 0;
+    // The world's notion of now: a counter in whatever unit the owner picks
+    // (frames, ticks, nanoseconds) that only tick() advances. An archetype
+    // stamps it into its died_at when it goes empty, and cleanup(min_age)
+    // measures ages against it. The ECS never reads it otherwise.
+    u64 clock = 0;
+
     World();
     explicit World(BaseAllocator* allocator);
 
@@ -335,6 +348,22 @@ struct World {
     // unknown ids. Component data sizes normally come from the
     // entity's ECS::COMPONENT data instead; see ComponentRecord.
     const TypeInfo* get_type_info(ComponentId id) const;
+
+    // --- Archetype cleanup ---------------------------------------------------
+    // Advances `clock` by `delta`. Call it once per frame (or per whatever
+    // unit `clock` is in) so cleanup(min_age) can tell a table that just
+    // emptied from one that has been empty for a while.
+    void tick(u64 delta = 1);
+    // Destroys every archetype that holds no entity and has been empty for
+    // at least `min_age` ticks of `clock` (0: every empty one), releasing
+    // its rows, edges, record entries and index key. The root stays. Returns
+    // how many were destroyed. A destroyed archetype is rebuilt the next
+    // time an entity needs its type, so for tables whose entities come and
+    // go every frame pass a min_age of a few frames to keep them. Any
+    // Archetype* to an empty archetype is invalid afterwards; entity records
+    // never point at one, and monitors, observers and cached queries drop it
+    // through the ARCHETYPE_DESTROYED listener.
+    usz cleanup(u64 min_age = 0);
 
     // Shuts the world down. First the removed hooks fire for every id of
     // every alive entity, built-ins included, as if each entity were cleared:

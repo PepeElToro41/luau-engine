@@ -286,6 +286,31 @@ void World::fire_shutdown_hooks() {
     this->allocator->free(entities);
 }
 
+void World::tick(const u64 delta) {
+    this->clock += delta;
+}
+
+usz World::cleanup(const u64 min_age) {
+    usz destroyed = 0;
+    // destroy() deletes the slot, which swaps the last alive slot into the
+    // hole; walking backwards, that slot has already been visited.
+    for (usz i = this->archetypes.alive_count; i-- > 0;) {
+        const SparseId id = this->archetypes.get_alive_id(i);
+        Archetype* archetype = this->archetypes.get_element_any(id);
+        if (archetype->alive || archetype == this->root_archetype) {
+            continue;
+        }
+        if (this->clock - archetype->died_at < min_age) {
+            continue;
+        }
+        archetype->destroy();
+        if (!this->archetypes.is_alive(id)) {
+            destroyed++;
+        }
+    }
+    return destroyed;
+}
+
 void World::free() {
     this->fire_shutdown_hooks();
 
@@ -297,6 +322,9 @@ void World::free() {
     }
     this->archetypes.free();
     this->root_archetype = nullptr;
+    this->alive_archetype_count = 0;
+    this->dead_archetype_count = 0;
+    this->clock = 0;
 
     // Component records own maps (and possibly a pair record); release those
     // before dropping the list that holds them.
