@@ -21,11 +21,17 @@
 //            .with<Name>().src(parent).up(ECS::CHILD_OF)  // on another source
 //            .without<Dead>();
 //
+//     // Transform propagation: the parent's Transform (nullptr for roots),
+//     // every parent yielded before its children.
+//     builder.term<Transform>()
+//            .term<Transform>().cascade(ECS::CHILD_OF).optional();
+//
 // term() adds an output term, with() / without() add constraint terms; all
 // three come in the same shapes as the World entity operations, plus shapes
-// that take a QueryVar in place of an id. optional(), bor(), src() and up()
-// modify the term added last, so with the variadic with(a, b) they apply to
-// `b` only. Variables come from var(); THIS (QUERY_THIS) is always variable 0.
+// that take a QueryVar in place of an id. optional(), bor(), src(), up(),
+// cascade() and desc() modify the term added last, so with the variadic
+// with(a, b) they apply to `b` only. Variables come from var(); THIS
+// (QUERY_THIS) is always variable 0.
 //
 // The builder owns its term list on the world's allocator: call free() when
 // done with it, or build() to turn it into a DynamicQuery (which consumes
@@ -99,6 +105,13 @@ struct QueryBuilder {
     QueryBuilder& src(QueryVar source);
     // The id may also be found by walking `relation` up from the source.
     QueryBuilder& up(Id relation = ECS::CHILD_OF);
+    // up(relation) that also orders the results by depth along `relation`:
+    // every entity's archetype is yielded before those of its descendants.
+    // Without optional() the entities with no ancestor holding the id are
+    // excluded like up(); with it they come first. One per query, on THIS.
+    QueryBuilder& cascade(Id relation = ECS::CHILD_OF);
+    // Reverses the cascade: deepest first.
+    QueryBuilder& desc();
 
     // --- Variables -----------------------------------------------------------
     // The variable called `name`, creating it on first use. "this" is

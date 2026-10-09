@@ -80,7 +80,8 @@ void DynamicQuery::ensure_cache() {
         terms[i] = this->program.terms[this->program.this_terms[i]];
     }
     this->cache = QUERY_SCAN::create_cache(this->world, this->program.with_ids, this->program.with_count,
-        this->program.without_ids, this->program.without_count, terms, this->program.this_term_count, this->program.allocator);
+        this->program.without_ids, this->program.without_count, terms, this->program.this_term_count, this->program.allocator,
+        this->program.cascade_relation, this->program.cascade_desc);
 }
 
 // --- Variables ---------------------------------------------------------------

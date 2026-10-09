@@ -118,6 +118,21 @@ QueryBuilder& QueryBuilder::up(const Id relation) {
     return *this;
 }
 
+QueryBuilder& QueryBuilder::cascade(const Id relation) {
+    if (QueryTerm* term = this->last("cascade")) {
+        term->traverse = relation;
+        term->flags |= TERM_UP | TERM_CASCADE;
+    }
+    return *this;
+}
+
+QueryBuilder& QueryBuilder::desc() {
+    if (QueryTerm* term = this->last("desc")) {
+        term->flags |= TERM_DESC;
+    }
+    return *this;
+}
+
 // --- Variables ---------------------------------------------------------------
 
 QueryVar QueryBuilder::var(const char* name) {

@@ -2,8 +2,10 @@
 
 #include "engine/ecs/archetype/archetype.hpp"
 #include "engine/ecs/archetype/archetype_candidates.hpp"
+#include "engine/ecs/component_record.hpp"
 #include "engine/ecs/ecs.hpp"
 #include "engine/ecs/entity_index.hpp"
+#include "engine/ecs/hierarchy.hpp"
 #include "engine/ecs/world.hpp"
 #include "engine/memory/temporal_allocator.hpp"
 
@@ -28,12 +30,14 @@ struct Binding {
 struct OpState {
     // SELECT: index into the candidate list.
     usz cursor = 0;
-    // AND / UP: the column matched last, where the next pass resumes from.
+    // AND: the column matched last, where the next pass resumes from.
     usz column = NO_COLUMN;
-    // UP: the ancestor found for the current source.
-    Archetype* archetype = nullptr;
-    usz row = 0;
-    EntityId entity = 0;
+    // UP: the reachable set of the parent node the term matched in (nullptr
+    // when no ancestor matched), the entry matched last, and the rank every
+    // match must have: that of the nearest ancestor holding a match.
+    const ReachableSet* reach = nullptr;
+    usz reach_index = 0;
+    u32 reach_rank = 0;
     // Optional ops: whether anything matched for the current source, and
     // whether the "nothing matched" result was already given.
     bool matched = false;
@@ -63,6 +67,10 @@ struct VmState {
     // ceiling (see QUERY_SCAN for the same scheme).
     ArchetypeCandidate* candidates = nullptr;
     usz candidate_count = 0;
+    // cascade(): begin() already ran the matcher over the candidates and
+    // sorted them by depth (sort_candidates), so SELECT only skips the ones
+    // that emptied since.
+    bool preselected = false;
     // The plain THIS term whose record the candidates came from, or
     // QUERY_OP_NONE: the candidate already names its column, so YIELD need
     // not look it up. `candidate_column` is that column for the archetype
@@ -224,37 +232,70 @@ bool bind_from_id(VmState* state, const QueryOp& op, const Id id) {
     return true;
 }
 
-// Depth-first over the (relation, *) pairs of `archetype`: the first
-// ancestor whose archetype holds an id matching `pattern`. The pairs of one
-// relation are contiguous in the sorted type, starting at the (R, *) alias.
-bool traverse_up(World* world, const Archetype* archetype, const EntityIdLow relation, const Id pattern, const usz depth, Binding* out) {
-    if (depth >= MAX_TRAVERSAL_DEPTH) {
-        fprintf(stderr, "[ecs] error: query up(%llx) walked %llu levels; the relation has a cycle\n",
-            static_cast<unsigned long long>(relation), static_cast<unsigned long long>(depth));
-        return false;
+// The next entry of `set` at or after `start` matching `pattern` with the
+// given rank, or set->count.
+usz next_reach(const ReachableSet* set, const Id pattern, usz start, const u32 rank) {
+    while (true) {
+        start = HIERARCHY::find_reachable(*set, pattern, start);
+        if (start >= set->count() || set->entries[start].rank == rank) {
+            return start;
+        }
+        start++;
     }
+}
+
+// Where an up() term from `archetype` finds `pattern`: the (relation, *)
+// pairs are taken in column order and each parent node's reachable set is
+// asked; the first set with a match wins (depth-first over several
+// parents). Within it, the matches on the nearest ancestor are the ones with
+// the lowest rank; `out_index` is the first of those. False when no
+// ancestor holds a match.
+bool reach_up(World* world, const Archetype* archetype, const EntityIdLow relation, const Id pattern, const ReachableSet** out_set, usz* out_index, u32* out_rank) {
     const ArchetypeType& type = archetype->type;
     const usz* first = archetype->columns_index.find(ECS::PAIR(relation, ECS::WILDCARD));
     if (first == nullptr) {
         return false;
     }
     for (usz i = *first; i < type.id_count && ECS::PAIR_FIRST(type.ids[i]) == relation; i++) {
-        EntityId target;
-        const EntityRecord* record = world->entity_index.resolve_low(ECS::PAIR_SECOND(type.ids[i]), &target);
-        if (record == nullptr || record->archetype == nullptr) {
-            continue;
+        ComponentRecord* record = archetype->records[i];
+        const ReachableSet* set = HIERARCHY::reachable(world, record);
+        if (set != nullptr) {
+            const usz index = HIERARCHY::find_reachable(*set, pattern, 0);
+            if (index < set->count()) {
+                u32 rank = set->entries[index].rank;
+                *out_set = set;
+                *out_index = index;
+                // A concrete id has one entry; a pattern may match several
+                // ancestors, and the nearest (lowest rank) is the one meant.
+                const bool concrete = ECS::IS_PAIR(pattern) ? !ECS::PAIR_HAS_WILDCARD(pattern) : !ECS::IS_WILDCARD(pattern);
+                if (!concrete) {
+                    for (usz k = HIERARCHY::find_reachable(*set, pattern, index + 1); k < set->count(); k = HIERARCHY::find_reachable(*set, pattern, k + 1)) {
+                        if (set->entries[k].rank < rank) {
+                            rank = set->entries[k].rank;
+                        }
+                    }
+                    *out_index = next_reach(set, pattern, index, rank);
+                }
+                *out_rank = rank;
+                return true;
+            }
         }
-        if (find_column(record->archetype, pattern, 0) != NO_COLUMN) {
-            out->entity = target;
-            out->archetype = record->archetype;
-            out->row = record->archetype_row;
-            return true;
-        }
-        if (traverse_up(world, record->archetype, relation, pattern, depth + 1, out)) {
-            return true;
+        if (record->is_exclusive()) {
+            break;
         }
     }
     return false;
+}
+
+// The source entity of a reachable entry, if it is alive. The set is
+// current (any move of a source dirties it), so the entry's column is the
+// id's column in the source's archetype; only the row has to be read live.
+const EntityRecord* reach_source(World* world, const ReachableEntry& entry) {
+    const EntityRecord* record = world->entity_index.get_record_alive(entry.source);
+    if (record == nullptr || record->archetype == nullptr) {
+        return nullptr;
+    }
+    return record;
 }
 
 // --- Ops ---------------------------------------------------------------------
@@ -284,10 +325,17 @@ Archetype* select_next(VmState* state, usz& cursor, usz* out_column) {
 
     if (state->cache != nullptr) {
         const QueryScanCache* cache = state->cache;
-        while (cursor < state->cache_limit && cursor < cache->matches.count) {
-            const QueryScanMatch& match = cache->matches[cursor];
-            const usz index = cursor;
+        // An ordered cache is walked through `order`; an index can point past
+        // the list when a match was removed during the walk.
+        const bool ordered = cache->cascade_relation != 0;
+        const usz available = ordered ? cache->order.count : cache->matches.count;
+        while (cursor < state->cache_limit && cursor < available) {
+            const usz index = ordered ? cache->order[cursor] : cursor;
             cursor++;
+            if (index >= cache->matches.count) {
+                continue;
+            }
+            const QueryScanMatch& match = cache->matches[index];
             if (archetypes.get_element_alive(match.id) != match.archetype || match.archetype->data.entity_count == 0) {
                 continue;
             }
@@ -315,7 +363,7 @@ Archetype* select_next(VmState* state, usz& cursor, usz* out_column) {
             archetype = archetypes.get_element_any(archetypes.get_alive_id(cursor));
             cursor++;
         }
-        if (archetype->data.entity_count == 0 || !program->matcher.matches(archetype)) {
+        if (archetype->data.entity_count == 0 || (!state->preselected && !program->matcher.matches(archetype))) {
             continue;
         }
         *out_column = column;
@@ -442,28 +490,61 @@ bool eval_not(VmState* state, const QueryOp& op, const bool redo) {
     return true;
 }
 
+// eval_match over a reachable set instead of an archetype: the entries
+// matching the term with the rank reach_up chose, from the one found (or
+// the one after the last, on redo), binding the op's variables from each.
+bool eval_match_reachable(VmState* state, const QueryOp& op, OpState& st, const bool redo) {
+    const QueryTerm& term = state->program->terms[op.term];
+    const bool binds = op.bind_first != QUERY_OP_NONE || op.bind_second != QUERY_OP_NONE;
+    if (redo && !binds) {
+        return false;
+    }
+    const Id pattern = resolve_id(state, term, &op);
+    const ReachableSet* set = st.reach;
+    // Only an output term needs the source's row; a constraint term is
+    // answered by the entry itself.
+    const bool needs_row = state->program->term_fields[op.term] != QUERY_OP_NONE;
+    usz index = redo ? next_reach(set, pattern, st.reach_index + 1, st.reach_rank) : st.reach_index;
+    while (index < set->count()) {
+        const Id id = set->ids[index];
+        const ReachableEntry& entry = set->entries[index];
+        if (!needs_row) {
+            if (!binds || bind_from_id(state, op, id)) {
+                st.reach_index = index;
+                state->ids[op.term] = id;
+                state->sources[op.term] = entry.source;
+                return true;
+            }
+        } else {
+            const EntityRecord* record = reach_source(state->world, entry);
+            if (record != nullptr && (!binds || bind_from_id(state, op, id))) {
+                st.reach_index = index;
+                write_result(state, op.term, record->archetype, record->archetype_row, entry.column, entry.source, false);
+                return true;
+            }
+        }
+        index = next_reach(set, pattern, index + 1, st.reach_rank);
+    }
+    return false;
+}
+
 bool eval_up(VmState* state, const QueryOp& op, OpState& st, const bool redo) {
     const QueryTerm& term = state->program->terms[op.term];
     if (!redo) {
         st.matched = false;
         st.none_given = false;
-        st.archetype = nullptr;
+        st.reach = nullptr;
         Binding source;
         if (source_of(state, term, &source)) {
             const Id pattern = resolve_id(state, term, &op);
-            Binding ancestor;
-            if (traverse_up(state->world, source.archetype, ECS::ENTITY_LOW(term.traverse), pattern, 0, &ancestor)) {
-                st.archetype = ancestor.archetype;
-                st.row = ancestor.row;
-                st.entity = ancestor.entity;
-            }
+            reach_up(state->world, source.archetype, ECS::ENTITY_LOW(term.traverse), pattern, &st.reach, &st.reach_index, &st.reach_rank);
         }
     } else if (st.none_given) {
         return false;
     }
 
     if (term.is_excluded()) {
-        if (redo || st.archetype != nullptr) {
+        if (redo || st.reach != nullptr) {
             return false;
         }
         write_none(state, op.term);
@@ -471,8 +552,8 @@ bool eval_up(VmState* state, const QueryOp& op, OpState& st, const bool redo) {
     }
 
     bool ok = false;
-    if (st.archetype != nullptr) {
-        ok = eval_match(state, op, st, st.archetype, st.row, st.entity, false, redo);
+    if (st.reach != nullptr) {
+        ok = eval_match_reachable(state, op, st, redo);
     }
     if (ok) {
         st.matched = true;
@@ -485,26 +566,35 @@ bool eval_up(VmState* state, const QueryOp& op, OpState& st, const bool redo) {
 bool eval_alternative(VmState* state, const u32 index) {
     const QueryTerm& term = state->program->terms[index];
     Binding source;
-    Binding where;
-    bool have_where = false;
     if (source_of(state, term, &source)) {
         const Id pattern = resolve_id(state, term, nullptr);
+        bool found = false;
         if (term.traverses()) {
-            have_where = traverse_up(state->world, source.archetype, ECS::ENTITY_LOW(term.traverse), pattern, 0, &where);
-        } else {
-            where = source;
-            have_where = true;
-        }
-        if (have_where) {
-            const usz column = find_column(where.archetype, pattern, 0);
-            if (column != NO_COLUMN) {
-                if (term.is_excluded()) {
-                    return false;
+            const ReachableSet* set;
+            usz at;
+            u32 rank;
+            if (reach_up(state->world, source.archetype, ECS::ENTITY_LOW(term.traverse), pattern, &set, &at, &rank)) {
+                const ReachableEntry& entry = set->entries[at];
+                const EntityRecord* record = reach_source(state->world, entry);
+                if (record != nullptr) {
+                    found = true;
+                    if (!term.is_excluded()) {
+                        write_result(state, index, record->archetype, record->archetype_row, entry.column, entry.source, false);
+                    }
                 }
-                const bool self = term.src_var == QUERY_THIS && !term.traverses();
-                write_result(state, index, where.archetype, where.row, column, self ? 0 : where.entity, self);
-                return true;
             }
+        } else {
+            const usz column = find_column(source.archetype, pattern, 0);
+            if (column != NO_COLUMN) {
+                found = true;
+                if (!term.is_excluded()) {
+                    const bool self = term.src_var == QUERY_THIS;
+                    write_result(state, index, source.archetype, source.row, column, self ? 0 : source.entity, self);
+                }
+            }
+        }
+        if (found) {
+            return !term.is_excluded();
         }
     }
     if (term.is_excluded()) {
@@ -701,14 +791,59 @@ bool is_trivial(const QueryProgram* program) {
     return program->op_count == 2 && program->ops[0].kind == QUERY_OP_SELECT && program->ops[1].kind == QUERY_OP_YIELD;
 }
 
-QueryIter start(World* world, const QueryProgram* program, const QueryScanCache* cache, const EntityId entity, BaseAllocator* allocator) {
+// cascade(): replaces SELECT's candidates with the archetypes that pass the
+// matcher and have rows, in depth order along the cascade relation. The
+// filter comes first so no depth is read for an archetype SELECT would
+// drop anyway; the record's column travels with each candidate so YIELD
+// still skips the lookup for the record term. Everything is on the
+// iteration allocator.
+void sort_candidates(VmState* state, const ArchetypeCandidates& candidates, BaseAllocator* allocator) {
+    World* world = state->world;
+    const QueryProgram* program = state->program;
+    const usz total = candidates.narrowed ? candidates.count : world->archetypes.alive_count;
+
+    ArchetypeCandidate* accepted = allocator->allocate_array<ArchetypeCandidate>(total + 1);
+    Archetype** archetypes = allocator->allocate_array<Archetype*>(total + 1);
+    usz count = 0;
+    for (usz i = 0; i < total; i++) {
+        ArchetypeCandidate candidate;
+        if (candidates.narrowed) {
+            candidate = candidates.entries[i];
+            candidate.archetype = ARCHETYPE_CANDIDATES::archetype_of(world, candidate);
+        } else {
+            candidate.id = world->archetypes.get_alive_id(i);
+            candidate.archetype = world->archetypes.get_element_any(candidate.id);
+            candidate.column = NO_COLUMN;
+        }
+        // The root never has rows, so it drops out here with the empty ones.
+        if (candidate.archetype == nullptr || candidate.archetype->data.entity_count == 0 || !program->matcher.matches(candidate.archetype)) {
+            continue;
+        }
+        accepted[count] = candidate;
+        archetypes[count] = candidate.archetype;
+        count++;
+    }
+
+    u32* order = allocator->allocate_array<u32>(count + 1);
+    HIERARCHY::order_by_depth(world, archetypes, count, program->cascade_relation, program->cascade_desc, order);
+    ArchetypeCandidate* sorted = allocator->allocate_array<ArchetypeCandidate>(count + 1);
+    for (usz i = 0; i < count; i++) {
+        sorted[i] = accepted[order[i]];
+    }
+    state->candidates = sorted;
+    state->candidate_count = count;
+    state->preselected = true;
+}
+
+QueryIter start(World* world, const QueryProgram* program, QueryScanCache* cache, const EntityId entity, BaseAllocator* allocator) {
     QueryIter it;
     it.world = world;
     it.next = next_nothing;
     if (!program->ok) {
         return it;
     }
-    if (cache != nullptr && (!cache->ok || cache->term_count != program->this_term_count)) {
+    const bool cascades = program->cascade_term != QUERY_OP_NONE;
+    if (cache != nullptr && (!cache->ok || cache->term_count != program->this_term_count || (cache->cascade_relation != 0) != cascades)) {
         fprintf(stderr, "[ecs] error: query VM given a cache that was not built from its program; ignoring it\n");
         cache = nullptr;
     }
@@ -744,7 +879,12 @@ QueryIter start(World* world, const QueryProgram* program, const QueryScanCache*
 
     if (program->binds_this && entity == 0 && cache != nullptr) {
         state->cache = cache;
-        state->cache_limit = cache->matches.count;
+        if (cascades) {
+            QUERY_SCAN::ensure_order(cache);
+            state->cache_limit = cache->order.count;
+        } else {
+            state->cache_limit = cache->matches.count;
+        }
     } else if (program->binds_this && entity == 0) {
         const ArchetypeCandidates candidates = ARCHETYPE_CANDIDATES::collect(world, program->with_ids, program->with_count, allocator);
         if (candidates.narrowed) {
@@ -760,6 +900,9 @@ QueryIter start(World* world, const QueryProgram* program, const QueryScanCache*
         } else {
             state->candidates = nullptr;
             state->candidate_count = world->archetypes.alive_count;
+        }
+        if (cascades) {
+            sort_candidates(state, candidates, allocator);
         }
     }
 
@@ -787,7 +930,7 @@ QueryIter begin(World* world, const QueryProgram* program, BaseAllocator* alloca
     return start(world, program, nullptr, 0, allocator);
 }
 
-QueryIter begin(World* world, const QueryProgram* program, const QueryScanCache* cache, BaseAllocator* allocator) {
+QueryIter begin(World* world, const QueryProgram* program, QueryScanCache* cache, BaseAllocator* allocator) {
     return start(world, program, cache, 0, allocator);
 }
 

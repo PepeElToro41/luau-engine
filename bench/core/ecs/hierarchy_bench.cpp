@@ -111,3 +111,78 @@ BENCH_CASE("ecs/hierarchy: moves of a parent") {
     all.free();
     world.free();
 }
+
+BENCH_CASE("ecs/hierarchy: depth lookup, exclusive relation against a non-exclusive one") {
+    World world;
+    world.init();
+
+    // CHILD_OF is exclusive; `shared` is traversable only, so its pair loop
+    // cannot stop at the first pair without checking the next id. Both get
+    // a chain four deep, and the entity at the bottom either holds nothing
+    // else or four pairs of unrelated relations. Pairs sort by relation id,
+    // so where those land matters: `lower` relations (created before
+    // `shared`) sort before the chain's pair and the loop ends at the end
+    // of the type; `unrelated` ones (created after it, like every user
+    // relation against CHILD_OF) sort right after it, and the loop has to
+    // load one of them to see it is another relation.
+    EntityId lower[4];
+    for (usz i = 0; i < 4; i++) {
+        lower[i] = world.new_entity();
+    }
+    const EntityId shared = world.new_entity();
+    world.add(shared, ECS::TRAVERSABLE);
+    EntityId unrelated[4];
+    EntityId targets[4];
+    for (usz i = 0; i < 4; i++) {
+        unrelated[i] = world.new_entity();
+        targets[i] = world.new_entity();
+    }
+
+    auto chain = [&](const Id relation, const bool with_unrelated, const bool with_lower = false) {
+        EntityId parent = world.new_entity();
+        for (usz level = 0; level < 3; level++) {
+            const EntityId next = world.new_entity();
+            world.add(next, world.pair(relation, parent));
+            parent = next;
+        }
+        const EntityId leaf = world.new_entity();
+        world.add(leaf, world.pair(relation, parent));
+        world.set<Position>(leaf, { 1, 1 });
+        if (with_unrelated) {
+            for (usz i = 0; i < 4; i++) {
+                world.add(leaf, world.pair(unrelated[i], targets[i]));
+            }
+        }
+        if (with_lower) {
+            for (usz i = 0; i < 4; i++) {
+                world.add(leaf, world.pair(lower[i], targets[i]));
+            }
+        }
+        world.depth(leaf, relation);
+        return leaf;
+    };
+
+    const EntityId child_of_plain = chain(ECS::CHILD_OF, false);
+    const EntityId child_of_pairs = chain(ECS::CHILD_OF, true);
+    const EntityId shared_plain = chain(shared, false);
+    const EntityId shared_pairs = chain(shared, true);
+    const EntityId shared_lower = chain(shared, false, true);
+
+    bench.run("depth, CHILD_OF (exclusive), no other pairs", [&] {
+        ankerl::nanobench::doNotOptimizeAway(world.depth(child_of_plain, ECS::CHILD_OF));
+    });
+    bench.run("depth, CHILD_OF (exclusive), 4 unrelated pairs", [&] {
+        ankerl::nanobench::doNotOptimizeAway(world.depth(child_of_pairs, ECS::CHILD_OF));
+    });
+    bench.run("depth, traversable only, no other pairs", [&] {
+        ankerl::nanobench::doNotOptimizeAway(world.depth(shared_plain, shared));
+    });
+    bench.run("depth, traversable only, 4 unrelated pairs sorting after", [&] {
+        ankerl::nanobench::doNotOptimizeAway(world.depth(shared_pairs, shared));
+    });
+    bench.run("depth, traversable only, 4 unrelated pairs sorting before", [&] {
+        ankerl::nanobench::doNotOptimizeAway(world.depth(shared_lower, shared));
+    });
+
+    world.free();
+}

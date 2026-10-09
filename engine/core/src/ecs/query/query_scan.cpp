@@ -6,6 +6,7 @@
 #include "engine/ecs/archetype/archetype_matcher.hpp"
 #include "engine/ecs/ecs.hpp"
 #include "engine/ecs/entity_index.hpp"
+#include "engine/ecs/hierarchy.hpp"
 #include "engine/ecs/world.hpp"
 #include "engine/memory/temporal_allocator.hpp"
 
@@ -271,6 +272,7 @@ struct CacheState {
 // is asked, which would copy it on every add).
 void cache_add(QueryScanCache* cache, Archetype* archetype) {
     cache->matches.push(QueryScanMatch { archetype->archetype_id, archetype });
+    cache->order_dirty = true;
     const usz offset = cache->columns.count;
     const usz needed = offset + cache->term_count;
     if (needed > cache->columns.capacity) {
@@ -298,6 +300,7 @@ void cache_remove(QueryScanCache* cache, const Archetype* archetype) {
         }
         cache->matches.resize(last);
         cache->columns.resize(last * term_count);
+        cache->order_dirty = true;
         return;
     }
 }
@@ -398,10 +401,12 @@ QueryScanCache* create_cache(World* world, const QueryTerm* terms, const usz ter
     return create_cache(world, split.with, split.with_count, split.without, split.without_count, terms, term_count, allocator);
 }
 
-QueryScanCache* create_cache(World* world, const Id* with, const usz with_count, const Id* without, const usz without_count, const QueryTerm* terms, const usz term_count, BaseAllocator* allocator) {
+QueryScanCache* create_cache(World* world, const Id* with, const usz with_count, const Id* without, const usz without_count, const QueryTerm* terms, const usz term_count, BaseAllocator* allocator, const EntityIdLow cascade_relation, const bool cascade_desc) {
     QueryScanCache* cache = new (allocator->allocate_array<QueryScanCache>(1)) QueryScanCache(allocator);
     cache->world = world;
     cache->ok = true;
+    cache->cascade_relation = cascade_relation;
+    cache->cascade_desc = cascade_desc;
 
     cache->terms = allocator->allocate_array<QueryTerm>(term_count + 1);
     cache->term_count = term_count;
@@ -456,9 +461,48 @@ void destroy_cache(QueryScanCache* cache) {
     }
     cache->matches.free();
     cache->columns.free();
+    cache->order.free();
     BaseAllocator* allocator = cache->allocator;
     allocator->free(cache->terms);
     allocator->free(cache);
+}
+
+void ensure_order(QueryScanCache* cache) {
+    if (cache == nullptr || !cache->ok || cache->cascade_relation == 0) {
+        return;
+    }
+    World* world = cache->world;
+    if (!cache->order_dirty && cache->hierarchy_generation == world->hierarchy_generation) {
+        return;
+    }
+
+    // Room for every match first, on the cache's allocator, so nothing is
+    // allocated there while the scratch TemporalAllocator below is alive.
+    const usz count = cache->matches.count;
+    cache->order.resize(count);
+    usz live = 0;
+    {
+        TemporalAllocator temp = TemporalAllocator::create();
+        Archetype** archetypes = temp.allocate_array<Archetype*>(count + 1);
+        u32* indices = temp.allocate_array<u32>(count + 1);
+        u32* sorted = temp.allocate_array<u32>(count + 1);
+        for (usz i = 0; i < count; i++) {
+            const QueryScanMatch& match = cache->matches[i];
+            if (world->archetypes.get_element_alive(match.id) != match.archetype) {
+                continue;
+            }
+            archetypes[live] = match.archetype;
+            indices[live] = static_cast<u32>(i);
+            live++;
+        }
+        HIERARCHY::order_by_depth(world, archetypes, live, cache->cascade_relation, cache->cascade_desc, sorted);
+        for (usz i = 0; i < live; i++) {
+            cache->order[i] = indices[sorted[i]];
+        }
+    }
+    cache->order.resize(live);
+    cache->order_dirty = false;
+    cache->hierarchy_generation = world->hierarchy_generation;
 }
 
 QueryIter begin(QueryScanCache* cache, BaseAllocator* allocator) {

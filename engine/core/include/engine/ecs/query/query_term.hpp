@@ -58,6 +58,13 @@ enum QueryTermFlags : u32 {
     // The id may be found on an entity reached by following `traverse` up
     // from the source (up()).
     TERM_UP = 1 << 4,
+    // up() that also orders the results: the matched entities come out by
+    // ascending depth along `traverse`, so an ancestor's archetype is always
+    // yielded before its descendants' (cascade()). Always with TERM_UP; one
+    // per query, on THIS.
+    TERM_CASCADE = 1 << 5,
+    // Reverses a cascade: deepest first (desc()).
+    TERM_DESC = 1 << 6,
 };
 
 struct QueryTerm {
@@ -83,6 +90,8 @@ struct QueryTerm {
     bool is_excluded() const { return (this->flags & TERM_EXCLUDE) != 0; }
     bool is_or() const { return (this->flags & TERM_OR) != 0; }
     bool traverses() const { return (this->flags & TERM_UP) != 0; }
+    bool cascades() const { return (this->flags & TERM_CASCADE) != 0; }
+    bool descends() const { return (this->flags & TERM_DESC) != 0; }
     // The term reads only the matched entity's own archetype: THIS source,
     // no traversal. Every term of a World::query<Ts...>() is.
     bool is_on_this() const { return this->src_var == QUERY_THIS && !this->traverses(); }

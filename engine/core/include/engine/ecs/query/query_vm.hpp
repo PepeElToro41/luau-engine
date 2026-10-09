@@ -45,6 +45,23 @@ struct World;
 // test, and the columns of the plain THIS terms come from the cache instead
 // of a lookup per archetype. The rest of the program runs as before.
 //
+// A program with a cascade() term fixes SELECT's order: begin() filters the
+// candidates through the matcher and sorts them by depth along the cascade
+// relation (HIERARCHY::order_by_depth, one counting pass on `allocator`),
+// and SELECT walks that list; with a cache it walks the cache's `order`
+// instead, brought up to date by QUERY_SCAN::ensure_order first, which
+// costs nothing while no depth changed and no archetype came or went. Every
+// entity of an archetype shares the depth, so ordering the archetypes
+// orders the entities: parents before children, or the reverse with
+// desc(). begin_for() and matches() ignore the order.
+//
+// An up() term does not walk the hierarchy: the parent pairs of the source's
+// archetype each have a node with a reachable set (see hierarchy.hpp), and
+// the first node whose set has an entry matching the term wins, which is the
+// nearest ancestor holding anything matching. A term that binds variables
+// from a wildcard iterates every match of that one ancestor, nothing from
+// the ancestors beyond it.
+//
 // Everything the iterator needs is on `allocator`, which must outlive the
 // iteration; nothing is freed explicitly. The candidate archetypes (or the
 // cached matches) are fixed when begin() is called, like QUERY_SCAN; pair
@@ -52,14 +69,12 @@ struct World;
 // walk have the same caveats.
 namespace QUERY_VM {
 
-// Depth at which an up() walk gives up and reports a cycle.
-constexpr usz MAX_TRAVERSAL_DEPTH = 1024;
-
 QueryIter begin(World* world, const QueryProgram* program, BaseAllocator* allocator);
 // The same over `cache`, whose matcher is the program's and whose terms are
-// the program's plain THIS terms in order (program->this_terms). nullptr
-// means no cache.
-QueryIter begin(World* world, const QueryProgram* program, const QueryScanCache* cache, BaseAllocator* allocator);
+// the program's plain THIS terms in order (program->this_terms), ordered
+// when the program cascades. nullptr means no cache. The cache's order is
+// refreshed here, which is why it is not const.
+QueryIter begin(World* world, const QueryProgram* program, QueryScanCache* cache, BaseAllocator* allocator);
 
 // Like begin(), with THIS bound to `entity` alone instead of to every
 // candidate archetype: SELECT checks that entity's archetype against the

@@ -11,6 +11,7 @@
 #include <functional>
 
 struct World;
+struct ComponentRecord;
 struct EntityRecord;
 
 // Id of a monitor (see monitor.hpp) or an observer (see observer.hpp); both
@@ -143,6 +144,12 @@ struct Archetype {
 
     ArchetypeId archetype_id = 0;
     ArchetypeType type { };
+    // records[i] is the ComponentRecord of type.ids[i], one per column, set
+    // by create_archetype: the record a column's id resolves to without a
+    // lookup in the world's record map. Valid for the archetype's lifetime,
+    // since a record is only deleted once no archetype mentions its id
+    // (see entity_cleanup.cpp). nullptr for the root.
+    ComponentRecord** records = nullptr;
     // Mask + bloom summary of `type`, built by create_archetype and read by
     // ArchetypeMatcher so most archetypes are accepted or rejected without
     // scanning the ids.

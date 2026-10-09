@@ -70,6 +70,15 @@ struct World;
 // terms whose columns are kept, and the query VM walks the matches in
 // SELECT's place (QUERY_VM::begin with a cache) while still evaluating the
 // rest of the program per archetype.
+//
+// For a cascade() query the cache also keeps `order`: the indices of the
+// matches sorted by their depth along the cascade relation
+// (HIERARCHY::order_by_depth). The match list itself stays in arrival order,
+// so adding and removing matches is as cheap as before; the order is
+// rebuilt lazily by ensure_order(), which the VM calls at begin(), and only
+// when a match was added or removed since (order_dirty) or some hierarchy
+// depth was invalidated since (World::hierarchy_generation moved). A frame
+// that changes no depth and creates no archetype sorts nothing.
 
 // One matched archetype. The columns of the terms in it sit in
 // QueryScanCache::columns at index * term_count.
@@ -104,7 +113,17 @@ struct QueryScanCache {
     // archetype, or the archetype's id count for an excluded term.
     DynamicArray<usz> columns;
 
-    explicit QueryScanCache(BaseAllocator* allocator) : allocator(allocator), matches(allocator), columns(allocator) {}
+    // cascade() caches: the relation (low id) whose depth orders the
+    // matches, 0 for a cache in arrival order. `order` is the match indices
+    // in that order as of the last ensure_order(); `order_dirty` and
+    // `hierarchy_generation` say whether it still is.
+    EntityIdLow cascade_relation = 0;
+    bool cascade_desc = false;
+    bool order_dirty = true;
+    u64 hierarchy_generation = 0;
+    DynamicArray<u32> order;
+
+    explicit QueryScanCache(BaseAllocator* allocator) : allocator(allocator), matches(allocator), columns(allocator), order(allocator) {}
 };
 
 namespace QUERY_SCAN {
@@ -127,11 +146,16 @@ QueryScanCache* create_cache(World* world, const QueryTerm* terms, usz term_coun
 // The same with the matcher given as id lists (as a QueryProgram keeps
 // them) and `terms` only naming the columns to keep per match, excluded
 // terms getting the id-count sentinel and optional ones the column or the
-// sentinel. Nothing is validated: the ids are the caller's matcher.
-QueryScanCache* create_cache(World* world, const Id* with, usz with_count, const Id* without, usz without_count, const QueryTerm* terms, usz term_count, BaseAllocator* allocator);
+// sentinel. Nothing is validated: the ids are the caller's matcher. A
+// non-zero `cascade_relation` (a relation's low id) makes it an ordered
+// cache, see above.
+QueryScanCache* create_cache(World* world, const Id* with, usz with_count, const Id* without, usz without_count, const QueryTerm* terms, usz term_count, BaseAllocator* allocator, EntityIdLow cascade_relation = 0, bool cascade_desc = false);
 // Unregisters the listener and releases everything, the cache included.
 // nullptr is a no-op.
 void destroy_cache(QueryScanCache* cache);
+// Brings `order` up to date if the cache is ordered and stale (see above);
+// a no-op otherwise. Matches whose archetype was destroyed are left out.
+void ensure_order(QueryScanCache* cache);
 
 // A cursor over the cached matches, built on `allocator` like the scan's.
 QueryIter begin(QueryScanCache* cache, BaseAllocator* allocator);

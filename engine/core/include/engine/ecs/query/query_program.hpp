@@ -41,8 +41,18 @@ struct World;
 // cannot be THIS, and a variable used as a source has to be bound by a pair
 // side of an earlier term. A term that walks up only looks at the ancestors
 // of its source, never at the source itself, and takes the first ancestor
-// holding the id in depth-first order over the (relation, *) pairs; with
-// several parents the others are not visited.
+// holding the id in depth-first order over the (relation, *) pairs (through
+// the hierarchy's reachable cache, see hierarchy.hpp); with several parents
+// the others are not visited.
+//
+// A cascade() term is an up() term that also fixes the order SELECT binds
+// THIS in: by ascending depth of the archetype along the term's relation
+// (HIERARCHY::depth; descending with desc()). Every entity of an archetype
+// shares that depth, and a child is always exactly one deeper than its
+// deepest parent, so an ancestor's archetype is bound before any
+// descendant's and a pass that propagates data down the hierarchy sees the
+// parents' results first. The program records the term; the VM does the
+// ordering (see query_vm.hpp).
 
 constexpr u32 QUERY_OP_NONE = 0xFFFFFFFFu;
 // Variables a program can have, THIS included: the compiler tracks which are
@@ -119,6 +129,12 @@ struct QueryProgram {
     usz this_term_count = 0;
     // Whether the program starts with SELECT, i.e. some term is on THIS.
     bool binds_this = false;
+    // The cascade() term, or QUERY_OP_NONE: SELECT then binds the archetypes
+    // in ascending depth along `cascade_relation` (the relation's low id),
+    // or descending when `cascade_desc`.
+    u32 cascade_term = QUERY_OP_NONE;
+    EntityIdLow cascade_relation = 0;
+    bool cascade_desc = false;
 
     QueryOp* ops = nullptr;
     usz op_count = 0;
@@ -135,8 +151,10 @@ namespace QUERY_PROGRAM {
 // of range or above QUERY_MAX_VARS, THIS used as a pair side, an excluded
 // term that is also optional or that would bind a variable, an or-chain
 // alternative that is optional or binds, traversal through a relation that
-// is not TRAVERSABLE, and a variable that is never bound (as a source, or in
-// a not-term) by any term. The program must be freed either way.
+// is not TRAVERSABLE, a cascade() term that is not on THIS, is excluded, is
+// in an or-chain or is not the only one, desc() without cascade(), and a
+// variable that is never bound (as a source, or in a not-term) by any term.
+// The program must be freed either way.
 QueryProgram compile(World* world, const QueryTerm* terms, usz term_count, usz var_count, BaseAllocator* allocator);
 
 // Name of an opcode, for diagnostics and tests.

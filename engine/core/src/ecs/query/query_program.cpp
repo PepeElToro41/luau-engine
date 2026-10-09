@@ -54,9 +54,11 @@ bool validate(World* world, const QueryTerm* terms, const usz term_count, const 
     }
 
     bool in_or = false;
+    bool cascade_seen = false;
     for (usz i = 0; i < term_count; i++) {
         const QueryTerm& term = terms[i];
         const u32 index = static_cast<u32>(i);
+        const bool chained = in_or || term.is_or();
 
         if (term.id == 0) {
             report(index, "id is 0 (did a type fail to register?)");
@@ -93,8 +95,34 @@ bool validate(World* world, const QueryTerm* terms, const usz term_count, const 
                 return false;
             }
         }
+        if (term.descends() && !term.cascades()) {
+            report(index, "desc() only applies to a cascade() term");
+            return false;
+        }
+        if (term.cascades()) {
+            if (!term.traverses()) {
+                report(index, "cascade() without a relation to walk");
+                return false;
+            }
+            if (term.src_var != QUERY_THIS) {
+                report(index, "cascade() orders the matched entities, so its term has to be on THIS (no src())");
+                return false;
+            }
+            if (term.is_excluded()) {
+                report(index, "a without() term cannot cascade()");
+                return false;
+            }
+            if (chained) {
+                report(index, "a bor() alternative cannot cascade()");
+                return false;
+            }
+            if (cascade_seen) {
+                report(index, "a query can have one cascade() term");
+                return false;
+            }
+            cascade_seen = true;
+        }
 
-        const bool chained = in_or || term.is_or();
         if (chained && term.is_optional()) {
             report(index, "an bor() alternative cannot be optional");
             return false;
@@ -184,6 +212,13 @@ QueryProgram compile(World* world, const QueryTerm* terms, const usz term_count,
 
     if (!validate(world, terms, term_count, var_count)) {
         return program;
+    }
+    for (usz t = 0; t < term_count; t++) {
+        if (terms[t].cascades()) {
+            program.cascade_term = static_cast<u32>(t);
+            program.cascade_relation = ECS::ENTITY_LOW(terms[t].traverse);
+            program.cascade_desc = terms[t].descends();
+        }
     }
 
     // --- Split: matcher / plain THIS terms / units for the VM ---------------
@@ -345,5 +380,8 @@ void QueryProgram::free() {
     this->this_term_count = 0;
     this->op_count = 0;
     this->binds_this = false;
+    this->cascade_term = QUERY_OP_NONE;
+    this->cascade_relation = 0;
+    this->cascade_desc = false;
     this->ok = false;
 }

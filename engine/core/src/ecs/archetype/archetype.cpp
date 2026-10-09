@@ -220,6 +220,7 @@ Archetype* Archetype::create_archetype(World* world, const ArchetypeType archety
         ArchetypeData& data = new_archetype->data;
         data.columns = world->allocator->allocate_array<ArchetypeColumn>(column_count);
         data.column_count = column_count;
+        new_archetype->records = world->allocator->allocate_array<ComponentRecord*>(column_count);
 
         // Column i stores type.ids[i]; delete_entity and move_entity rely on
         // that one-to-one order, so tags get a (zero-length) column too.
@@ -231,6 +232,7 @@ Archetype* Archetype::create_archetype(World* world, const ArchetypeType archety
             column.data = nullptr;
             // Zero length for tags, which is what every row loop checks.
             column.type_info = record->type_info;
+            new_archetype->records[i] = record;
 
             new_archetype->columns_index.insert(id, i);
             new_archetype->columns_map.insert(id, &column);
@@ -457,6 +459,8 @@ void Archetype::free() {
     this->allocator->free(data.columns);
     this->allocator->free(data.entities);
     data = ArchetypeData { };
+    this->allocator->free(this->records);
+    this->records = nullptr;
 
     this->columns_index.free();
     this->columns_map.free();
