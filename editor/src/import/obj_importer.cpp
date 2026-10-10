@@ -381,15 +381,15 @@ ObjParseError OBJ::parse(const char* text, const usz size, ObjMesh* out, u32* ou
 // --- Import -----------------------------------------------------------------------------
 
 bool OBJ::import(
-	const std::filesystem::path& source, 
+	const ImportSource& source, 
 	const std::filesystem::path& destination, 
 	const MeshImportOptions& options,
     const AssetGuid& guid, 
     std::string* error
 ) {
-    const std::string source_path = source.string();
+    const std::string source_path = source.describe();
     usz size = 0;
-    u8* text = IMPORT::read_file(source_path.c_str(), MEMORY::heap_allocator(), &size, error);
+    u8* text = IMPORT::read_source(source, MEMORY::heap_allocator(), &size, error);
     if (text == nullptr) {
         return false;
     }
@@ -418,9 +418,11 @@ bool OBJ::import(
     writer.type = ASSET_TYPE::MESH;
     writer.guid = guid;
     writer.content_hash = IMPORT::fnv1a(text, size);
-    IMPORT::add_editor_chunks(writer);
-    payloads.add_chunks(writer);
-    const bool ok = IMPORT::write_asset(writer, destination.string().c_str(), error);
+    bool ok = IMPORT::add_editor_chunks(writer, source, text, size, options.keep_source, error);
+    if (ok) {
+        payloads.add_chunks(writer);
+        ok = IMPORT::write_asset(writer, destination.string().c_str(), error);
+    }
 
     writer.free();
     payloads.free();

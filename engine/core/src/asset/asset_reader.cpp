@@ -111,6 +111,32 @@ bool AssetReader::read_chunk(const ChunkEntry& chunk, void* out) {
     return true;
 }
 
+bool AssetReader::read_bytes(const ChunkEntry& chunk, const u64 offset, void* out, const usz size) {
+    if (!check_open(*this, "read_bytes")) {
+        return false;
+    }
+    if (chunk.offset % ASSET_FILE::PAYLOAD_ALIGNMENT != 0 || chunk.offset > this->header.file_size ||
+        chunk.size > this->header.file_size - chunk.offset) {
+        fprintf(stderr, "[asset] error: chunk at %llu (+%llu) lies outside the %llu-byte file\n", static_cast<unsigned long long>(chunk.offset),
+                static_cast<unsigned long long>(chunk.size), static_cast<unsigned long long>(this->header.file_size));
+        return false;
+    }
+    if (offset > chunk.size || size > chunk.size - offset) {
+        fprintf(stderr, "[asset] error: range %llu (+%llu) lies outside the %llu-byte chunk\n", static_cast<unsigned long long>(offset),
+                static_cast<unsigned long long>(size), static_cast<unsigned long long>(chunk.size));
+        return false;
+    }
+    if (size == 0) {
+        return true;
+    }
+    if (!PLATFORM::file_read(this->file, chunk.offset + offset, out, size)) {
+        fprintf(stderr, "[asset] error: short read on chunk at %llu (range %llu +%llu)\n", static_cast<unsigned long long>(chunk.offset),
+                static_cast<unsigned long long>(offset), static_cast<unsigned long long>(size));
+        return false;
+    }
+    return true;
+}
+
 void* AssetReader::read_chunk(const ChunkEntry& chunk, BaseAllocator* allocator) {
     if (chunk.size == 0) {
         // Still report a bad entry or a closed reader, as the other overload would.

@@ -10,6 +10,9 @@ inline constexpr const char* INSPECTOR = "Inspector";
 inline constexpr const char* VIEWPORT = "Viewport";
 inline constexpr const char* STATS = "Stats";
 inline constexpr const char* ASSET_BROWSER = "Asset Browser";
-inline constexpr const char* IMPORT = "Import";
+// The Import panel's title changes to Reimport for a kept original; the
+// part after ### is the id, shared so the window keeps its place.
+inline constexpr const char* IMPORT = "Import###Import";
+inline constexpr const char* REIMPORT = "Reimport###Import";
 
 } // namespace PANELS

@@ -1,6 +1,7 @@
 #pragma once
 
 #include "engine/defines.hpp"
+#include "import/importer.hpp"
 #include "project.hpp"
 #include "selection.hpp"
 #include "ui/output_panel.hpp"
@@ -25,7 +26,12 @@
 // it in `activated`; the App opens source files (.obj, images) in the
 // Import panel from there. Right-clicking an
 // entry opens a context menu: Import (importable files only) does the same
-// as a double-click; Delete removes the file (or the folder and its
+// as a double-click; on a .lunaasset, Reimport and Save Original... act on
+// the original kept in its SRC chunk (probed with IMPORT::find_source when
+// the menu opens; both are disabled when nothing was kept): Reimport
+// reports it in `reimport_source` / `reimport_asset` for the App to queue
+// in the Import panel, Save Original... asks for a path in a modal and
+// writes the bytes there; Delete removes the file (or the folder and its
 // contents) from disk after a confirmation modal; Rename... (or F2 on the
 // selected entry) asks for a new name in a modal; New Folder... asks for a
 // name in a modal and creates it in the current folder. Right-clicking the
@@ -61,13 +67,19 @@ struct AssetBrowserPanel {
     // File double-clicked during the last draw(), relative to the project
     // root; empty when none was. Valid until the next draw().
     std::filesystem::path activated;
+    // Reimport picked from a context menu during the last draw(): the kept
+    // original (where its bytes are, its name, the asset's GUID) and the
+    // asset it came from, relative to the project root; `reimport_asset` is
+    // empty when none was. Valid until the next draw().
+    ImportSource reimport_source;
+    std::filesystem::path reimport_asset;
     ImGuiTextFilter filter;
     bool show_hidden = false; // entries whose name starts with '.'
 
 private:
     void rescan(const Project& project);
     void draw_breadcrumbs(const Project& project);
-    void draw_entries(Selection& selection);
+    void draw_entries(const Project& project, Selection& selection);
     void draw_delete_popup(const Project& project, OutputPanel& output, Selection& selection);
     void delete_entry(const Project& project, const Entry& entry, OutputPanel& output, Selection& selection);
     // The one name modal, used by New Folder... and Rename...
@@ -81,6 +93,11 @@ private:
     // is a listing name that does not count as taken (the entry being
     // renamed).
     const char* name_problem(const char* name, const std::string& except) const;
+    // The Save Original... modal: the kept original being saved and the
+    // path typed for it.
+    void begin_save_original(const Project& project, const Entry& entry);
+    void draw_save_original_popup(const Project& project, OutputPanel& output);
+    bool save_original(const Project& project, const char* path, OutputPanel& output);
 
     bool dirty = true;
     // Entry whose Delete is awaiting confirmation; name is empty when none.
@@ -91,6 +108,16 @@ private:
     NameMode name_mode = NameMode::NEW_FOLDER;
     char name_buffer[128] = {};
     Entry renaming;
+    // The entry whose context menu is open and, for a .lunaasset, the
+    // original it keeps, probed once when the menu opens (a prelude and a
+    // 256-byte read). `context_has_source` is false for everything else.
+    std::string context_entry;
+    ImportSource context_source;
+    bool context_has_source = false;
+    // The original the Save Original... modal is saving and the path typed.
+    ImportSource saving;
+    std::string saving_asset; // the entry name, for the modal's text
+    char save_path[512] = {};
     // Root the entries were read from, so a different project (or a reopened
     // one) triggers a rescan and resets the folder.
     std::filesystem::path scanned_root;

@@ -193,7 +193,7 @@ Common to every type:
 |--------|---------------|---------|
 | `NAME` | `EDITOR_ONLY` | display name and user tags; what the asset browser shows. Layout not yet defined. |
 | `IMPS` | `EDITOR_ONLY` | import settings, a plain struct per asset type (for textures: sRGB, mip generation, alpha bleeding, compression). Re-import reads `SRC `, applies this, rewrites the compiled chunks. Layout per type, not yet defined. |
-| `SRC ` | `EDITOR_ONLY` | the original imported bytes, preceded by the original filename so the extension survives. Layout not yet defined. |
+| `SRC ` | `EDITOR_ONLY` | the original imported bytes, preceded by the original file name so the extension survives; version 1, see [Source chunk](#source-chunk). Written as a size 0, version 0 placeholder when the importer was told not to keep the original. |
 
 Texture (`TEX2`), payload layouts not yet defined:
 
@@ -220,6 +220,41 @@ Text assets (`ASSET_FLAG::TEXT`):
 Files written before these layouts existed carry the tags with `size == 0`
 and `version == 0`; the readers report them as an unsupported version and the
 editor re-imports them in place.
+
+### Source chunk
+
+`SRC ` (`source_chunk.hpp`, version `SOURCE_CHUNK::VERSION` = 1) keeps the
+file an asset was imported from, so the editor can re-import it with other
+settings or hand the original back out without the source file around:
+
+```
+offset 0    SourceChunkHeader, 16 bytes
+offset 16   the original file name, name_size bytes of UTF-8, no terminator
+...         zero padding up to data_offset = align16(16 + name_size)
+data        data_size bytes, the source file verbatim
+```
+
+| offset | type  | field       | meaning |
+|-------:|-------|-------------|---------|
+| 0      | `u32` | `name_size` | bytes of the file name, 1 to 240 |
+| 4      | `u32` | `reserved`  | zero |
+| 8      | `u64` | `data_size` | bytes of the source file |
+
+The name is a bare file name (`rock.obj`): its extension picks the importer
+on re-import. The 240-byte limit makes the prefix (header + name + padding)
+fit in 256 bytes, so a reader that wants only the name and where the data
+lies reads that much (`AssetReader::read_bytes`) and parses it with
+`SourceChunkView`; the blob itself is read only to re-import or export it.
+`SOURCE_CHUNK::add_chunk` writes the chunk, `SOURCE_CHUNK::has_source`
+tells a kept original from the placeholder (a `size == 0`, `version == 0`
+entry, `SOURCE_CHUNK::add_placeholder`), which is what an import with "Keep
+original" off writes. Keeping the original is an import option
+(`MeshImportOptions` / `TextureImportOptions::keep_source`, default on):
+the asset grows by the source's size, the runtime never sees it (cooking
+strips the chunk), and a re-import that turns it off drops it.
+
+`content_hash` is the FNV-1a of the source bytes whether or not they are
+kept.
 
 ## Texture payloads
 
@@ -678,9 +713,10 @@ matched to the editor file it came from.
 
 ## Open items
 
-- Payload layouts for `NAME`, `IMPS` (the `TextureImportOptions` and
+- Payload layouts for `NAME` and `IMPS` (the `TextureImportOptions` and
   `MeshImportOptions` structs are the in-memory shape; what gets serialized
-  is still to be decided) and `SRC `.
+  is still to be decided). A re-import today applies the settings shown in
+  the Import panel, not the ones the asset was imported with.
 - Importers that decode source files (PNG, glTF) into `TextureSource` and
   `MeshSource`; core has no decoders, so they live in the editor.
 - The `dump` tool and its `textconv` setup.

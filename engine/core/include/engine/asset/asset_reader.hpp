@@ -84,6 +84,13 @@ struct AssetReader {
     // is then unspecified. A size 0 chunk reads nothing and succeeds.
     bool read_chunk(const ChunkEntry& chunk, void* out);
 
+    // Reads `size` bytes starting `offset` bytes into `chunk`'s payload into
+    // `out`: a partial read for a chunk whose start says where the rest
+    // lies (a SOURCE chunk's prefix, source_chunk.hpp). The range must lie
+    // inside the chunk and the chunk inside the file; false (and a message)
+    // otherwise or on a short read. A `size` of 0 reads nothing and succeeds.
+    bool read_bytes(const ChunkEntry& chunk, u64 offset, void* out, usz size);
+
     // Reads `chunk`'s payload into a fresh PAYLOAD_ALIGNMENT aligned buffer
     // of `chunk.size` bytes from `allocator`; the caller frees it. nullptr on
     // failure, and also for a size 0 chunk, which has nothing to read.

@@ -4,6 +4,7 @@
 #include "engine/asset/asset_view.hpp"
 #include "engine/defines.hpp"
 #include "engine/templates/dynamic_array.hpp"
+#include "import/importer.hpp"
 
 #include <filesystem>
 #include <string>
@@ -16,7 +17,7 @@
 // and OBJ::import does the whole file-to-.lunaasset trip.
 //
 //     std::string error;
-//     if (!OBJ::import("rock.obj", "rock.lunaasset", MeshImportOptions{}, IMPORT::random_guid(), &error)) {
+//     if (!OBJ::import(ImportSource::file("rock.obj"), "rock.lunaasset", MeshImportOptions{}, IMPORT::random_guid(), &error)) {
 //         output.error("%s", error.c_str());
 //     }
 //
@@ -83,10 +84,14 @@ const char* parse_error_name(ObjParseError error);
 // the error was found on (0 for OBJ_PARSE_NO_FACES).
 ObjParseError parse(const char* text, usz size, ObjMesh* out, u32* out_line = nullptr);
 
-// Reads `source`, parses it, builds the mesh payloads with `options` and
-// writes a mesh asset with `guid` to `destination`. False with `error` set
-// (and no file written) on any failure.
-bool import(const std::filesystem::path& source, const std::filesystem::path& destination, const MeshImportOptions& options,
+// Reads the bytes of `source` (a file, or a kept original inside an asset:
+// importer.hpp), parses them, builds the mesh payloads with `options` and
+// writes a mesh asset with `guid` to `destination`, keeping the bytes in
+// its SRC chunk when `options.keep_source` is set. The bytes are read
+// whole before anything is written, so `destination` may be the asset
+// `source` points into. False with `error` set (and no file written) on
+// any failure.
+bool import(const ImportSource& source, const std::filesystem::path& destination, const MeshImportOptions& options,
             const AssetGuid& guid, std::string* error);
 
 } // namespace OBJ

@@ -37,19 +37,25 @@ static void copy_text(char* out, const usz out_size, const std::string& text) {
     out[count] = '\0';
 }
 
-void ImportPanel::open(const std::filesystem::path& source, const std::filesystem::path& destination_folder, bool* open) {
-    Item item;
-    std::error_code error;
-    item.source = std::filesystem::absolute(source, error).lexically_normal();
-    if (error) {
-        item.source = source;
-    }
-    item.extension = item.source.extension().string();
-    for (char& c : item.extension) {
+static std::string lowercase_extension(const std::filesystem::path& path) {
+    std::string extension = path.extension().string();
+    for (char& c : extension) {
         c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
     }
+    return extension;
+}
+
+void ImportPanel::open(const std::filesystem::path& source, const std::filesystem::path& destination_folder, bool* open) {
+    std::error_code error;
+    std::filesystem::path absolute = std::filesystem::absolute(source, error).lexically_normal();
+    if (error) {
+        absolute = source;
+    }
+    Item item;
+    item.source = ImportSource::file(absolute);
+    item.extension = lowercase_extension(absolute);
     item.kind = kind_of(item.extension);
-    const std::uintmax_t size = std::filesystem::file_size(item.source, error);
+    const std::uintmax_t size = std::filesystem::file_size(absolute, error);
     item.size = error ? 0 : static_cast<u64>(size);
 
     const bool was_empty = this->queue.empty();
@@ -61,11 +67,34 @@ void ImportPanel::open(const std::filesystem::path& source, const std::filesyste
     *open = true;
 }
 
+void ImportPanel::open_reimport(const ImportSource& source, const std::filesystem::path& asset, bool* open) {
+    Item item;
+    item.source = source;
+    item.extension = lowercase_extension(std::filesystem::path(source.name));
+    item.kind = kind_of(item.extension);
+    item.size = source.size;
+    item.asset = asset.lexically_normal();
+
+    const bool was_empty = this->queue.empty();
+    this->queue.push_back(std::move(item));
+    if (was_empty) {
+        this->show_front();
+    }
+    *open = true;
+}
+
 void ImportPanel::show_front() {
     if (this->queue.empty()) {
         return;
     }
-    copy_text(this->name, sizeof(this->name), this->queue.front().source.stem().string());
+    const Item& front = this->queue.front();
+    if (front.is_reimport()) {
+        // Back over the asset it came from, unless the user retargets it.
+        copy_text(this->folder, sizeof(this->folder), front.asset.parent_path().generic_string());
+        copy_text(this->name, sizeof(this->name), front.asset.stem().string());
+    } else {
+        copy_text(this->name, sizeof(this->name), std::filesystem::path(front.source.name).stem().string());
+    }
 }
 
 void ImportPanel::pop_front() {
@@ -82,9 +111,22 @@ std::filesystem::path ImportPanel::destination(const Project& project) const {
     return path.lexically_normal();
 }
 
+std::filesystem::path ImportPanel::reimport_target(const Project& project) const {
+    const Item& item = this->queue.front();
+    if (!item.is_reimport()) {
+        return {};
+    }
+    return (project.root / item.asset).lexically_normal();
+}
+
 bool ImportPanel::import_front(const Project& project, OutputPanel& output) {
     const Item& item = this->queue.front();
     const std::filesystem::path target = this->destination(project);
+    // Writing the asset back over itself keeps its GUID, so everything
+    // referencing it still resolves. Anywhere else is a new asset: two
+    // files must never share a GUID.
+    const bool in_place = item.is_reimport() && target == this->reimport_target(project);
+    const AssetGuid guid = in_place ? item.source.guid : IMPORT::random_guid();
 
     std::error_code fs_error;
     std::filesystem::create_directories(target.parent_path(), fs_error);
@@ -97,26 +139,34 @@ bool ImportPanel::import_front(const Project& project, OutputPanel& output) {
     bool ok = false;
     switch (item.kind) {
     case Kind::MESH:
-        ok = OBJ::import(item.source, target, this->mesh_options, IMPORT::random_guid(), &error);
+        ok = OBJ::import(item.source, target, this->mesh_options, guid, &error);
         break;
     case Kind::TEXTURE:
-        ok = IMAGE::import(item.source, target, this->texture_options, IMPORT::random_guid(), &error);
+        ok = IMAGE::import(item.source, target, this->texture_options, guid, &error);
         break;
     default:
         error = "no importer for " + item.extension;
         break;
     }
+    const std::string shown = item.source.describe();
     if (!ok) {
-        output.error("Import %s failed: %s", item.source.filename().string().c_str(), error.c_str());
+        output.error("%s %s failed: %s", item.is_reimport() ? "Reimport" : "Import", shown.c_str(), error.c_str());
         return false;
     }
-    output.info("Imported %s -> %s", item.source.filename().string().c_str(),
-                std::filesystem::relative(target, project.root, fs_error).generic_string().c_str());
+    const std::string relative = std::filesystem::relative(target, project.root, fs_error).generic_string();
+    if (in_place) {
+        output.info("Reimported %s from its original %s", relative.c_str(), item.source.name.c_str());
+    } else {
+        output.info("Imported %s -> %s", shown.c_str(), relative.c_str());
+    }
     return true;
 }
 
 bool ImportPanel::will_overwrite(const Project& project) const {
     const std::filesystem::path target = this->destination(project);
+    if (target == this->reimport_target(project)) {
+        return false; // replacing the asset in place is what a re-import is for
+    }
     std::error_code error;
     return std::filesystem::exists(target, error);
 }
@@ -134,7 +184,9 @@ bool ImportPanel::draw(bool* open, const Project* project_or_null, OutputPanel& 
     ImGui::SetNextWindowPos(center, ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
 
     const ImGuiWindowFlags flags = ImGuiWindowFlags_NoDocking | ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoCollapse;
-    if (!ImGui::Begin(PANELS::IMPORT, open, flags)) {
+    // Both titles share the id after "###", so the window keeps its place
+    // when a re-import follows an import.
+    if (!ImGui::Begin(item.is_reimport() ? PANELS::REIMPORT : PANELS::IMPORT, open, flags)) {
         ImGui::End();
         if (!*open) {
             this->clear();
@@ -226,26 +278,46 @@ bool ImportPanel::draw_overwrite_popup(const Project& project, OutputPanel& outp
 }
 
 void ImportPanel::draw_source(const Item& item) {
-    const std::string file = item.source.filename().string();
-    const std::string dir = item.source.parent_path().string();
     char size_text[32];
     UI::format_size(item.size, size_text, sizeof(size_text));
 
     if (ImGui::BeginTable("source", 2, ImGuiTableFlags_SizingFixedFit)) {
-        ImGui::TableNextRow();
-        ImGui::TableNextColumn();
-        ImGui::TextDisabled("File");
-        ImGui::TableNextColumn();
-        ImGui::TextUnformatted(file.c_str());
-        if (ImGui::IsItemHovered()) {
-            ImGui::SetTooltip("%s", item.source.string().c_str());
-        }
+        if (item.is_reimport()) {
+            // The asset the original was read from, then the original's name.
+            ImGui::TableNextRow();
+            ImGui::TableNextColumn();
+            ImGui::TextDisabled("Asset");
+            ImGui::TableNextColumn();
+            ImGui::TextUnformatted(item.asset.generic_string().c_str());
+            if (ImGui::IsItemHovered()) {
+                ImGui::SetTooltip("%s", item.source.path.string().c_str());
+            }
 
-        ImGui::TableNextRow();
-        ImGui::TableNextColumn();
-        ImGui::TextDisabled("Folder");
-        ImGui::TableNextColumn();
-        ImGui::TextUnformatted(dir.c_str());
+            ImGui::TableNextRow();
+            ImGui::TableNextColumn();
+            ImGui::TextDisabled("Original");
+            ImGui::TableNextColumn();
+            ImGui::TextUnformatted(item.source.name.c_str());
+            if (ImGui::IsItemHovered()) {
+                ImGui::SetTooltip("Kept inside the asset at import time");
+            }
+        } else {
+            const std::string dir = item.source.path.parent_path().string();
+            ImGui::TableNextRow();
+            ImGui::TableNextColumn();
+            ImGui::TextDisabled("File");
+            ImGui::TableNextColumn();
+            ImGui::TextUnformatted(item.source.name.c_str());
+            if (ImGui::IsItemHovered()) {
+                ImGui::SetTooltip("%s", item.source.path.string().c_str());
+            }
+
+            ImGui::TableNextRow();
+            ImGui::TableNextColumn();
+            ImGui::TextDisabled("Folder");
+            ImGui::TableNextColumn();
+            ImGui::TextUnformatted(dir.c_str());
+        }
 
         ImGui::TableNextRow();
         ImGui::TableNextColumn();
@@ -280,6 +352,7 @@ void ImportPanel::draw_settings(const Item& item) {
         if (ImGui::IsItemHovered()) {
             ImGui::SetTooltip("Write 16-bit indices when every index fits, 32-bit otherwise.\nOff always writes 32-bit.");
         }
+        this->draw_keep_original(item, &this->mesh_options.keep_source);
         break;
     case Kind::TEXTURE:
         ImGui::SeparatorText("Texture settings");
@@ -295,10 +368,25 @@ void ImportPanel::draw_settings(const Item& item) {
         if (ImGui::IsItemHovered()) {
             ImGui::SetTooltip("Write the full box-filtered mip chain instead of mip 0 alone.");
         }
+        this->draw_keep_original(item, &this->texture_options.keep_source);
         break;
     default:
         ImGui::TextDisabled("Importable formats: .obj, .png, .jpg, .jpeg, .bmp, .tga");
         break;
+    }
+}
+
+void ImportPanel::draw_keep_original(const Item& item, bool* keep_source) {
+    ImGui::Checkbox("Keep original", keep_source);
+    ImGui::SameLine();
+    ImGui::TextDisabled("(?)");
+    if (ImGui::IsItemHovered()) {
+        ImGui::SetTooltip("Store the source file inside the asset.\n"
+                          "The asset grows by the source's size, but it can then be reimported\n"
+                          "with other settings and the original saved back out from the Asset Browser.");
+    }
+    if (item.is_reimport() && !*keep_source) {
+        ImGui::TextColored(ImVec4(1.0f, 0.8f, 0.3f, 1.0f), "Drops the kept original: no further reimport or Save Original");
     }
 }
 
@@ -325,7 +413,13 @@ void ImportPanel::draw_destination(const Project& project) {
     ImGui::SameLine();
     ImGui::TextUnformatted(".lunaasset");
 
-    if (this->will_overwrite(project)) {
+    const std::filesystem::path target = this->destination(project);
+    const std::filesystem::path own = this->reimport_target(project);
+    if (!own.empty() && target == own) {
+        ImGui::TextDisabled("Replaces the asset in place, keeping its GUID");
+    } else if (this->will_overwrite(project)) {
         ImGui::TextColored(ImVec4(1.0f, 0.8f, 0.3f, 1.0f), "Replaces the existing file");
+    } else if (!own.empty()) {
+        ImGui::TextDisabled("Writes a new asset with a new GUID; the reimported asset is left as is");
     }
 }

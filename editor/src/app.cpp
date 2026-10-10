@@ -377,6 +377,9 @@ void App::draw_editor() {
                 this->queue_import(file);
             }
         }
+        if (!this->asset_browser.reimport_asset.empty()) {
+            this->import_panel.open_reimport(this->asset_browser.reimport_source, this->asset_browser.reimport_asset, &this->show_import);
+        }
     }
     if (this->show_import) {
         if (this->import_panel.draw(&this->show_import, this->engine.get_singleton<Project>(), this->output)) {

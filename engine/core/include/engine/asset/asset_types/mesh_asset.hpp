@@ -312,6 +312,11 @@ struct MeshImportOptions {
     // Write 16-bit indices when every index fits, 32-bit otherwise. False
     // always writes 32-bit.
     bool compact_indices = true;
+    // Keep the source file's bytes in the asset's SRC chunk (source_chunk.hpp)
+    // so it can be re-imported with other settings or exported again; the
+    // asset grows by the source's size. The payload writer ignores it: the
+    // importer, which has the bytes, acts on it.
+    bool keep_source = true;
 };
 
 // One vertex stream of a source: `vertex_count` vertices of `stride` bytes.

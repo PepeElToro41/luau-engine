@@ -1,5 +1,6 @@
 #include "ui/asset_browser_panel.hpp"
 
+#include "engine/asset/asset_view.hpp"
 #include "ui/format.hpp"
 #include "ui/import/import_panel.hpp"
 #include "ui/panels.hpp"
@@ -73,6 +74,7 @@ void AssetBrowserPanel::rescan(const Project& project) {
 
 static const char* DELETE_POPUP = "Delete?";
 static const char* NAME_POPUP = "##name_popup";
+static const char* SAVE_ORIGINAL_POPUP = "Save Original";
 
 void AssetBrowserPanel::draw(bool* open, const Project* project_or_null, OutputPanel& output, Selection& selection) {
     if (!ImGui::Begin(PANELS::ASSET_BROWSER, open)) {
@@ -101,6 +103,7 @@ void AssetBrowserPanel::draw(bool* open, const Project* project_or_null, OutputP
     }
 
     this->activated.clear();
+    this->reimport_asset.clear();
     // The highlight follows the Selection: a file of this folder keeps it,
     // anything else (an entity, another folder's file) drops it.
     if (!this->selected.empty() && !selection.is_file(this->current / this->selected)) {
@@ -108,9 +111,10 @@ void AssetBrowserPanel::draw(bool* open, const Project* project_or_null, OutputP
     }
     this->draw_breadcrumbs(project);
     ImGui::Separator();
-    this->draw_entries(selection);
+    this->draw_entries(project, selection);
     this->draw_delete_popup(project, output, selection);
     this->draw_name_popup(project, output, selection);
+    this->draw_save_original_popup(project, output);
 
     ImGui::End();
 }
@@ -167,7 +171,7 @@ void AssetBrowserPanel::draw_breadcrumbs(const Project& project) {
     this->filter.Draw("##filter", filter_width);
 }
 
-void AssetBrowserPanel::draw_entries(Selection& selection) {
+void AssetBrowserPanel::draw_entries(const Project& project, Selection& selection) {
     const ImGuiTableFlags table_flags = ImGuiTableFlags_RowBg
                                       | ImGuiTableFlags_BordersInnerV
                                       | ImGuiTableFlags_Resizable
@@ -186,6 +190,7 @@ void AssetBrowserPanel::draw_entries(Selection& selection) {
     bool request_delete = false; // Delete picked from a context menu this frame
     bool request_new_folder = false; // New Folder... picked from a context menu this frame
     bool request_rename = false; // Rename... picked from a context menu (or F2) this frame
+    bool request_save_original = false; // Save Original... picked from a context menu this frame
     char size_text[32];
     for (const Entry& entry : this->entries) {
         if (!this->filter.PassFilter(entry.name.c_str())) {
@@ -216,8 +221,35 @@ void AssetBrowserPanel::draw_entries(Selection& selection) {
                 selection.select_file(this->current / entry.name);
             }
             const bool importable = !entry.is_directory && ImportPanel::kind_of(entry.extension) != ImportPanel::Kind::UNSUPPORTED;
+            const bool is_asset = !entry.is_directory && entry.extension == ASSET_FILE::EXTENSION;
+            if (ImGui::IsWindowAppearing()) {
+                // Probe the asset once per opening: does it keep its original?
+                this->context_entry = entry.name;
+                this->context_has_source = false;
+                this->context_source = ImportSource{};
+                if (is_asset) {
+                    std::string error;
+                    this->context_has_source = IMPORT::find_source(project.root / this->current / entry.name, &this->context_source, &error);
+                }
+            }
             if (importable && ImGui::MenuItem("Import")) {
                 this->activated = this->current / entry.name; // same as a double-click
+            }
+            if (is_asset) {
+                const bool has_source = this->context_has_source && this->context_entry == entry.name;
+                ImGui::BeginDisabled(!has_source);
+                if (ImGui::MenuItem("Reimport")) {
+                    this->reimport_source = this->context_source;
+                    this->reimport_asset = this->current / entry.name;
+                }
+                if (ImGui::MenuItem("Save Original...")) {
+                    request_save_original = true;
+                    this->begin_save_original(project, entry);
+                }
+                ImGui::EndDisabled();
+                if (!has_source && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
+                    ImGui::SetTooltip("No original was kept in this asset");
+                }
             }
             if (ImGui::MenuItem("Rename...", "F2")) {
                 this->renaming = entry;
@@ -290,6 +322,94 @@ void AssetBrowserPanel::draw_entries(Selection& selection) {
         this->begin_new_folder();
         ImGui::OpenPopup(NAME_POPUP);
     }
+    if (request_save_original) {
+        ImGui::OpenPopup(SAVE_ORIGINAL_POPUP);
+    }
+}
+
+void AssetBrowserPanel::begin_save_original(const Project& project, const Entry& entry) {
+    this->saving = this->context_source;
+    this->saving_asset = entry.name;
+    // Next to the asset, under the original's name.
+    const std::string suggested = (project.root / this->current / this->saving.name).lexically_normal().string();
+    std::snprintf(this->save_path, sizeof(this->save_path), "%s", suggested.c_str());
+}
+
+void AssetBrowserPanel::draw_save_original_popup(const Project& project, OutputPanel& output) {
+    const ImVec2 center = ImGui::GetMainViewport()->GetCenter();
+    ImGui::SetNextWindowPos(center, ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
+    if (!ImGui::BeginPopupModal(SAVE_ORIGINAL_POPUP, nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+        return;
+    }
+    char size_text[32];
+    UI::format_size(this->saving.size, size_text, sizeof(size_text));
+    ImGui::Text("Save the original of %s", (this->current / this->saving_asset).generic_string().c_str());
+    ImGui::TextDisabled("%s, %s", this->saving.name.c_str(), size_text);
+    ImGui::Spacing();
+
+    ImGui::AlignTextToFramePadding();
+    ImGui::TextUnformatted("Save to");
+    ImGui::SameLine();
+    if (ImGui::IsWindowAppearing()) {
+        ImGui::SetKeyboardFocusHere();
+    }
+    ImGui::SetNextItemWidth(420.0f);
+    bool confirmed = ImGui::InputText("##save_path", this->save_path, sizeof(this->save_path), ImGuiInputTextFlags_EnterReturnsTrue);
+    ImGui::TextDisabled("Absolute, or relative to %s", project.root.string().c_str());
+
+    const char* problem = this->save_path[0] == '\0' ? "Enter a path." : nullptr;
+    std::error_code error;
+    std::filesystem::path target(this->save_path);
+    if (target.is_relative()) {
+        target = project.root / target;
+    }
+    if (problem == nullptr && std::filesystem::is_directory(target, error)) {
+        problem = "That is a folder; name a file.";
+    }
+    if (problem != nullptr) {
+        ImGui::TextColored(ImVec4(1.0f, 0.45f, 0.45f, 1.0f), "%s", problem);
+    } else if (std::filesystem::exists(target, error)) {
+        ImGui::TextColored(ImVec4(1.0f, 0.8f, 0.3f, 1.0f), "Replaces the existing file");
+    } else {
+        ImGui::TextDisabled(" ");
+    }
+    ImGui::Separator();
+
+    ImGui::BeginDisabled(problem != nullptr);
+    confirmed = ImGui::Button("Save", ImVec2(100.0f, 0.0f)) || confirmed;
+    ImGui::EndDisabled();
+    if (confirmed && problem == nullptr) {
+        if (this->save_original(project, this->save_path, output)) {
+            ImGui::CloseCurrentPopup();
+        }
+    }
+    ImGui::SameLine();
+    if (ImGui::Button("Cancel", ImVec2(100.0f, 0.0f)) || ImGui::IsKeyPressed(ImGuiKey_Escape)) {
+        ImGui::CloseCurrentPopup();
+    }
+    ImGui::EndPopup();
+}
+
+bool AssetBrowserPanel::save_original(const Project& project, const char* path, OutputPanel& output) {
+    std::filesystem::path target(path);
+    if (target.is_relative()) {
+        target = project.root / target;
+    }
+    target = target.lexically_normal();
+    std::error_code fs_error;
+    std::filesystem::create_directories(target.parent_path(), fs_error);
+    if (fs_error) {
+        output.error("Save Original: cannot create %s: %s", target.parent_path().string().c_str(), fs_error.message().c_str());
+        return false;
+    }
+    std::string error;
+    if (!IMPORT::save_source(this->saving, target, &error)) {
+        output.error("Save Original of %s failed: %s", this->saving_asset.c_str(), error.c_str());
+        return false;
+    }
+    output.info("Saved the original of %s (%s) to %s", this->saving_asset.c_str(), this->saving.name.c_str(), target.string().c_str());
+    this->refresh(); // it may have landed in the folder shown
+    return true;
 }
 
 void AssetBrowserPanel::begin_new_folder() {

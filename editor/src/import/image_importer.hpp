@@ -3,6 +3,7 @@
 #include "engine/asset/asset_types/texture_asset.hpp"
 #include "engine/asset/asset_view.hpp"
 #include "engine/defines.hpp"
+#include "import/importer.hpp"
 
 #include <filesystem>
 #include <string>
@@ -17,7 +18,7 @@
 //     TextureImportOptions options;
 //     options.srgb = true; // color data
 //     std::string error;
-//     if (!IMAGE::import("wall.png", "wall.lunaasset", options, IMPORT::random_guid(), &error)) {
+//     if (!IMAGE::import(ImportSource::file("wall.png"), "wall.lunaasset", options, IMPORT::random_guid(), &error)) {
 //         output.error("%s", error.c_str());
 //     }
 //
@@ -52,10 +53,14 @@ bool is_supported_extension(const char* extension);
 // `error` set (stb_image's reason) when the bytes are not a supported image.
 bool decode(const void* bytes, usz size, DecodedImage* out, std::string* error);
 
-// Reads `source`, decodes it, builds the texture payloads with `options` and
-// writes a texture asset with `guid` to `destination`. False with `error` set
-// (and no file written) on any failure.
-bool import(const std::filesystem::path& source, const std::filesystem::path& destination, const TextureImportOptions& options,
+// Reads the bytes of `source` (a file, or a kept original inside an asset:
+// importer.hpp), decodes them, builds the texture payloads with `options`
+// and writes a texture asset with `guid` to `destination`, keeping the
+// bytes in its SRC chunk when `options.keep_source` is set. The bytes are
+// read whole before anything is written, so `destination` may be the asset
+// `source` points into. False with `error` set (and no file written) on
+// any failure.
+bool import(const ImportSource& source, const std::filesystem::path& destination, const TextureImportOptions& options,
             const AssetGuid& guid, std::string* error);
 
 } // namespace IMAGE

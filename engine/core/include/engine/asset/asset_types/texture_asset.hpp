@@ -258,6 +258,11 @@ struct TextureImportOptions {
     // format when there is one (RGBA8, BC1, BC3, BC7). Formats without one are
     // written as given.
     bool srgb = false;
+    // Keep the source file's bytes in the asset's SRC chunk (source_chunk.hpp)
+    // so it can be re-imported with other settings or exported again; the
+    // asset grows by the source's size. The payload writer ignores it: the
+    // importer, which has the bytes, acts on it.
+    bool keep_source = true;
 };
 
 // Mip 0 of a texture as decoded by an importer. The pixels are tightly
