@@ -1,6 +1,8 @@
 #include "ui/asset_browser_panel.hpp"
 
+#include "engine/asset/asset_types/material_asset.hpp"
 #include "engine/asset/asset_view.hpp"
+#include "engine/asset/asset_writer.hpp"
 #include "ui/format.hpp"
 #include "ui/import/import_panel.hpp"
 #include "ui/panels.hpp"
@@ -76,6 +78,106 @@ static const char* DELETE_POPUP = "Delete?";
 static const char* NAME_POPUP = "##name_popup";
 static const char* SAVE_ORIGINAL_POPUP = "Save Original";
 
+// What Create > Shader writes: the unlit shader's shape with one color
+// param, ready to be loaded by name from the project's render/ folder.
+static const char* SHADER_TEMPLATE =
+    "#pragma pass forward vertex fragment\n"
+    "#pragma pass shadow vertex\n"
+    "\n"
+    "#include \"engine/frame.slang\"\n"
+    "#include \"engine/object.slang\"\n"
+    "#include \"engine/vertex.slang\"\n"
+    "#include \"engine/bindings.slang\"\n"
+    "\n"
+    "struct MaterialParams {\n"
+    "    float4 color;\n"
+    "};\n"
+    "MATERIAL(0) ConstantBuffer<MaterialParams> material;\n"
+    "\n"
+    "struct VertexInput {\n"
+    "    VERTEX_POSITION float3 position;\n"
+    "};\n"
+    "\n"
+    "struct VertexOutput {\n"
+    "    float4 clip_position : SV_Position;\n"
+    "};\n"
+    "\n"
+    "[shader(\"vertex\")]\n"
+    "VertexOutput vertex(VertexInput v) {\n"
+    "    VertexOutput o;\n"
+    "    o.clip_position = mul(frame.view_projection, mul(object.model, float4(v.position, 1.0)));\n"
+    "    return o;\n"
+    "}\n"
+    "\n"
+    "[shader(\"fragment\")]\n"
+    "float4 fragment(VertexOutput v) : SV_Target {\n"
+    "    return material.color;\n"
+    "}\n";
+
+// What Create > Code > Luau writes.
+static const char* LUAU_TEMPLATE =
+    "--!strict\n"
+    "\n"
+    "local function main()\n"
+    "end\n"
+    "\n"
+    "return main\n";
+
+// What Create > Code > Cpp writes.
+static const char* CPP_TEMPLATE =
+    "#include \"engine/defines.hpp\"\n"
+    "\n"
+    "void main() {\n"
+    "}\n";
+
+const char* AssetBrowserPanel::create_extension(const CreateKind kind) {
+    switch (kind) {
+    case CreateKind::MATERIAL: return ".material";
+    case CreateKind::SHADER: return ".slang";
+    case CreateKind::LUAU: return ".luau";
+    case CreateKind::CPP: return ".cpp";
+    }
+    return "";
+}
+
+const char* AssetBrowserPanel::create_label(const CreateKind kind) {
+    switch (kind) {
+    case CreateKind::MATERIAL: return "material";
+    case CreateKind::SHADER: return "shader";
+    case CreateKind::LUAU: return "Luau script";
+    case CreateKind::CPP: return "C++ source";
+    }
+    return "file";
+}
+
+void AssetBrowserPanel::draw_create_items() {
+    CreateKind picked = CreateKind::MATERIAL;
+    bool any = false;
+    if (ImGui::MenuItem("Material")) {
+        picked = CreateKind::MATERIAL;
+        any = true;
+    }
+    if (ImGui::MenuItem("Shader")) {
+        picked = CreateKind::SHADER;
+        any = true;
+    }
+    if (ImGui::BeginMenu("Code")) {
+        if (ImGui::MenuItem("Luau")) {
+            picked = CreateKind::LUAU;
+            any = true;
+        }
+        if (ImGui::MenuItem("Cpp")) {
+            picked = CreateKind::CPP;
+            any = true;
+        }
+        ImGui::EndMenu();
+    }
+    if (any) {
+        this->create_kind = picked;
+        this->create_requested = true;
+    }
+}
+
 void AssetBrowserPanel::draw(bool* open, const Project* project_or_null, OutputPanel& output, Selection& selection) {
     if (!ImGui::Begin(PANELS::ASSET_BROWSER, open)) {
         ImGui::End();
@@ -130,6 +232,16 @@ void AssetBrowserPanel::draw_breadcrumbs(const Project& project) {
     ImGui::SameLine();
     if (ImGui::Button("Refresh")) {
         this->refresh();
+    }
+    ImGui::SameLine();
+    // Create dropdown: a button that opens a menu right under itself.
+    if (ImGui::Button("Create")) {
+        ImGui::OpenPopup("##create_menu");
+    }
+    ImGui::SetNextWindowPos(ImVec2(ImGui::GetItemRectMin().x, ImGui::GetItemRectMax().y), ImGuiCond_Appearing);
+    if (ImGui::BeginPopup("##create_menu")) {
+        this->draw_create_items();
+        ImGui::EndPopup();
     }
     ImGui::SameLine();
     ImGui::TextDisabled("|");
@@ -263,6 +375,10 @@ void AssetBrowserPanel::draw_entries(const Project& project, Selection& selectio
             if (ImGui::MenuItem("New Folder...")) {
                 request_new_folder = true;
             }
+            if (ImGui::BeginMenu("Create")) {
+                this->draw_create_items();
+                ImGui::EndMenu();
+            }
             ImGui::EndPopup();
         }
 
@@ -288,6 +404,10 @@ void AssetBrowserPanel::draw_entries(const Project& project, Selection& selectio
     if (ImGui::BeginPopupContextWindow("##folder_context", empty_flags)) {
         if (ImGui::MenuItem("New Folder...")) {
             request_new_folder = true;
+        }
+        if (ImGui::BeginMenu("Create")) {
+            this->draw_create_items();
+            ImGui::EndMenu();
         }
         if (ImGui::MenuItem("Refresh")) {
             this->refresh();
@@ -321,7 +441,11 @@ void AssetBrowserPanel::draw_entries(const Project& project, Selection& selectio
     } else if (request_new_folder) {
         this->begin_new_folder();
         ImGui::OpenPopup(NAME_POPUP);
+    } else if (this->create_requested) {
+        this->begin_create(this->create_kind);
+        ImGui::OpenPopup(NAME_POPUP);
     }
+    this->create_requested = false;
     if (request_save_original) {
         ImGui::OpenPopup(SAVE_ORIGINAL_POPUP);
     }
@@ -428,6 +552,36 @@ void AssetBrowserPanel::begin_rename(const Entry& entry) {
     std::snprintf(this->name_buffer, sizeof(this->name_buffer), "%s", entry.name.c_str());
 }
 
+void AssetBrowserPanel::begin_create(const CreateKind kind) {
+    // Default to "new_<kind>", or the first "new_<kind>_N" not taken in the
+    // current listing (with the extension; shader and script names end up
+    // as identifiers, so no spaces).
+    static const char* stems[] = {"new_material", "new_shader", "new_script", "new_source"};
+    const char* stem = stems[static_cast<int>(kind)];
+    this->name_mode = NameMode::NEW_FILE;
+    this->create_kind = kind;
+    std::snprintf(this->name_buffer, sizeof(this->name_buffer), "%s", stem);
+    for (int n = 2; this->name_problem(this->create_file_name().c_str(), {}) != nullptr && n < 1000; ++n) {
+        std::snprintf(this->name_buffer, sizeof(this->name_buffer), "%s_%d", stem, n);
+    }
+}
+
+std::string AssetBrowserPanel::create_file_name() const {
+    std::string name = this->name_buffer;
+    const char* extension = AssetBrowserPanel::create_extension(this->create_kind);
+    const usz extension_length = std::strlen(extension);
+    if (name.size() >= extension_length) {
+        std::string tail = name.substr(name.size() - extension_length);
+        for (char& c : tail) {
+            c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+        }
+        if (tail == extension) {
+            return name;
+        }
+    }
+    return name + extension;
+}
+
 const char* AssetBrowserPanel::name_problem(const char* name, const std::string& except) const {
     if (name[0] == '\0') {
         return "Enter a name.";
@@ -453,13 +607,14 @@ void AssetBrowserPanel::draw_name_popup(const Project& project, OutputPanel& out
         return;
     }
     const bool rename = this->name_mode == NameMode::RENAME;
+    const bool new_file = this->name_mode == NameMode::NEW_FILE;
 
     if (rename) {
         const std::string shown = (this->current / this->renaming.name).generic_string();
         ImGui::Text("Rename %s %s", this->renaming.is_directory ? "the folder" : "the file", shown.c_str());
     } else {
         const std::string shown = this->current.empty() ? project.name : (project.name / this->current).generic_string();
-        ImGui::Text("Create a folder in %s", shown.c_str());
+        ImGui::Text("Create a %s in %s", new_file ? AssetBrowserPanel::create_label(this->create_kind) : "folder", shown.c_str());
     }
     if (ImGui::IsWindowAppearing()) {
         ImGui::SetKeyboardFocusHere();
@@ -467,9 +622,20 @@ void AssetBrowserPanel::draw_name_popup(const Project& project, OutputPanel& out
     const ImGuiInputTextFlags input_flags = ImGuiInputTextFlags_AutoSelectAll | ImGuiInputTextFlags_EnterReturnsTrue;
     ImGui::SetNextItemWidth(300.0f);
     bool confirmed = ImGui::InputText("##name", this->name_buffer, sizeof(this->name_buffer), input_flags);
+    // The file name the modal will make, with the kind's extension shown
+    // after the field (typing it yourself is fine, it is not doubled).
+    std::string file_name;
+    if (new_file) {
+        file_name = this->create_file_name();
+        ImGui::SameLine(0.0f, ImGui::GetStyle().ItemInnerSpacing.x);
+        ImGui::TextDisabled("%s", AssetBrowserPanel::create_extension(this->create_kind));
+        if (this->create_kind == CreateKind::SHADER && this->current != std::filesystem::path("render")) {
+            ImGui::TextDisabled("Shaders load by name from the project's render folder.");
+        }
+    }
 
     const std::string& except = rename ? this->renaming.name : std::string();
-    const char* problem = this->name_problem(this->name_buffer, except);
+    const char* problem = this->name_problem(new_file ? file_name.c_str() : this->name_buffer, except);
     // Renaming to the same name is a no-op, not an error.
     const bool unchanged = rename && this->renaming.name == this->name_buffer;
     if (problem != nullptr) {
@@ -488,6 +654,8 @@ void AssetBrowserPanel::draw_name_popup(const Project& project, OutputPanel& out
             // nothing to do
         } else if (rename) {
             done = this->rename_entry(project, this->renaming, this->name_buffer, output, selection);
+        } else if (new_file) {
+            done = this->create_file(project, file_name.c_str(), output, selection);
         } else {
             done = this->create_folder(project, this->name_buffer, output, selection);
         }
@@ -543,6 +711,45 @@ bool AssetBrowserPanel::create_folder(const Project& project, const char* name, 
     } else {
         output.info("Created folder %s", shown.c_str());
     }
+    this->selected = name;
+    selection.select_file(this->current / name);
+    this->refresh();
+    return true;
+}
+
+bool AssetBrowserPanel::create_file(const Project& project, const char* name, OutputPanel& output, Selection& selection) {
+    const std::filesystem::path target = (project.root / this->current / name).lexically_normal();
+    const std::string shown = (this->current / name).generic_string();
+    const char* label = AssetBrowserPanel::create_label(this->create_kind);
+    std::error_code error;
+    // The writers replace an existing file; refuse instead, the listing
+    // may be stale.
+    if (std::filesystem::exists(target, error)) {
+        output.error("Create %s %s failed: it already exists", label, shown.c_str());
+        this->refresh();
+        return false;
+    }
+    const std::string path = target.string();
+    bool ok = false;
+    if (this->create_kind == CreateKind::MATERIAL) {
+        MaterialAsset material;
+        material.guid = IMPORT::random_guid();
+        std::snprintf(material.shader, sizeof(material.shader), "unlit");
+        const f64 color[4] = {1.0, 1.0, 1.0, 1.0};
+        material.set_param("color", color, 4);
+        ok = MATERIAL_ASSET::write_file(material, path.c_str());
+    } else {
+        const char* text = this->create_kind == CreateKind::SHADER ? SHADER_TEMPLATE
+                         : this->create_kind == CreateKind::LUAU   ? LUAU_TEMPLATE
+                                                                   : CPP_TEMPLATE;
+        ok = ASSET_FILE::write_file(path.c_str(), text, std::strlen(text));
+    }
+    if (!ok) {
+        output.error("Create %s %s failed: cannot write the file", label, shown.c_str());
+        this->refresh();
+        return false;
+    }
+    output.info("Created %s %s", label, shown.c_str());
     this->selected = name;
     selection.select_file(this->current / name);
     this->refresh();

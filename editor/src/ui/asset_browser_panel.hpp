@@ -35,7 +35,13 @@
 // contents) from disk after a confirmation modal; Rename... (or F2 on the
 // selected entry) asks for a new name in a modal; New Folder... asks for a
 // name in a modal and creates it in the current folder. Right-clicking the
-// empty space of the listing opens a menu with New Folder... and Refresh.
+// empty space of the listing opens a menu with New Folder..., Create and
+// Refresh. The toolbar's Create dropdown (also a Create submenu of both
+// context menus) makes a new file in the current folder from a template:
+// Material (a .material with a fresh GUID on the unlit shader), Shader (a
+// .slang skeleton) or Code > Luau / Cpp (a .luau / .cpp stub); each asks
+// for the name in the same modal, with the extension fixed, writes the
+// file and selects it, so a .material shows up in the Inspector at once.
 // No previews or drag and drop yet.
 struct AssetBrowserPanel {
     struct Entry {
@@ -82,12 +88,24 @@ private:
     void draw_entries(const Project& project, Selection& selection);
     void draw_delete_popup(const Project& project, OutputPanel& output, Selection& selection);
     void delete_entry(const Project& project, const Entry& entry, OutputPanel& output, Selection& selection);
-    // The one name modal, used by New Folder... and Rename...
-    enum struct NameMode { NEW_FOLDER, RENAME };
+    // The one name modal, used by New Folder..., Rename... and Create.
+    enum struct NameMode { NEW_FOLDER, RENAME, NEW_FILE };
+    // What the Create dropdown makes.
+    enum struct CreateKind { MATERIAL, SHADER, LUAU, CPP };
+    static const char* create_extension(CreateKind kind); // lowercase, with the dot
+    static const char* create_label(CreateKind kind);     // "material", "shader", ...
+    // The dropdown's entries (Material, Shader, Code > Luau / Cpp); picking
+    // one sets `create_requested` + `create_kind` for the end of draw_entries().
+    void draw_create_items();
     void begin_new_folder();
     void begin_rename(const Entry& entry);
+    void begin_create(CreateKind kind);
+    // The file name the Create modal would make: the typed name plus the
+    // kind's extension, unless it was typed already.
+    std::string create_file_name() const;
     void draw_name_popup(const Project& project, OutputPanel& output, Selection& selection);
     bool create_folder(const Project& project, const char* name, OutputPanel& output, Selection& selection);
+    bool create_file(const Project& project, const char* name, OutputPanel& output, Selection& selection);
     bool rename_entry(const Project& project, const Entry& entry, const char* name, OutputPanel& output, Selection& selection);
     // Why `name` cannot be used in `current`, or null when it can. `except`
     // is a listing name that does not count as taken (the entry being
@@ -108,6 +126,9 @@ private:
     NameMode name_mode = NameMode::NEW_FOLDER;
     char name_buffer[128] = {};
     Entry renaming;
+    // The Create entry picked this frame, if any, and what it makes.
+    bool create_requested = false;
+    CreateKind create_kind = CreateKind::MATERIAL;
     // The entry whose context menu is open and, for a .lunaasset, the
     // original it keeps, probed once when the menu opens (a prelude and a
     // 256-byte read). `context_has_source` is false for everything else.
