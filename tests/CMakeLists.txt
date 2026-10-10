@@ -11,7 +11,7 @@ file(GLOB_RECURSE TEST_SOURCES CONFIGURE_DEPENDS
 
 add_executable(engine_tests
     ${TEST_SOURCES}
-    ${GRAPHICS_DIR}/src/gpu/shaders/preprocessing.cpp
+    ${GRAPHICS_DIR}/src/shaders/preprocessing.cpp
 )
 
 target_include_directories(engine_tests

@@ -2,6 +2,7 @@
 
 #include "engine/asset/asset_reader.hpp"
 #include "engine/asset/asset_view.hpp"
+#include "engine/asset/text_asset.hpp"
 #include "engine/defines.hpp"
 #include "engine/memory/base_allocator.hpp"
 #include "engine/templates/hash_map.hpp"
@@ -23,9 +24,11 @@
 //     provider->unload(rock->guid);                          // streams the payloads out; the asset stays known
 //
 // An asset enters the provider through add(view, path): the AssetView is
-// the prelude an asset scan produced (ASSET_FILE::read_prelude), its header's
-// GUID is the key, and the provider copies the prelude so the view it keeps
-// outlives whatever buffer the caller parsed. Nothing is read from disk
+// the prelude an asset scan produced (ASSET_FILE::read_prelude, or
+// TEXT_ASSET::read_prelude for a text asset such as a .material; see
+// text_asset.hpp), its header's GUID is the key, and the provider copies
+// the prelude so the view it keeps outlives whatever buffer the caller
+// parsed. Nothing is read from disk
 // until get() or get_chunk() asks for it: get() opens the file with an
 // AssetReader and reads every runtime chunk (the ones not EDITOR_ONLY) into
 // memory the provider owns, one 64-byte aligned buffer per chunk, and
@@ -38,6 +41,12 @@
 // taken, the prelude is re-read from the file and any payloads read from the
 // old file are dropped, so a resource never mixes bytes from two versions.
 // refresh() does the same on demand.
+//
+// A text asset (ASSET_FLAG::TEXT in its header) is read as a whole: its one
+// TEXT chunk is the file's bytes, and the staleness check hashes them
+// (TEXT_ASSET::matches); a file whose text changed gets a fresh prelude the
+// same way. Everything else is the same: get(), unload(), refresh(),
+// find_payload(CHUNK_TYPE::TEXT).
 //
 // Pointers into a resource (its view, its payloads) stay valid until the
 // resource is unloaded, refreshed or removed, or the provider is freed;
@@ -64,6 +73,10 @@ struct AssetResource {
     u8** payloads = nullptr;
     // Bytes of payloads currently resident.
     u64 resident_bytes = 0;
+
+    // A text asset (text_asset.hpp): the path is a text file whose bytes are
+    // the one TEXT chunk.
+    bool is_text() const { return this->view.is_text(); }
 
     // Whether every runtime chunk (not EDITOR_ONLY) is resident: what get()
     // guarantees. EDITOR_ONLY chunks are not counted either way.
@@ -159,6 +172,14 @@ struct AssetResourceProvider {
     void free();
 
 private:
+    // A resource's file while chunks are read from it: an AssetReader on a
+    // .lunaasset, or the whole text of a text asset.
+    struct OpenFile {
+        AssetReader reader;
+        u8* text = nullptr;
+        usz text_size = 0;
+    };
+
     HashMap<AssetGuid, AssetResource*, AssetGuidHash> resources;
     u64 resident_total = 0;
 
@@ -172,10 +193,11 @@ private:
     bool store_prelude(AssetResource* resource, const AssetView& view);
     void free_prelude(AssetResource* resource);
     // Opens `resource`'s file and refreshes the prelude if the file changed.
-    // `out_refreshed` tells whether it did. False (reader closed) on failure.
-    bool open(AssetResource* resource, AssetReader* reader, bool* out_refreshed);
-    // Reads chunk `chunk` of `resource` through `reader`, which is open on
-    // its file and matches its view. True if the chunk is resident afterwards.
-    bool read_chunk(AssetResource* resource, AssetReader& reader, usz chunk);
+    // `out_refreshed` tells whether it did. False (file closed) on failure.
+    bool open(AssetResource* resource, OpenFile* file, bool* out_refreshed);
+    void close(OpenFile* file);
+    // Reads chunk `chunk` of `resource` from `file`, which is open on its
+    // file and matches its view. True if the chunk is resident afterwards.
+    bool read_chunk(AssetResource* resource, OpenFile& file, usz chunk);
     void release(AssetResource* resource);
 };

@@ -1,8 +1,8 @@
 # Asset file format
 
-Every asset the engine knows about is one binary file with the `.lunaasset`
-extension. Textures, meshes, materials and scenes all use the same container;
-the asset type is a field in the header, not the extension. The file carries
+Every *imported* asset the engine knows about is one binary file with the
+`.lunaasset` extension. Textures and meshes use the same container; the
+asset type is a field in the header, not the extension. The file carries
 everything the editor and the runtime need:
 
 - the asset's identity (a GUID) and its dependencies on other assets,
@@ -34,10 +34,24 @@ package per asset with the source inside and compiles into a derived-data
 cache. This format takes Unreal's single-file shape and additionally keeps the
 compiled data in the same file, so there is exactly one loader and no cache to
 invalidate. The cost is that assets are opaque to version control: `git diff`
-cannot show a change to a material, and two people editing the same scene
-cannot merge. A `dump` tool that prints the header, chunk table and the small
-chunks as text, registered as a git `textconv` for `*.lunaasset`, recovers diffs;
-merging stays manual.
+cannot show a change, and two people editing the same file cannot merge. A
+`dump` tool that prints the header, chunk table and the small chunks as text,
+registered as a git `textconv` for `*.lunaasset`, recovers diffs; merging
+stays manual.
+
+**Hand-authored assets are text.** The binary container pays off for data
+that is imported and compiled: pixels and vertices are opaque to a diff
+anyway, and the source they came from is kept inside. A material (and
+later a scene) is the opposite: a few lines a person writes or an editor
+panel edits, referencing other assets, that must diff and merge in version
+control. So those are *text assets*: a `.material` file is UTF-8 text in a
+flat `key = value` syntax with `[sections]`, and `.lunaasset` is never used
+for them. They are still assets in every other sense, with the same GUID
+identity and the same provider: `text_asset.hpp` builds, in memory, the
+prelude the provider keys on (a header flagged `TEXT`, one `TEXT` chunk
+covering the file's bytes), so registration, lazy loading, staleness
+detection and unloading are the code paths every `.lunaasset` uses. See
+[Text assets](#text-assets).
 
 **Identity travels with the file.** References between assets are GUIDs stored
 in the header's dependency table, never paths. Moving or renaming a file in the
@@ -111,6 +125,7 @@ Asset flags:
 | bit | name     | meaning |
 |----:|----------|---------|
 | 0   | `COOKED` | editor-only chunks were stripped; the runtime refuses files without it |
+| 1   | `TEXT`   | a text asset's synthesized prelude (never on disk): the one `TEXT` chunk is the file's bytes, see [Text assets](#text-assets) |
 
 ### AssetGuid (16 bytes)
 
@@ -163,11 +178,12 @@ the file read as the name in a hex dump: `fourcc("TEX2")` is the bytes
 
 | fourcc | name    | status |
 |--------|---------|--------|
-| `TEX2` | texture | type and chunk tags defined, payload layouts not yet |
-| `MESH` | mesh    | type and chunk tags defined, payload layouts not yet |
+| `TEX2` | texture  | `.lunaasset`; payloads below |
+| `MESH` | mesh     | `.lunaasset`; payloads below |
+| `MATL` | material | a `.material` text asset; see [Material files](#material-files) |
 
-Materials (`MATL`), scenes (`SCNE`) and shaders (`SHDR`) are planned and
-reserve their fourcc; nothing writes them yet.
+Scenes (`SCNE`) and shaders (`SHDR`) are planned and reserve their fourcc;
+nothing writes them yet.
 
 ### Chunk tags
 
@@ -194,6 +210,12 @@ Mesh (`MESH`), payload layouts not yet defined:
 | `VERT` | vertex data; one chunk per stream |
 | `INDX` | index data |
 | `BBOX` | axis-aligned bounds |
+
+Text assets (`ASSET_FLAG::TEXT`):
+
+| tag    | payload |
+|--------|---------|
+| `TEXT` | the text file's bytes, UTF-8, no terminator; version 1 |
 
 Files written before these layouts existed carry the tags with `size == 0`
 and `version == 0`; the readers report them as an unsupported version and the
@@ -444,6 +466,102 @@ centered on the box and sized to the farthest vertex; each submesh's box
 spans only the vertices its indices reach. A source with no submeshes gets
 one covering every index with no material.
 
+## Text assets
+
+Defined in `engine/core/include/engine/asset/text_asset.hpp`. A text asset
+is a UTF-8 file whose extension names its type (`.material` is `MATL`) and
+whose text carries its identity: a top-level `guid` key, 32 hex digits
+(`hi` then `lo`, the order every GUID is printed in). Nothing else about
+the container applies to the file itself: no header, no chunk table, no
+alignment. Those exist only in memory.
+
+**The syntax is lines.** Blank lines and `#` comments are skipped, a line
+is either `[section]` or `key = value`, keys and values are trimmed, a
+value ends at a `#` unless it is double quoted. Top-level keys (before any
+section) identify the asset; what the sections and keys mean is the asset
+type's business. `TextAssetCursor` walks the entries in order and reports
+the line of a malformed one; the type's parser sits on top of it. There is
+no nesting, no arrays and no escapes: the format is meant to be read and
+merged by people, and a material needs no more.
+
+**The prelude is synthesized.** `TEXT_ASSET::read_prelude(path)` reads the
+whole file (small by construction; `MAX_FILE_SIZE` guards it), finds the
+`guid`, and builds an `AssetHeader` with `ASSET_FLAG::TEXT | COOKED`, the
+type from the extension, `content_hash` = FNV-1a of the text, no
+dependencies, and one `TEXT` chunk at `payload_start` of the text's size,
+with `file_size` as if the file were laid out that way. The result is an
+ordinary `AssetView` that `AssetResourceProvider::add` copies and keys on.
+`COOKED` is set because a text asset has no editor-only chunks to strip,
+so the runtime's cooked-only provider accepts it. `ASSET_FILE::
+read_prelude_any(path)` dispatches on the extension, which is what
+`Engine::load_asset_file` calls.
+
+**Reading is the whole file.** When the provider loads a text resource it
+reads the file and hashes it (`TEXT_ASSET::matches` compares size and hash
+against the prelude), which is the staleness check `AssetReader::matches`
+does for a container; an edited file gets a fresh prelude and its old text
+dropped, a file whose `guid` changed is an error, exactly as for a
+re-imported `.lunaasset`. The bytes become the resident `TEXT` payload,
+`find_payload(CHUNK_TYPE::TEXT)` hands them to the type's parser, and
+`unload` streams them out like any payload.
+
+**No dependency table.** A text asset's references (a material's textures)
+are GUIDs in the text, read by the type's parser; the synthesized header
+has `dependency_count == 0`. A loader that wants to prefetch them parses
+first. This is accepted for now since materials are read once and their
+textures are uploaded lazily by GUID anyway.
+
+## Material files
+
+Defined in `engine/core/include/engine/asset/asset_types/material_asset.hpp`
+(`MATERIAL_ASSET::parse` / `write`, the `MaterialAsset` struct). A
+`.material` names a shader and the values of its material interface, set 2
+of `docs/render_architecture.md`: the block members, the textures and the
+samplers.
+
+```
+guid = e26f6a98c55cbe22179a52dd06b33f96
+shader = textured                   # render/<name>.slang (or .glsl), by name, as SHADER_LIBRARY::load takes it
+
+[params]                            # members of the material block, by name
+tint = 1 0.5 0.15 1                 # 1..16 numbers: scalar, vector or column-major matrix
+tiles = 3
+
+[textures]                          # Texture2D of set 2, by name: a texture asset GUID or `none`
+albedo = 179a52dd06b33f96e26f6a98c55cbe22
+
+[samplers]                          # SamplerState of set 2, by name
+albedo_sampler = linear repeat anisotropy=8
+```
+
+**The file is untyped; the shader's reflection types it.** A param is a
+name and a list of numbers, nothing more, so the file never repeats what
+the shader already declares and a shader edit never needs a file edit
+unless a name changes. When the material is loaded (`MATERIAL::load` in
+the graphics module) each param is looked up in the shader's reflected
+block: the count must be the member's component count and every number is
+converted to the member's scalar type (`float`, `int`, `uint`, `bool`),
+matrices column by column at the block's column stride. A name the shader
+does not declare, or a count that does not fit, is reported and skipped;
+the rest of the file still applies. The limits are `MAX_PARAMS` 32,
+`MAX_TEXTURES` 8, `MAX_SAMPLERS` 4, names under 64 characters, and
+duplicates or unknown sections are parse errors so a typo is noticed.
+
+**Samplers are words.** `linear` / `nearest` set all three filters,
+`repeat` / `clamp` / `mirror` all three address modes, `min=` / `mag=` /
+`mip=` / `u=` / `v=` / `w=` / `anisotropy=` override one; the default is
+trilinear repeat. Core keeps its own `MaterialSamplerDesc` so the file
+format has no GPU dependency; the graphics module maps it to a
+`GpuSamplerDesc`.
+
+**Writing is canonical.** `MATERIAL_ASSET::write` emits `guid`, `shader`,
+then the three sections in order, omitting empty ones, with numbers in the
+fewest digits that read back to the same `f32`, so saving an unchanged
+material produces a byte-identical file and a diff shows exactly the value
+that changed. `MATERIAL::save` (graphics) builds a `MaterialAsset` from a
+material entity's current block, slots and shader name and writes it, so
+the editor can round-trip a material it edited.
+
 ## Reading
 
 Reading is two steps with two types, so the cheap one can be done for every
@@ -510,7 +628,9 @@ is read once and resident in one place.
 **Registration is a view and a path.** `add(view, path)` makes an asset
 known under the GUID in its header. The provider copies the prelude, so
 the `AssetView` it keeps outlives the scan buffer, and keeps the path, which
-is the one thing a view does not carry. Nothing is read at this point: a
+is the one thing a view does not carry. A text asset's view (see [Text
+assets](#text-assets)) registers the same way; the provider tells the two
+apart by `ASSET_FLAG::TEXT` when it reads. Nothing is read at this point: a
 project scan registers every file it finds for the cost of the preludes it
 already read. `require_cooked` makes `add` refuse uncooked files, which the
 standalone runtime turns on.
@@ -565,6 +685,11 @@ matched to the editor file it came from.
   `MeshSource`; core has no decoders, so they live in the editor.
 - The `dump` tool and its `textconv` setup.
 - Asynchronous loading and an eviction policy for the asset provider.
-- GUID generation and the editor's path-to-GUID index.
+- GUID generation and the editor's path-to-GUID index (the editor
+  registers every `.lunaasset` and `.material` under the project at
+  startup for now).
+- A scene text asset (`.scene`), on the same line syntax.
+- Dependencies of text assets in the synthesized header (a material's
+  textures), so a loader can prefetch without parsing.
 - Platform-specific compiled data (BC7 on desktop, ASTC on mobile) is not
   addressed; version 1 targets desktop Vulkan only.

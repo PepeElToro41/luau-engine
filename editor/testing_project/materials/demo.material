@@ -1,0 +1,10 @@
+# The demo scene's material: render/textured.slang with the project's
+# texture. The editor applies it to the demo primitives at startup.
+guid = 1786f887a24190b435cd7dd4cbef587f
+shader = textured
+
+[params]
+tint = 1 1 1 1
+
+[textures]
+albedo = e26f6a98c55cbe22179a52dd06b33f96

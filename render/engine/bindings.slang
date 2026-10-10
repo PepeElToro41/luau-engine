@@ -1,16 +1,19 @@
-// The descriptor set convention (gpu/shaders/program.hpp), as the binding
+// The descriptor set convention (shaders/program.hpp), as the binding
 // attribute to put in front of a resource:
 //
-//     set 0  the frame block            engine/frame.slang declares it
-//     set 1  the pass's inputs          PASS_INPUT(i): the graph's input i
-//     set 2  the material               MATERIAL(b): one uniform block plus
-//                                       samplers, written by Renderer::set_*
+//     set 0  the frame block and the sampler table   engine/frame.slang declares them
+//     set 1  the pass's inputs                        PASS_INPUT(i): the graph's input i, a Texture2D
+//     set 2  the material                             MATERIAL(b): one uniform block, textures and
+//                                                     samplers, written by MATERIAL::set_*
 //     set 3  reserved
+//
+// Textures and samplers are separate (no Sampler2D): sample with one of the
+// frame's samplers, or declare a SamplerState of your own in the material.
 //
 //     struct MaterialParams { float4 color; };
 //     MATERIAL(0) ConstantBuffer<MaterialParams> material;
-//     MATERIAL(1) Sampler2D albedo;
-//     PASS_INPUT(0) Sampler2D scene_color;
+//     MATERIAL(1) Texture2D albedo;                       // albedo.Sample(sampler_linear, uv)
+//     PASS_INPUT(0) Texture2D scene_color;                // scene_color.Sample(sampler_linear_clamp, uv)
 #ifndef ENGINE_BINDINGS_SLANG
 #define ENGINE_BINDINGS_SLANG
 

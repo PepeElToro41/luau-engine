@@ -578,3 +578,163 @@ TEST_CASE("asset/asset_resource_provider: resources keep their addresses as othe
         std::filesystem::remove(paths[i]);
     }
 }
+
+// --- Text assets --------------------------------------------------------------
+
+#include "engine/asset/text_asset.hpp"
+
+#include <fstream>
+
+namespace {
+
+const AssetGuid TEXT_GUID = {0x179a52dd06b33f96ull, 0xe26f6a98c55cbe22ull};
+constexpr const char* TEXT_GUID_TEXT = "e26f6a98c55cbe22179a52dd06b33f96";
+
+std::string temp_material_path(const char* stem) {
+    return (std::filesystem::temp_directory_path() / (std::string("luau_engine_provider_") + stem + ".material")).string();
+}
+
+void write_text_file(const std::string& path, const std::string& text) {
+    std::ofstream out(path, std::ios::binary | std::ios::trunc);
+    out << text;
+}
+
+std::string material_text(const char* shader) {
+    return "guid = " + std::string(TEXT_GUID_TEXT) + "\nshader = " + shader + "\n";
+}
+
+AssetView scan_text(const std::string& path) {
+    AssetView view = TEXT_ASSET::read_prelude(path.c_str(), MEMORY::heap_allocator());
+    REQUIRE(view.is_ok());
+    return view;
+}
+
+} // namespace
+
+TEST_CASE("asset/asset_resource_provider: a text asset loads its file as the TEXT chunk") {
+    const std::string path = temp_material_path("text");
+    const std::string text = material_text("unlit");
+    write_text_file(path, text);
+    AssetView view = scan_text(path);
+
+    AssetResourceProvider provider;
+    AssetResource* material = provider.add(view, path.c_str());
+    REQUIRE(material != nullptr);
+    free_scan(&view);
+    CHECK(material->is_text());
+    CHECK(material->guid == TEXT_GUID);
+    CHECK(material->view.header->type == ASSET_TYPE::MATERIAL);
+    CHECK_FALSE(material->is_loaded());
+    CHECK(provider.resident_bytes() == 0);
+
+    REQUIRE(provider.get(TEXT_GUID) == material);
+    CHECK(material->is_loaded());
+    const ChunkEntry* entry = nullptr;
+    const u8* payload = material->find_payload(CHUNK_TYPE::TEXT, &entry);
+    REQUIRE(payload != nullptr);
+    REQUIRE(entry != nullptr);
+    CHECK(entry->size == text.size());
+    CHECK(std::memcmp(payload, text.data(), text.size()) == 0);
+    CHECK(is_aligned(payload, ASSET_FILE::PAYLOAD_ALIGNMENT));
+    CHECK(material->resident_bytes == text.size());
+    CHECK(provider.resident_bytes() == text.size());
+
+    SUBCASE("a second get reads nothing and returns the same payload") {
+        std::filesystem::remove(path);
+        CHECK(provider.get(TEXT_GUID) == material);
+        CHECK(material->find_payload(CHUNK_TYPE::TEXT) == payload);
+    }
+    SUBCASE("unload streams the text out and get reads it again") {
+        provider.unload(material);
+        CHECK_FALSE(material->is_loaded());
+        CHECK(provider.resident_bytes() == 0);
+        REQUIRE(provider.get(TEXT_GUID) == material);
+        const u8* again = material->find_payload(CHUNK_TYPE::TEXT, &entry);
+        REQUIRE(again != nullptr);
+        CHECK(std::memcmp(again, text.data(), text.size()) == 0);
+    }
+    SUBCASE("get_chunk reads the one chunk") {
+        provider.unload(material);
+        const u8* chunk = provider.get_chunk(material, CHUNK_TYPE::TEXT, &entry);
+        REQUIRE(chunk != nullptr);
+        CHECK(entry->size == text.size());
+        CHECK(provider.get_chunk(material, CHUNK_TYPE::MESH) == nullptr);
+    }
+    SUBCASE("the cooked-only runtime accepts text assets") {
+        AssetResourceProvider runtime;
+        runtime.require_cooked = true;
+        AssetView again = scan_text(path);
+        CHECK(runtime.add(again, path.c_str()) != nullptr);
+        free_scan(&again);
+        runtime.free();
+    }
+    provider.free();
+    std::filesystem::remove(path);
+    CHECK_ARENA_CLEAN();
+}
+
+TEST_CASE("asset/asset_resource_provider: an edited text asset is refreshed before it is read") {
+    const std::string path = temp_material_path("edited");
+    const std::string old_text = material_text("unlit");
+    write_text_file(path, old_text);
+    AssetView view = scan_text(path);
+    AssetResourceProvider provider;
+    AssetResource* material = provider.add(view, path.c_str());
+    REQUIRE(material != nullptr);
+    free_scan(&view);
+    REQUIRE(provider.get(TEXT_GUID) != nullptr);
+    const u64 old_hash = material->view.header->content_hash;
+
+    // Edit the file: same guid, longer text.
+    const std::string new_text = material_text("textured") + "\n[params]\ntint = 1 1 1 1\n";
+    write_text_file(path, new_text);
+
+    SUBCASE("get with the text resident does not notice (nothing is read)") {
+        CHECK(provider.get(TEXT_GUID) == material);
+        CHECK(material->view.header->content_hash == old_hash);
+    }
+    SUBCASE("refresh takes the new prelude and drops the old text") {
+        REQUIRE(provider.refresh(material));
+        CHECK(material->view.header->content_hash != old_hash);
+        CHECK(material->view.find_chunk(CHUNK_TYPE::TEXT)->size == new_text.size());
+        CHECK_FALSE(material->is_loaded());
+        CHECK(provider.resident_bytes() == 0);
+        REQUIRE(provider.get(TEXT_GUID) == material);
+        const ChunkEntry* entry = nullptr;
+        const u8* payload = material->find_payload(CHUNK_TYPE::TEXT, &entry);
+        REQUIRE(payload != nullptr);
+        CHECK(entry->size == new_text.size());
+        CHECK(std::memcmp(payload, new_text.data(), new_text.size()) == 0);
+    }
+    SUBCASE("get after unload reads the new version") {
+        provider.unload(material);
+        REQUIRE(provider.get(TEXT_GUID) == material);
+        const ChunkEntry* entry = nullptr;
+        const u8* payload = material->find_payload(CHUNK_TYPE::TEXT, &entry);
+        REQUIRE(payload != nullptr);
+        CHECK(entry->size == new_text.size());
+        CHECK(provider.resident_bytes() == new_text.size());
+    }
+    SUBCASE("a file that now holds another guid is refused and the resource is unchanged") {
+        write_text_file(path, "guid = 99aabbccddeeff001122334455667788\nshader = unlit\n");
+        provider.unload(material);
+        CHECK(provider.get(TEXT_GUID) == nullptr);
+        CHECK(material->view.header->content_hash == old_hash);
+        CHECK(provider.find(TEXT_GUID) == material);
+    }
+    SUBCASE("a file that lost its guid is refused") {
+        write_text_file(path, "shader = unlit\n");
+        provider.unload(material);
+        CHECK(provider.get(TEXT_GUID) == nullptr);
+        CHECK(material->view.header->content_hash == old_hash);
+    }
+    SUBCASE("a file that disappeared is an error") {
+        std::filesystem::remove(path);
+        provider.unload(material);
+        CHECK(provider.get(TEXT_GUID) == nullptr);
+        CHECK_FALSE(provider.refresh(material));
+    }
+    provider.free();
+    std::filesystem::remove(path);
+    CHECK_ARENA_CLEAN();
+}

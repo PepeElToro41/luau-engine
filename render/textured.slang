@@ -2,7 +2,8 @@
 #pragma pass shadow vertex
 
 // Albedo texture times a tint. `tint` starts at zero like every material
-// value, so set it (Renderer::set_vec4) or the mesh draws black.
+// value, so set it (MATERIAL::set_vec4) or the mesh draws black. The
+// texture is sampled with the frame's trilinear repeat sampler.
 
 #include "engine/frame.slang"
 #include "engine/object.slang"
@@ -14,7 +15,7 @@ struct MaterialParams {
 };
 
 MATERIAL(0) ConstantBuffer<MaterialParams> material;
-MATERIAL(1) Sampler2D albedo;
+MATERIAL(1) Texture2D albedo;
 
 struct VertexInput {
     VERTEX_POSITION  float3 position;
@@ -36,5 +37,5 @@ VertexOutput vertex(VertexInput v) {
 
 [shader("fragment")]
 float4 fragment(VertexOutput v) : SV_Target {
-    return albedo.Sample(v.uv) * material.tint;
+    return albedo.Sample(sampler_linear, v.uv) * material.tint;
 }

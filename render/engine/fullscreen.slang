@@ -4,11 +4,12 @@
 // whose fragment function does the work:
 //
 //     #pragma pass fullscreen vertex fragment
+//     #include "engine/frame.slang"
 //     #include "engine/fullscreen.slang"
 //     #include "engine/bindings.slang"
-//     PASS_INPUT(0) Sampler2D input0;              // the pass's first input
+//     PASS_INPUT(0) Texture2D input0;              // the pass's first input
 //     [shader("fragment")]
-//     float4 fragment(FullscreenVertex v) : SV_Target { return input0.Sample(v.uv); }
+//     float4 fragment(FullscreenVertex v) : SV_Target { return input0.Sample(sampler_linear_clamp, v.uv); }
 #ifndef ENGINE_FULLSCREEN_SLANG
 #define ENGINE_FULLSCREEN_SLANG
 

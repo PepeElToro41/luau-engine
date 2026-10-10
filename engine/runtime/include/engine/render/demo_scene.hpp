@@ -6,9 +6,10 @@
 struct Engine;
 
 // A stand-in scene until projects describe their own: a camera, the unlit
-// shader, one material and one procedural mesh entity. Both apps spawn it
-// at startup so there is something to look at while the real content
-// pipeline is built.
+// shader, one material and the three primitive shapes (a cube, a sphere
+// and a cylinder, each a PrimitiveRenderer entity). Both apps spawn it at
+// startup so there is something to look at while the real content pipeline
+// is built.
 namespace RENDER_DEMO {
 
 // False if the shader could not be loaded or the mesh not uploaded.
@@ -28,8 +29,12 @@ bool is_post_enabled(Engine& engine);
 bool set_shadow_enabled(Engine& engine, bool enabled);
 bool is_shadow_enabled(Engine& engine);
 
-// Switches the cube to render/textured.slang with `texture` (a registered
-// texture asset) as its albedo. False if the shader could not be loaded.
+// Switches every demo entity to render/textured.slang with `texture` (a
+// registered texture asset) as its albedo. False if the shader could not be loaded.
 bool set_texture(Engine& engine, const AssetGuid& texture);
+
+// Draws every demo entity with the .material asset `material` (registered
+// through Engine::load_asset_file; MATERIAL::load). False if it did not load.
+bool set_material(Engine& engine, const AssetGuid& material);
 
 } // namespace RENDER_DEMO

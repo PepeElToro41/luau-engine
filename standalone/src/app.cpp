@@ -1,9 +1,33 @@
 #include "app.hpp"
 
+#include "engine/ecs/world.hpp"
+#include "engine/render/components.hpp"
 #include "engine/render/demo_scene.hpp"
 #include "engine/render/renderer.hpp"
+#include "engine/scene/scene.hpp"
 
 #include <cstdio>
+
+// Draws the frame from the scene's first camera: the standalone has no
+// camera of its own, so the one under scene_root gets the RenderCamera tag.
+static bool tag_scene_camera(Engine& engine) {
+    World* world = engine.get_singleton<World>();
+    Scene* scene = engine.get_singleton<Scene>();
+    if (world == nullptr || scene == nullptr) {
+        return false;
+    }
+    EntityId camera = 0;
+    world->query<Transform, Camera>().each([&](const EntityId entity, Transform&, Camera&) {
+        if (camera == 0 && scene->contains(entity)) {
+            camera = entity;
+        }
+    });
+    if (camera == 0) {
+        return false;
+    }
+    world->add<RenderCamera>(camera);
+    return true;
+}
 
 bool App::init() {
     if (!DISPLAY_WINDOW::sdl_initialize()) {
@@ -12,20 +36,23 @@ bool App::init() {
     if (!this->window.initialize(this->title, this->width, this->height)) {
         return false;
     }
-    if (!this->gpu.init(this->window.window)) {
+    GpuInitDesc gpu_desc;
+    gpu_desc.window = this->window.window;
+    this->gpu = GPU::init(gpu_desc);
+    if (this->gpu == nullptr) {
+        fprintf(stderr, "[app] GPU init failed\n");
         return false;
     }
-    if (!this->presenter.init(&this->gpu, this->window.window)) {
-        fprintf(stderr, "[app] presenter init failed\n");
-        return false;
-    }
-    if (!this->engine.init(&this->gpu)) {
+    if (!this->engine.init(this->gpu)) {
         return false;
     }
     // A shipped build only ever loads cooked assets (see docs/asset_format.md).
     this->engine.get_singleton<AssetResourceProvider>()->require_cooked = true;
     if (!RENDER_DEMO::spawn(this->engine)) {
         fprintf(stderr, "[app] demo scene could not be created\n");
+    }
+    if (!tag_scene_camera(this->engine)) {
+        fprintf(stderr, "[app] the scene has no camera to render from\n");
     }
     if (this->demo_post) {
         RENDER_DEMO::set_post_enabled(this->engine, true);
@@ -51,10 +78,14 @@ void App::run() {
 
 void App::shutdown() {
     this->running = false;
-    this->gpu.wait_idle();
+    if (this->gpu != nullptr) {
+        GPU::wait_idle(this->gpu);
+    }
     this->engine.shutdown();
-    this->presenter.shutdown();
-    this->gpu.shutdown();
+    if (this->gpu != nullptr) {
+        GPU::shutdown(this->gpu);
+        this->gpu = nullptr;
+    }
     this->window.shutdown();
     DISPLAY_WINDOW::sdl_shutdown();
 }
@@ -68,14 +99,14 @@ void App::poll_events() {
             this->running = false;
             break;
         case SDL_EVENT_WINDOW_PIXEL_SIZE_CHANGED:
-            this->presenter.mark_resized();
+            GPU::mark_resized(this->gpu);
             break;
         case SDL_EVENT_KEY_DOWN:
             if (event.key.repeat) {
                 break;
             }
             if (event.key.key == SDLK_F5) {
-                this->engine.get_singleton<Renderer>()->reload_all_shaders();
+                SHADER_LIBRARY::reload_all(*this->engine.get_singleton<Renderer>());
             } else if (event.key.key == SDLK_F6) {
                 RENDER_DEMO::set_post_enabled(this->engine, !RENDER_DEMO::is_post_enabled(this->engine));
             } else if (event.key.key == SDLK_F7) {
@@ -91,10 +122,14 @@ void App::poll_events() {
 void App::frame(const f32 dt) {
     this->engine.update(dt);
 
-    FrameContext frame;
-    if (!this->presenter.begin(frame)) {
+    GpuFrame frame;
+    if (!GPU::begin_frame(this->gpu, frame)) {
         return;
     }
-    this->engine.render(frame);
-    this->presenter.end();
+    FrameContext ctx;
+    ctx.frame = frame;
+    ctx.target = frame.backbuffer;
+    ctx.target_state = GPU_STATE_UNDEFINED;
+    this->engine.render(ctx);
+    GPU::end_frame(this->gpu, frame);
 }

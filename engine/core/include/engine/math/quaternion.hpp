@@ -48,6 +48,33 @@ struct Quaternion {
     static Quaternion from_euler(const f32 pitch, const f32 yaw, const f32 roll) {
         return rotation_y(yaw) * rotation_x(pitch) * rotation_z(roll);
     }
+    // The Euler angles (pitch, yaw, roll) that from_euler() turns back into
+    // this unit quaternion: pitch in [-PI/2, PI/2], yaw and roll in [-PI, PI].
+    // At the gimbal lock (pitch of +-90 degrees) yaw and roll are not
+    // separable, so roll is reported as 0 and yaw carries the whole turn.
+    Vector3 to_euler() const {
+        const f32 x = this->x(), y = this->y(), z = this->z(), w = this->w();
+        // Rows of the rotation matrix yaw * pitch * roll builds; see the
+        // derivation in the test file.
+        const f32 m00 = 1.0f - 2.0f * (y * y + z * z);
+        const f32 m01 = 2.0f * (x * y - w * z);
+        const f32 m02 = 2.0f * (x * z + w * y);
+        const f32 m10 = 2.0f * (x * y + w * z);
+        const f32 m11 = 1.0f - 2.0f * (x * x + z * z);
+        const f32 m12 = 2.0f * (y * z - w * x);
+        const f32 m22 = 1.0f - 2.0f * (x * x + y * y);
+        // m12 = -sin(pitch)
+        const f32 sin_pitch = MATH::clamp(-m12, -1.0f, 1.0f);
+        if (std::fabs(sin_pitch) > 1.0f - 1e-6f) {
+            // cos(pitch) = 0: m00 = cos(yaw -+ roll), m01 = +-sin(yaw -+ roll).
+            const f32 pitch = sin_pitch > 0.0f ? MATH::PI * 0.5f : -MATH::PI * 0.5f;
+            const f32 yaw = std::atan2(sin_pitch > 0.0f ? m01 : -m01, m00);
+            return Vector3(pitch, yaw, 0.0f);
+        }
+        // m02 = sin(yaw) cos(pitch), m22 = cos(yaw) cos(pitch),
+        // m10 = cos(pitch) sin(roll), m11 = cos(pitch) cos(roll).
+        return Vector3(std::asin(sin_pitch), std::atan2(m02, m22), std::atan2(m10, m11));
+    }
     // The shortest rotation taking unit vector `from` onto unit vector `to`.
     // Opposite vectors rotate 180 degrees about an arbitrary perpendicular.
     static Quaternion from_to(const Vector3 from, const Vector3 to) {

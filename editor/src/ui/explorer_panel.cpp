@@ -1,12 +1,14 @@
 #include "ui/explorer_panel.hpp"
 
+#include "engine/ecs/world.hpp"
+#include "engine/scene/scene.hpp"
 #include "ui/panels.hpp"
 
 #include <cfloat>
+#include <cstdint>
+#include <cstdio>
 
-static constexpr u64 ROOT_ID = 1;
-
-void ExplorerPanel::draw(bool* open) {
+void ExplorerPanel::draw(bool* open, World* world, Scene* scene, Selection& selection) {
     if (!ImGui::Begin(PANELS::EXPLORER, open)) {
         ImGui::End();
         return;
@@ -15,24 +17,105 @@ void ExplorerPanel::draw(bool* open) {
     this->filter.Draw("##filter", -FLT_MIN);
     ImGui::Separator();
 
-    if (ImGui::BeginChild("tree")) {
-        ImGuiTreeNodeFlags root_flags = ImGuiTreeNodeFlags_OpenOnArrow
-                                      | ImGuiTreeNodeFlags_DefaultOpen
-                                      | ImGuiTreeNodeFlags_SpanAvailWidth;
-        if (this->selected == ROOT_ID) {
-            root_flags |= ImGuiTreeNodeFlags_Selected;
-        }
+    if (world != nullptr && selection.is_entity() && !world->alive(selection.entity)) {
+        selection.clear();
+    }
 
-        const bool root_open = ImGui::TreeNodeEx("Scene", root_flags);
-        if (ImGui::IsItemClicked() && !ImGui::IsItemToggledOpen()) {
-            this->selected = ROOT_ID;
-        }
-        if (root_open) {
+    if (ImGui::BeginChild("tree")) {
+        if (world == nullptr || scene == nullptr || !world->alive(scene->root)) {
             ImGui::TextDisabled("(no world loaded)");
-            ImGui::TreePop();
+        } else {
+            DynamicArray<EntityId> stack;
+            this->draw_entity(*world, scene->root, true, stack, selection);
+            // Editor entities: outside the scene, so outside its tree. While
+            // filtering they follow the same rule as any node, and the
+            // separator goes with them.
+            if (this->editor_camera != 0 && world->alive(this->editor_camera)
+                && (!this->filter.IsActive() || this->subtree_matches(*world, this->editor_camera, stack))) {
+                ImGui::Separator();
+                this->draw_entity(*world, this->editor_camera, false, stack, selection);
+            }
+            stack.free();
         }
     }
     ImGui::EndChild();
 
     ImGui::End();
+}
+
+void ExplorerPanel::label_of(World& world, const EntityId entity, char* out, const usz capacity) {
+    const char* name = SCENE::name(world, entity);
+    if (name != nullptr && name[0] != '\0') {
+        snprintf(out, capacity, "%s", name);
+    } else {
+        snprintf(out, capacity, "entity %llu", static_cast<unsigned long long>(ECS::ENTITY_LOW(entity)));
+    }
+}
+
+bool ExplorerPanel::subtree_matches(World& world, const EntityId entity, DynamicArray<EntityId>& stack) {
+    char label[ENTITY_NAME_CAPACITY + 16];
+    ExplorerPanel::label_of(world, entity, label, sizeof(label));
+    if (this->filter.PassFilter(label)) {
+        return true;
+    }
+    const usz start = stack.count;
+    const usz count = SCENE::children(world, entity, stack);
+    bool found = false;
+    for (usz i = 0; i < count && !found; i++) {
+        found = this->subtree_matches(world, stack[start + i], stack);
+    }
+    stack.count = start;
+    return found;
+}
+
+void ExplorerPanel::draw_entity(World& world, const EntityId entity, const bool is_root, DynamicArray<EntityId>& stack, Selection& selection) {
+    const bool filtering = this->filter.IsActive();
+    char label[ENTITY_NAME_CAPACITY + 16];
+    ExplorerPanel::label_of(world, entity, label, sizeof(label));
+
+    // While filtering, a node is listed if it or something below it matches,
+    // and opened so the match is reachable. The root always stays.
+    if (filtering && !is_root && !this->subtree_matches(world, entity, stack)) {
+        return;
+    }
+
+    const usz start = stack.count;
+    const usz child_count = SCENE::children(world, entity, stack);
+
+    ImGuiTreeNodeFlags flags = ImGuiTreeNodeFlags_OpenOnArrow
+                             | ImGuiTreeNodeFlags_OpenOnDoubleClick
+                             | ImGuiTreeNodeFlags_SpanAvailWidth;
+    if (child_count == 0) {
+        flags |= ImGuiTreeNodeFlags_Leaf | ImGuiTreeNodeFlags_NoTreePushOnOpen;
+    }
+    if (is_root) {
+        flags |= ImGuiTreeNodeFlags_DefaultOpen;
+    }
+    if (selection.is_entity() && selection.entity == entity) {
+        flags |= ImGuiTreeNodeFlags_Selected;
+    }
+    if (filtering && child_count > 0) {
+        ImGui::SetNextItemOpen(true, ImGuiCond_Always);
+    }
+
+    // The entity id is the ImGui id, so renames keep the node's open state.
+    const bool node_open = ImGui::TreeNodeEx(reinterpret_cast<void*>(static_cast<uintptr_t>(entity)), flags, "%s", label);
+    if (ImGui::IsItemClicked() && !ImGui::IsItemToggledOpen()) {
+        selection.select_entity(entity);
+    }
+    if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayNormal)) {
+        ImGui::SetTooltip("id %llu, generation %llu",
+            static_cast<unsigned long long>(ECS::ENTITY_LOW(entity)),
+            static_cast<unsigned long long>(entity >> ECS::ENTITY_BITS));
+    }
+
+    if (node_open && child_count > 0) {
+        for (usz i = 0; i < child_count; i++) {
+            // stack[start + i] stays put: deeper levels only append past it
+            // and truncate back before returning.
+            this->draw_entity(world, stack[start + i], false, stack, selection);
+        }
+        ImGui::TreePop();
+    }
+    stack.count = start;
 }

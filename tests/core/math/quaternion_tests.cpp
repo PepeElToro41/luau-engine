@@ -96,6 +96,49 @@ TEST_CASE("math/quaternion: from_euler is yaw * pitch * roll") {
     CHECK(MATH::approx_equal(Quaternion::from_euler(pitch, yaw, roll), expected));
 }
 
+// to_euler reads the matrix of yaw * pitch * roll. With Ry(y) Rx(p) Rz(r):
+//   row 0 = [cy cr + sy sp sr,  -cy sr + sy sp cr,  sy cp]
+//   row 1 = [cp sr,              cp cr,             -sp   ]
+//   row 2 = [-sy cr + cy sp sr,  sy sr + cy sp cr,  cy cp]
+// so pitch = asin(-m12), yaw = atan2(m02, m22), roll = atan2(m10, m11).
+TEST_CASE("math/quaternion: to_euler inverts from_euler") {
+    const Vector3 identity = Quaternion().to_euler();
+    CHECK(identity.x == doctest::Approx(0.0f));
+    CHECK(identity.y == doctest::Approx(0.0f));
+    CHECK(identity.z == doctest::Approx(0.0f));
+
+    const Vector3 e = Quaternion::from_euler(0.3f, -1.1f, 0.7f).to_euler();
+    CHECK(e.x == doctest::Approx(0.3f).epsilon(1e-4f));
+    CHECK(e.y == doctest::Approx(-1.1f).epsilon(1e-4f));
+    CHECK(e.z == doctest::Approx(0.7f).epsilon(1e-4f));
+
+    SUBCASE("round trips over the whole range") {
+        const f32 pitches[] = {-1.4f, -0.5f, 0.0f, 0.9f, 1.5f};
+        const f32 yaws[] = {-3.0f, -1.7f, 0.0f, 0.4f, 2.9f};
+        const f32 rolls[] = {-2.5f, -0.1f, 0.0f, 1.3f, 3.1f};
+        for (const f32 pitch : pitches) {
+            for (const f32 yaw : yaws) {
+                for (const f32 roll : rolls) {
+                    const Quaternion q = Quaternion::from_euler(pitch, yaw, roll);
+                    const Vector3 back = q.to_euler();
+                    CHECK(MATH::approx_equal(Quaternion::from_euler(back.x, back.y, back.z), q, 1e-4f));
+                    CHECK(std::fabs(back.x) <= MATH::PI * 0.5f + 1e-5f);
+                }
+            }
+        }
+    }
+
+    SUBCASE("gimbal lock reports the turn as yaw and roll as 0") {
+        for (const f32 sign : {1.0f, -1.0f}) {
+            const Quaternion q = Quaternion::from_euler(sign * MATH::PI * 0.5f, 0.4f, 0.9f);
+            const Vector3 back = q.to_euler();
+            CHECK(back.x == doctest::Approx(sign * MATH::PI * 0.5f));
+            CHECK(back.z == doctest::Approx(0.0f));
+            CHECK(MATH::approx_equal(Quaternion::from_euler(back.x, back.y, back.z), q, 1e-4f));
+        }
+    }
+}
+
 TEST_CASE("math/quaternion: from_to") {
     const Vector3 from = Vector3(1.0f, 2.0f, 3.0f).normalized();
     const Vector3 to = Vector3(-2.0f, 0.5f, 1.0f).normalized();

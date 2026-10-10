@@ -1,40 +1,33 @@
 #pragma once
 
 #include "engine/display_window.hpp"
-#include "engine/engine.h"
+#include "engine/engine.hpp"
+#include "engine/gpu/gpu.hpp"
+#include "engine/gpu/vulkan/vk_access.hpp"
 #include "engine/render/renderer.hpp"
-#include "engine/gpu/device.hpp"
-#include "engine/gpu/render_target.hpp"
-#include "engine/gpu/window_presenter.hpp"
+#include "editor_camera.hpp"
 #include "file_dialog.hpp"
 #include "project.hpp"
+#include "selection.hpp"
 #include "ui/asset_browser_panel.hpp"
 #include "ui/explorer_panel.hpp"
 #include "ui/import/import_panel.hpp"
+#include "ui/inspector_panel.hpp"
 #include "ui/output_panel.hpp"
 
 #include <imgui.h>
 
-// The editor application: the same window / device / presenter / engine as
-// the standalone build (standalone/src/app.hpp), plus the Dear ImGui context
-// the editor is drawn with. The engine renders into an offscreen target that
-// the Viewport panel shows as a texture; the swapchain image itself only ever
-// receives the UI.
-//
-// Panels: Explorer (left), Viewport (center), Asset Browser, Output and Stats
-// (bottom), laid out by DOCK_LAYOUT::build_default on first run and restorable
-// from the View menu. Each panel with state of its own lives in ui/. Import
-// is a floating window that shows up when File > Import... (the OS file
-// picker) or a double-click in the Asset Browser queues a source file.
-//
-// The project being edited is the engine's Project singleton. There is no
-// open-project page yet, so init() opens TEST_PROJECT_DIR (the repository
-// root, from CMake) to have something for the Asset Browser to show.
+#include <filesystem>
+
+// The editor application: the same window / GPU / engine as the standalone
+// app, but the engine renders into per-slot viewport textures shown in an
+// ImGui Viewport panel, and only the UI is drawn into the swapchain. ImGui's
+// Vulkan backend is the one piece of the editor that sees Vulkan, fed
+// through vk_access.hpp. The Viewport is drawn from the editor's own fly
+// camera (editor_camera.hpp), driven from SDL's input state each frame
+// before the engine renders.
 struct App {
-    // Returns false if anything could not start. shutdown() is still safe to
-    // call afterwards.
     bool init();
-    // Runs frames until the window is closed or quit is requested.
     void run();
     void shutdown();
 
@@ -43,70 +36,68 @@ struct App {
     int height = 900;
 
     DisplayWindow window;
-    GpuDevice gpu;
-    WindowPresenter presenter;
+    GpuContext* gpu = nullptr;
     Engine engine;
-
     bool running = false;
 
 private:
-    // Creates the engine's Project singleton and opens the hardcoded test
-    // project into it. Replace with the open-project flow once it exists.
     void open_test_project();
-
+    void scan_project_assets(const Project& project);
     bool init_ui();
     void shutdown_ui();
-    bool init_viewport(VkExtent2D extent);
+    bool init_viewport(u32 width, u32 height);
     void shutdown_viewport();
-    // Applies a pending viewport size change. Must run while no frame is
-    // being recorded: it waits the device idle and rebuilds the images.
     void apply_viewport_resize();
-
-    // Polls SDL, feeding every event to ImGui before acting on it.
     void poll_events();
-    // Shows the OS picker for importable files, starting in the project.
     void open_import_dialog();
-    // Moves files picked in the OS dialog into the Import panel.
     void poll_import_dialog();
-    // Queues `source` (absolute, or relative to the project root) in the
-    // Import panel with the Asset Browser's folder as destination.
     void queue_import(const std::filesystem::path& source);
     void frame(f32 dt);
-
-    // Builds the ImGui frame: dockspace, main menu, panels.
     void draw_editor();
     void draw_main_menu();
+    // Gives a file selection the entity it is loaded as (a .material's
+    // Material entity), once per file picked.
+    void resolve_selection();
+    // Performs the Inspector's Save / Reload request on the selected file.
+    void apply_file_action(InspectorFileAction action);
     // Renderer messages land in the Output panel.
     static void render_log(RenderLogLevel level, const char* text, void* user_data);
     void draw_viewport();
     void draw_stats();
 
     bool ui_ready = false;
-    // Set to rebuild the default dock layout at the start of the next frame.
     bool reset_layout = false;
-
     OutputPanel output;
+    // What the Explorer or the Asset Browser picked last (selection.hpp);
+    // `resolved_file` is the file whose entity was last looked up.
+    Selection selection;
+    std::filesystem::path resolved_file;
     ExplorerPanel explorer;
+    InspectorPanel inspector;
     AssetBrowserPanel asset_browser;
     ImportPanel import_panel;
     NativeFileDialog file_dialog;
+    EditorCameraController editor_camera;
+    // Whether the mouse was over the Viewport image when the UI was last
+    // drawn; where right-click starts fly mode.
+    bool viewport_hovered = false;
 
-    // Formats. ImGui's colors are already display-encoded, so the swapchain
-    // it draws into is _UNORM (no second encode). The engine renders linear
-    // light, so the scene target is _SRGB like the standalone swapchain, and
-    // the UI samples it through a _UNORM view to show the encoded bytes 1:1.
-    static constexpr VkFormat UI_FORMAT = VK_FORMAT_B8G8R8A8_UNORM;
-    static constexpr VkFormat SCENE_FORMAT = VK_FORMAT_B8G8R8A8_SRGB;
-
-    // One scene target per frame in flight, so the UI pass of frame N never
-    // samples the image frame N+1 is writing.
-    OffscreenTarget viewport[FRAMES_IN_FLIGHT];
+    // ImGui writes already-encoded colors, so the swapchain is UNORM; the
+    // scene is drawn into an sRGB texture that ImGui samples through a UNORM
+    // view, copying the encoded bytes through untouched.
+    static constexpr GpuFormat UI_FORMAT = GPU_FORMAT_BGRA8_UNORM;
+    static constexpr GpuFormat SCENE_FORMAT = GPU_FORMAT_BGRA8_SRGB;
+    GpuTexture viewport[FRAMES_IN_FLIGHT] = {};
+    GpuResourceState viewport_state[FRAMES_IN_FLIGHT] = {};
     VkDescriptorSet viewport_texture[FRAMES_IN_FLIGHT] = {};
-    VkExtent2D viewport_extent = {1280, 720};
-    VkExtent2D viewport_requested = {1280, 720};
+    GpuSampler viewport_sampler;
+    u32 viewport_width = 1280;
+    u32 viewport_height = 720;
+    u32 viewport_requested_width = 1280;
+    u32 viewport_requested_height = 720;
 
-    // Panel visibility, toggled from the View menu.
     bool show_explorer = true;
+    bool show_inspector = true;
     bool show_viewport = true;
     bool show_output = true;
     bool show_stats = true;
@@ -115,6 +106,5 @@ private:
     bool show_demo_window = false;
     bool demo_post = false;
     bool demo_shadow = false;
-
     f32 frame_dt = 0.0f;
 };

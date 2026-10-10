@@ -32,5 +32,5 @@ VertexOutput vertex(VertexInput v) {
 
 [shader("fragment")]
 float4 fragment(VertexOutput v) : SV_Target {
-    return material.color;
+  	return float4(0, 1, 1, 1);
 }

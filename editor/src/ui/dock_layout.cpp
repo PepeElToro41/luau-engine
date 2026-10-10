@@ -20,6 +20,9 @@ void build_default(const ImGuiID dockspace) {
     ImGuiID center = dockspace;
     ImGuiID bottom = ImGui::DockBuilderSplitNode(center, ImGuiDir_Down, 0.25f, nullptr, &center);
     ImGuiID left = ImGui::DockBuilderSplitNode(center, ImGuiDir_Left, 0.20f, nullptr, &center);
+    // Explorer above, Inspector below, so the selection and its components
+    // are side by side.
+    ImGuiID left_bottom = ImGui::DockBuilderSplitNode(left, ImGuiDir_Down, 0.5f, nullptr, &left);
 
     // The viewport is the central node: it absorbs resizes and keeps no tab
     // bar, so the scene fills it edge to edge.
@@ -27,6 +30,7 @@ void build_default(const ImGuiID dockspace) {
     center_node->SetLocalFlags(ImGuiDockNodeFlags_CentralNode | ImGuiDockNodeFlags_NoTabBar);
 
     ImGui::DockBuilderDockWindow(PANELS::EXPLORER, left);
+    ImGui::DockBuilderDockWindow(PANELS::INSPECTOR, left_bottom);
     ImGui::DockBuilderDockWindow(PANELS::VIEWPORT, center);
     ImGui::DockBuilderDockWindow(PANELS::ASSET_BROWSER, bottom);
     ImGui::DockBuilderDockWindow(PANELS::OUTPUT, bottom);

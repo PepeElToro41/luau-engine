@@ -6,6 +6,7 @@ namespace PANELS {
 
 inline constexpr const char* OUTPUT = "Output";
 inline constexpr const char* EXPLORER = "Explorer";
+inline constexpr const char* INSPECTOR = "Inspector";
 inline constexpr const char* VIEWPORT = "Viewport";
 inline constexpr const char* STATS = "Stats";
 inline constexpr const char* ASSET_BROWSER = "Asset Browser";

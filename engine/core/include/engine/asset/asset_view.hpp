@@ -51,8 +51,9 @@ namespace ASSET_TYPE {
 
 constexpr u32 TEXTURE = ASSET_FILE::fourcc("TEX2");
 constexpr u32 MESH = ASSET_FILE::fourcc("MESH");
-// Reserved, nothing writes these yet.
+// A text asset (text_asset.hpp): a `.material` file.
 constexpr u32 MATERIAL = ASSET_FILE::fourcc("MATL");
+// Reserved, nothing writes these yet.
 constexpr u32 SCENE = ASSET_FILE::fourcc("SCNE");
 constexpr u32 SHADER = ASSET_FILE::fourcc("SHDR");
 
@@ -78,12 +79,21 @@ constexpr u32 VERTICES = ASSET_FILE::fourcc("VERT"); // one chunk per vertex str
 constexpr u32 INDICES = ASSET_FILE::fourcc("INDX");  // index data
 constexpr u32 BOUNDS = ASSET_FILE::fourcc("BBOX");   // axis-aligned bounds
 
+// Text assets (ASSET_FLAG::TEXT, text_asset.hpp): the one chunk, the
+// file's bytes.
+constexpr u32 TEXT = ASSET_FILE::fourcc("TEXT");
+
 } // namespace CHUNK_TYPE
 
 namespace ASSET_FLAG {
 
 // Editor-only chunks were stripped. The runtime refuses files without it.
 constexpr u32 COOKED = 1u << 0;
+// The file is a text asset (text_asset.hpp), not a .lunaasset: this prelude
+// was built in memory from the text, and its one TEXT chunk is the file's
+// bytes. Never on disk. Text assets carry no editor chunks, so COOKED is
+// set alongside.
+constexpr u32 TEXT = 1u << 1;
 
 } // namespace ASSET_FLAG
 
@@ -226,6 +236,8 @@ struct AssetView {
 
     bool is_ok() const { return this->parse_error == ASSET_PARSE_OK && this->header != nullptr; }
     bool is_cooked() const { return this->header != nullptr && (this->header->flags & ASSET_FLAG::COOKED) != 0; }
+    // A text asset's synthesized prelude (ASSET_FLAG::TEXT).
+    bool is_text() const { return this->header != nullptr && (this->header->flags & ASSET_FLAG::TEXT) != 0; }
 
     usz dependency_count() const { return this->header != nullptr ? this->header->dependency_count : 0; }
     usz chunk_count() const { return this->header != nullptr ? this->header->chunk_count : 0; }

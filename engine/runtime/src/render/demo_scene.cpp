@@ -1,80 +1,57 @@
 #include "engine/render/demo_scene.hpp"
 
-#include "engine/asset/asset_types/mesh_asset.hpp"
 #include "engine/ecs/world.hpp"
-#include "engine/engine.h"
+#include "engine/engine.hpp"
 #include "engine/render/components.hpp"
 #include "engine/render/renderer.hpp"
+#include "engine/scene/scene.hpp"
 
 #include <cstdio>
 
 bool RENDER_DEMO::spawn(Engine& engine) {
     World* world = engine.get_singleton<World>();
+    Scene* scene = engine.get_singleton<Scene>();
     Renderer* renderer = engine.get_singleton<Renderer>();
-    if (world == nullptr || renderer == nullptr) {
+    if (world == nullptr || scene == nullptr || renderer == nullptr) {
         return false;
     }
 
-    // A cube, counter-clockwise faces seen from outside (front-facing).
-    // Position then texcoord per vertex; the uvs just wrap the sides.
-    static constexpr f32 VERTICES[8 * 5] = {
-        -0.5f, -0.5f, 0.5f, 0.0f, 1.0f,  0.5f, -0.5f, 0.5f, 1.0f, 1.0f,  0.5f, 0.5f, 0.5f, 1.0f, 0.0f,  -0.5f, 0.5f, 0.5f, 0.0f, 0.0f,     // front (+Z)
-        -0.5f, -0.5f, -0.5f, 1.0f, 1.0f, 0.5f, -0.5f, -0.5f, 0.0f, 1.0f, 0.5f, 0.5f, -0.5f, 0.0f, 0.0f, -0.5f, 0.5f, -0.5f, 1.0f, 0.0f, // back (-Z)
-    };
-    static constexpr u32 INDICES[36] = {
-        0, 1, 2, 2, 3, 0, // front
-        5, 4, 7, 7, 6, 5, // back
-        4, 0, 3, 3, 7, 4, // left
-        1, 5, 6, 6, 2, 1, // right
-        3, 2, 6, 6, 7, 3, // top
-        4, 5, 1, 1, 0, 4, // bottom
-    };
-    MeshSource source;
-    source.vertex_count = 8;
-    source.stream_count = 1;
-    source.streams[0].stride = 20;
-    source.streams[0].vertices = VERTICES;
-    source.attribute_count = 2;
-    source.attributes[0] = {VERTEX_SEMANTIC_POSITION, 0, VERTEX_FORMAT_F32x3, 0, 0};
-    source.attributes[1] = {VERTEX_SEMANTIC_TEXCOORD, 0, VERTEX_FORMAT_F32x2, 0, 12};
-    source.indices = INDICES;
-    source.index_count = 36;
-
-    MeshAssetWriter mesh;
-    const MeshWriteError built = mesh.build(source, MeshImportOptions{});
-    if (built != MESH_WRITE_OK) {
-        fprintf(stderr, "[demo] cube: %s\n", MESH_ASSET::write_error_name(built));
-        return false;
-    }
-    AssetGuid cube_guid;
-    cube_guid.lo = 0xdeadbeefcafef00dull;
-    cube_guid.hi = 0x0000000000000001ull;
-    const bool uploaded = renderer->assets.add_mesh(cube_guid, mesh);
-    mesh.free();
-    if (!uploaded) {
-        return false;
-    }
-
-    const EntityId unlit = renderer->load_shader("unlit");
+    const EntityId unlit = SHADER_LIBRARY::load(*renderer, "unlit");
     if (unlit == 0) {
         return false;
     }
-    const EntityId orange = renderer->create_material(unlit);
-    renderer->set_vec4(orange, "color", Vector4(1.0f, 0.5f, 0.15f, 1.0f));
+    const EntityId orange = MATERIAL::create(*renderer, unlit);
+    MATERIAL::set_vec4(*renderer, orange, "color", Vector4(1.0f, 0.5f, 0.15f, 1.0f));
 
-    const EntityId camera = world->new_entity();
+    const EntityId camera = scene->spawn("camera");
     Transform camera_transform;
-    camera_transform.position = Vector3(0.0f, 1.5f, 3.0f);
+    camera_transform.position = Vector3(0.0f, 1.5f, 4.5f);
     // Look at the origin: the camera's -Z must point from the eye to it.
     camera_transform.rotation = Quaternion::from_to(Vector3::forward(), (Vector3::zero() - camera_transform.position).normalized());
     world->set(camera, camera_transform);
     world->set(camera, Camera{});
 
-    const EntityId cube = world->new_entity();
+    // One of each primitive in a row, the cube in the middle. The shapes
+    // are unit-sized; the Transform's scale makes the cylinder taller.
+    const EntityId cube = scene->spawn("cube");
     Transform cube_transform;
     cube_transform.rotation = Quaternion::rotation_y(MATH::radians(30.0f));
     world->set(cube, cube_transform);
-    world->set(cube, MeshRenderer{cube_guid, orange});
+    world->set(cube, PrimitiveRenderer{PRIMITIVE_CUBE, orange});
+
+    const EntityId sphere = scene->spawn("sphere");
+    Transform sphere_transform;
+    sphere_transform.position = Vector3(-1.75f, 0.0f, 0.0f);
+    world->set(sphere, sphere_transform);
+    world->set(sphere, PrimitiveRenderer{PRIMITIVE_SPHERE, orange});
+
+    const EntityId cylinder = scene->spawn("cylinder");
+    Transform cylinder_transform;
+    cylinder_transform.position = Vector3(1.75f, 0.0f, 0.0f);
+    cylinder_transform.rotation = Quaternion::rotation_y(MATH::radians(-20.0f));
+    cylinder_transform.scale = Vector3(1.0f, 1.5f, 1.0f);
+    world->set(cylinder, cylinder_transform);
+    world->set(cylinder, PrimitiveRenderer{PRIMITIVE_CYLINDER, orange});
     return true;
 }
 
@@ -104,7 +81,7 @@ bool RENDER_DEMO::set_post_enabled(Engine& engine, const bool enabled) {
             scene_depth = graph.add_resource("scene_depth", depth);
         }
         if (!post.is_valid()) {
-            const EntityId passthrough = renderer->load_shader("passthrough");
+            const EntityId passthrough = SHADER_LIBRARY::load(*renderer, "passthrough");
             if (passthrough == 0) {
                 return false;
             }
@@ -190,15 +167,29 @@ bool RENDER_DEMO::set_texture(Engine& engine, const AssetGuid& texture) {
     if (world == nullptr || renderer == nullptr) {
         return false;
     }
-    const EntityId textured = renderer->load_shader("textured");
+    const EntityId textured = SHADER_LIBRARY::load(*renderer, "textured");
     if (textured == 0) {
         return false;
     }
-    const EntityId material = renderer->create_material(textured);
-    renderer->set_vec4(material, "tint", Vector4::one());
-    renderer->set_texture(material, "albedo", texture);
-    world->query<Transform, MeshRenderer>().each([&](const EntityId, Transform&, MeshRenderer& mesh_renderer) {
-        mesh_renderer.material = material;
-    });
+    const EntityId material = MATERIAL::create(*renderer, textured);
+    MATERIAL::set_vec4(*renderer, material, "tint", Vector4::one());
+    MATERIAL::set_texture(*renderer, material, "albedo", texture);
+    world->query<Transform, MeshRenderer>().each([&](const EntityId, Transform&, MeshRenderer& mesh_renderer) { mesh_renderer.material = material; });
+    world->query<Transform, PrimitiveRenderer>().each([&](const EntityId, Transform&, PrimitiveRenderer& primitive) { primitive.material = material; });
+    return true;
+}
+
+bool RENDER_DEMO::set_material(Engine& engine, const AssetGuid& asset) {
+    World* world = engine.get_singleton<World>();
+    Renderer* renderer = engine.get_singleton<Renderer>();
+    if (world == nullptr || renderer == nullptr) {
+        return false;
+    }
+    const EntityId material = MATERIAL::load(*renderer, asset);
+    if (material == 0) {
+        return false;
+    }
+    world->query<Transform, MeshRenderer>().each([&](const EntityId, Transform&, MeshRenderer& mesh_renderer) { mesh_renderer.material = material; });
+    world->query<Transform, PrimitiveRenderer>().each([&](const EntityId, Transform&, PrimitiveRenderer& primitive) { primitive.material = material; });
     return true;
 }

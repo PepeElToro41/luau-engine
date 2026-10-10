@@ -188,8 +188,39 @@ AssetResource* AssetResourceProvider::get(const AssetView& view) {
     return this->get(view.header->guid);
 }
 
-bool AssetResourceProvider::open(AssetResource* resource, AssetReader* reader, bool* out_refreshed) {
+bool AssetResourceProvider::open(AssetResource* resource, OpenFile* file, bool* out_refreshed) {
     *out_refreshed = false;
+    if (resource->is_text()) {
+        // A text asset is small: read it whole, which is also the staleness
+        // check (TEXT_ASSET::matches hashes the bytes).
+        if (!TEXT_ASSET::read_file(resource->path, this->allocator, &file->text, &file->text_size)) {
+            fprintf(stderr, "[asset] error: cannot read %s\n", resource->path);
+            return false;
+        }
+        if (TEXT_ASSET::matches(resource->view, file->text, file->text_size)) {
+            return true;
+        }
+        AssetView fresh = TEXT_ASSET::build_prelude(resource->path, file->text, file->text_size, this->allocator);
+        if (!fresh.is_ok()) {
+            this->close(file);
+            return false;
+        }
+        if (fresh.header->guid != resource->guid) {
+            char text[40];
+            print_guid(text, sizeof(text), resource->guid);
+            fprintf(stderr, "[asset] error: %s no longer holds asset %s\n", resource->path, text);
+            ASSET_FILE::free_prelude(&fresh, this->allocator);
+            this->close(file);
+            return false;
+        }
+        this->unload(resource);
+        this->free_prelude(resource);
+        this->adopt_prelude(resource, fresh);
+        *out_refreshed = true;
+        return true;
+    }
+
+    AssetReader* reader = &file->reader;
     if (!reader->open(resource->path)) {
         return false;
     }
@@ -228,18 +259,40 @@ bool AssetResourceProvider::open(AssetResource* resource, AssetReader* reader, b
     return true;
 }
 
-bool AssetResourceProvider::read_chunk(AssetResource* resource, AssetReader& reader, const usz chunk) {
+void AssetResourceProvider::close(OpenFile* file) {
+    file->reader.close();
+    this->allocator->free(file->text);
+    file->text = nullptr;
+    file->text_size = 0;
+}
+
+bool AssetResourceProvider::read_chunk(AssetResource* resource, OpenFile& file, const usz chunk) {
     if (resource->is_resident(chunk)) {
         return true;
     }
     const ChunkEntry& entry = resource->view.chunks[chunk];
+    if (resource->is_text()) {
+        // The one chunk is the text open() read; the buffer has the payload
+        // alignment already, so the resource adopts it. The view was built
+        // from these very bytes, so the size agrees unless open() lied.
+        if (file.text == nullptr || entry.size != file.text_size) {
+            fprintf(stderr, "[asset] error: %s: text does not match its prelude\n", resource->path);
+            return false;
+        }
+        resource->payloads[chunk] = file.text;
+        file.text = nullptr;
+        file.text_size = 0;
+        resource->resident_bytes += entry.size;
+        this->resident_total += entry.size;
+        return true;
+    }
     u8* buffer = static_cast<u8*>(this->allocator->allocate(entry.size, ASSET_FILE::PAYLOAD_ALIGNMENT));
     if (buffer == nullptr) {
         fprintf(stderr, "[asset] error: out of memory loading a chunk of %s (%llu bytes)\n", resource->path,
                 static_cast<unsigned long long>(entry.size));
         return false;
     }
-    if (!reader.read_chunk(entry, buffer)) {
+    if (!file.reader.read_chunk(entry, buffer)) {
         this->allocator->free(buffer);
         return false;
     }
@@ -253,19 +306,19 @@ bool AssetResourceProvider::load(AssetResource* resource) {
     if (resource->is_loaded()) {
         return true;
     }
-    AssetReader reader;
+    OpenFile file;
     bool refreshed = false;
-    if (!this->open(resource, &reader, &refreshed)) {
+    if (!this->open(resource, &file, &refreshed)) {
         return false;
     }
     bool ok = true;
     const usz chunk_count = resource->view.chunk_count();
     for (usz i = 0; i < chunk_count && ok; ++i) {
         if (!resource->view.chunks[i].editor_only()) {
-            ok = this->read_chunk(resource, reader, i);
+            ok = this->read_chunk(resource, file, i);
         }
     }
-    reader.close();
+    this->close(&file);
     return ok;
 }
 
@@ -276,19 +329,19 @@ const u8* AssetResourceProvider::get_chunk_at(AssetResource* resource, const usz
     if (resource->is_resident(chunk)) {
         return resource->payloads[chunk];
     }
-    AssetReader reader;
+    OpenFile file;
     bool refreshed = false;
-    if (!this->open(resource, &reader, &refreshed)) {
+    if (!this->open(resource, &file, &refreshed)) {
         return nullptr;
     }
     const u8* result = nullptr;
     if (refreshed) {
         fprintf(stderr, "[asset] error: %s changed on disk; chunk %llu of the old table is gone, look it up again\n", resource->path,
                 static_cast<unsigned long long>(chunk));
-    } else if (this->read_chunk(resource, reader, chunk)) {
+    } else if (this->read_chunk(resource, file, chunk)) {
         result = resource->payloads[chunk];
     }
-    reader.close();
+    this->close(&file);
     return result;
 }
 
@@ -305,9 +358,9 @@ const u8* AssetResourceProvider::get_chunk(AssetResource* resource, const u32 ta
         return resource->payloads[chunk];
     }
 
-    AssetReader reader;
+    OpenFile file;
     bool refreshed = false;
-    if (!this->open(resource, &reader, &refreshed)) {
+    if (!this->open(resource, &file, &refreshed)) {
         return nullptr;
     }
     if (refreshed) {
@@ -316,21 +369,21 @@ const u8* AssetResourceProvider::get_chunk(AssetResource* resource, const u32 ta
             *out_chunk = entry;
         }
         if (entry == nullptr) {
-            reader.close();
+            this->close(&file);
             return nullptr;
         }
         chunk = static_cast<usz>(entry - resource->view.chunks);
     }
-    const u8* result = this->read_chunk(resource, reader, chunk) ? resource->payloads[chunk] : nullptr;
-    reader.close();
+    const u8* result = this->read_chunk(resource, file, chunk) ? resource->payloads[chunk] : nullptr;
+    this->close(&file);
     return result;
 }
 
 bool AssetResourceProvider::refresh(AssetResource* resource) {
-    AssetReader reader;
+    OpenFile file;
     bool refreshed = false;
-    const bool ok = this->open(resource, &reader, &refreshed);
-    reader.close();
+    const bool ok = this->open(resource, &file, &refreshed);
+    this->close(&file);
     return ok;
 }
 
