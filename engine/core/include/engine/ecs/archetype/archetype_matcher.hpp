@@ -48,12 +48,30 @@ struct ArchetypeMatcher {
         return this->matches(archetype->signature, archetype->type);
     }
     // `type` is the archetype's ids (sorted ascending), `signature` their summary.
-    bool matches(const ArchetypeSignature& signature, const ArchetypeType& type) const;
+    //
+    // The mask compares stay inline: a query over components only is decided
+    // right here, and only queries with non-component ids pay for the call.
+    bool matches(const ArchetypeSignature& signature, const ArchetypeType& type) const {
+        if (!signature.mask.contains_all(this->with_mask)) {
+            return false;
+        }
+        if (signature.mask.intersects(this->without_mask)) {
+            return false;
+        }
+        if ((this->with_count | this->without_count) == 0) {
+            return true;
+        }
+        return this->matches_ids(signature.bloom, type);
+    }
 
     // Whether `type` (sorted ascending) holds an id matching `pattern`.
     static bool type_matches(const ArchetypeType& type, Id pattern);
 
 private:
+    // The non-component half of matches(): bloom tests, then the id lists
+    // against `type`. Assumes the masks already passed.
+    bool matches_ids(const BloomFilter& bloom, const ArchetypeType& type) const;
+
     // Splits `ids` between `mask` / `bloom` / a sorted list on `allocator`.
     static void build_side(BaseAllocator* allocator, const Id* ids, usz count, ComponentMask& mask, BloomFilter& bloom, Id*& out_ids, usz& out_count);
 };

@@ -118,16 +118,9 @@ bool ArchetypeMatcher::type_matches(const ArchetypeType& type, const Id pattern)
     return false;
 }
 
-bool ArchetypeMatcher::matches(const ArchetypeSignature& signature, const ArchetypeType& type) const {
-    if (!signature.mask.contains_all(this->with_mask)) {
-        return false;
-    }
-    if (signature.mask.intersects(this->without_mask)) {
-        return false;
-    }
-
+bool ArchetypeMatcher::matches_ids(const BloomFilter& bloom, const ArchetypeType& type) const {
     if (this->with_count > 0) {
-        if (!signature.bloom.test(this->with_bloom)) {
+        if (!bloom.test(this->with_bloom)) {
             return false;
         }
         for (usz i = 0; i < this->with_count; i++) {
@@ -141,7 +134,7 @@ bool ArchetypeMatcher::matches(const ArchetypeSignature& signature, const Archet
         // The bloom can only prove the sets are disjoint when every pattern
         // is in it; (*, *) and plain wildcards are not, so those are always
         // checked exactly.
-        bool need_exact = signature.bloom.intersects(this->without_bloom);
+        bool need_exact = bloom.intersects(this->without_bloom);
         if (!need_exact) {
             for (usz i = 0; i < this->without_count; i++) {
                 if (!pattern_in_bloom(this->without_ids[i])) {
