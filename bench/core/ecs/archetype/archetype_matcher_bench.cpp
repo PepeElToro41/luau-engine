@@ -72,8 +72,23 @@ BENCH_CASE("ecs/archetype_matcher: matches over 255 archetypes") {
 // since it rejects before the word loop starts; comparing every word ties
 // it for `with` but loses on `without` (which only walks the words both
 // outers share); the fused walk ties or loses. What did matter was keeping
-// the mask compares inline in matches(), which halved component-only
-// queries (the out-of-line call cost as much as the compares).
+// the mask compares (and the `with` bloom test) inline in matches(), which
+// halved component-only queries (the out-of-line call cost as much as the
+// compares) and took a (CHILD_OF, *) query from 3.5 to 2.4 ns.
+//
+// The "via sparse list" / "via flat signatures" rows measure where the
+// signatures live: Archetype is 536 bytes, so a walk over 10k+ tables
+// through the sparse list streams 6 MB for 560 KB of signatures and a
+// contiguous copy halves the per-archetype cost (1.7 -> 0.9 ns at 11638
+// tables). Tried in the engine (World-owned flat array read before the
+// archetype) and dropped: the engine's scans narrow to the rarest with
+// term's archetype list, which mostly passes and goes on to use every
+// archetype it accepts, so the flat copy was one more cache line per
+// candidate (narrowed scans 30-40% slower); only the walks over every
+// archetype could profit, and those happen exactly when no term is
+// selective (optional / without / wildcard-only terms), which accept most
+// tables too. Worth revisiting only with a full walk that rejects most of
+// a large world.
 
 namespace {
 
@@ -205,6 +220,9 @@ struct RandomWorld {
     usz pool_count = 0;
     const Archetype** archetypes = nullptr;
     usz archetype_count = 0;
+    // The same signatures copied into one contiguous array, in the same
+    // (dense) order as `archetypes`.
+    ArchetypeSignature* signatures = nullptr;
 
     // `pool_count` distinct component ids chosen at random, then
     // `entity_count` entities each holding 1..max_ids ids from the pool.
@@ -237,12 +255,15 @@ struct RandomWorld {
 
         this->archetype_count = this->world.archetypes.alive_count;
         this->archetypes = this->world.allocator->allocate_array<const Archetype*>(this->archetype_count);
+        this->signatures = this->world.allocator->allocate_array<ArchetypeSignature>(this->archetype_count);
         for (usz i = 0; i < this->archetype_count; i++) {
             this->archetypes[i] = this->world.archetypes.get_element_alive(this->world.archetypes.get_alive_id(i));
+            this->signatures[i] = this->archetypes[i]->signature;
         }
     }
 
     void free() {
+        this->world.allocator->free(this->signatures);
         this->world.allocator->free(this->archetypes);
         this->world.allocator->free(this->pool);
         this->world.free();
@@ -276,6 +297,29 @@ void run_mask_variants(ankerl::nanobench::Bench& bench, const RandomWorld& rw, c
         }
         ankerl::nanobench::doNotOptimizeAway(hits);
     });
+    // What QUERY_SCAN does for a full-world scan: dense index -> sparse page
+    // -> archetype -> its signature.
+    snprintf(name, sizeof(name), "%s | matcher via sparse list", label);
+    const SparseList<Archetype>& list = rw.world.archetypes;
+    bench.batch(count).run(name, [&] {
+        usz hits = 0;
+        for (usz i = 0; i < count; ++i) {
+            const Archetype* archetype = list.get_element_any(list.get_alive_id(i));
+            hits += matcher.matches(archetype) ? 1 : 0;
+        }
+        ankerl::nanobench::doNotOptimizeAway(hits);
+    });
+    // Signatures in their own contiguous array; the archetype is only
+    // touched when the matcher needs its ids.
+    snprintf(name, sizeof(name), "%s | matcher via flat signatures", label);
+    const ArchetypeSignature* signatures = rw.signatures;
+    bench.batch(count).run(name, [&] {
+        usz hits = 0;
+        for (usz i = 0; i < count; ++i) {
+            hits += matcher.matches(signatures[i], archetypes[i]->type) ? 1 : 0;
+        }
+        ankerl::nanobench::doNotOptimizeAway(hits);
+    });
     snprintf(name, sizeof(name), "%s | walk only", label);
     bench.batch(count).run(name, [&] {
         ankerl::nanobench::doNotOptimizeAway(count_matches<contains_all_walk, intersects_walk>(archetypes, count, matcher));
@@ -298,7 +342,7 @@ void bench_random_world(ankerl::nanobench::Bench& bench, const usz pool_count, c
     SplitMix64 rng { 0x5EED1234ull };
     RandomWorld rw;
     rw.init(rng, pool_count, entity_count, max_ids);
-    printf("pool %zu ids, %zu entities, 1..%zu ids each -> %zu archetypes\n", pool_count, entity_count, max_ids, rw.archetype_count);
+    printf("pool %zu ids, %zu entities, 1..%zu ids each -> %zu archetypes (sizeof Archetype %zu, ArchetypeSignature %zu)\n", pool_count, entity_count, max_ids, rw.archetype_count, sizeof(Archetype), sizeof(ArchetypeSignature));
 
     const Id with2[] = {rw.pool[0], rw.pool[1]};
     const Id with1[] = {rw.pool[2]};

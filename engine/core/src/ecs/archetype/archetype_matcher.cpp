@@ -119,14 +119,10 @@ bool ArchetypeMatcher::type_matches(const ArchetypeType& type, const Id pattern)
 }
 
 bool ArchetypeMatcher::matches_ids(const BloomFilter& bloom, const ArchetypeType& type) const {
-    if (this->with_count > 0) {
-        if (!bloom.test(this->with_bloom)) {
+    // matches() already ran the `with` bloom test.
+    for (usz i = 0; i < this->with_count; i++) {
+        if (!ArchetypeMatcher::type_matches(type, this->with_ids[i])) {
             return false;
-        }
-        for (usz i = 0; i < this->with_count; i++) {
-            if (!ArchetypeMatcher::type_matches(type, this->with_ids[i])) {
-                return false;
-            }
         }
     }
 

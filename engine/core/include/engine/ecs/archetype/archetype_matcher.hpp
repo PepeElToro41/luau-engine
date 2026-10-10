@@ -61,6 +61,9 @@ struct ArchetypeMatcher {
         if ((this->with_count | this->without_count) == 0) {
             return true;
         }
+        if (this->with_count > 0 && !signature.bloom.test(this->with_bloom)) {
+            return false;
+        }
         return this->matches_ids(signature.bloom, type);
     }
 
@@ -68,8 +71,9 @@ struct ArchetypeMatcher {
     static bool type_matches(const ArchetypeType& type, Id pattern);
 
 private:
-    // The non-component half of matches(): bloom tests, then the id lists
-    // against `type`. Assumes the masks already passed.
+    // The rest of matches() once the masks and the `with` bloom passed: the
+    // `with` ids exactly against `type`, then the `without` side through its
+    // bloom and, when that cannot settle it, exactly.
     bool matches_ids(const BloomFilter& bloom, const ArchetypeType& type) const;
 
     // Splits `ids` between `mask` / `bloom` / a sorted list on `allocator`.
