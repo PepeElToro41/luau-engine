@@ -19,7 +19,9 @@ the draw functions in `ui/inspectors/` (`INSPECTORS::register_all` exposes `Tran
 `PrimitiveRenderer` (shape combo, material shown by name) and `Material` (`material_inspector.cpp`: the shader's name, every block member as a field by its reflected type (3- and 4-float vectors as HDR color edits, matrices one row per column, bools as checkboxes) written straight into the block, texture slots as a combo over the texture asset entities (`world.query<AssetUuid>().with<ECS::Pair<AssetType, AssetTexture>>()`, listed by `Name` sorted, plus `none`;
 the GUID in the tooltip;
 a GUID no entity carries is shown as such and kept),
-sampler slots as their words parsed on Enter with the typed text held in the scratch) and `AssetUuid` (`asset_inspector.cpp`: type and GUID, read-only, under the "Asset" header)),
+sampler slots as their words parsed on Enter with the typed text held in the scratch) and `AssetUuid` (`asset_inspector.cpp`: type and GUID, read-only, under the "Asset" header);
+`register_all` also marks `Transform`, `Camera` and `PrimitiveRenderer` `Addable`, the last with `INSPECTORS::default_primitive_renderer`, a cube using the lowest-id `Material` entity;
+an entity's Inspector ends with an "Add Component" button whose menu lists every `Addable` component by its Inspector name, held ones disabled, and calls `INSPECTOR::add` after the menu closed),
 `asset_browser_panel` for the open project's files (a click calls `selection.select_file` with the project-relative path and the row highlight mirrors the selection, dropping when another panel selects;
 rename and new-folder reselect the result, delete clears it;
 double-clicking a file sets `activated`;

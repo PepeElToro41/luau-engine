@@ -9,8 +9,14 @@ struct World;
 // Each takes the component's data and returns true if it changed it.
 namespace INSPECTORS {
 
-// Exposes every component below on `world`. Call once after Engine::init.
+// Exposes every component below on `world` and marks Transform, Camera and
+// PrimitiveRenderer addable (see Addable in engine/scene/inspector.hpp).
+// Call once after Engine::init.
 void register_all(World& world);
+
+// The value "Add Component" gives a PrimitiveRenderer: a cube with the
+// lowest-id Material entity in the world (0 when there is none).
+void default_primitive_renderer(World& world, EntityId entity, void* data);
 
 // Transform: position, rotation as Euler degrees (kept across frames in the
 // scratch so the fields do not jump while editing), scale.

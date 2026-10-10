@@ -76,5 +76,8 @@ Deleting an entity deletes its subtree (the `CHILD_OF` cleanup policy).
 Core only declares `InspectorContext` and the function pointer type;
 the editor defines both and registers its ImGui draw functions at startup.
 A draw function gets the entity's data pointer, returns true if it wrote to it, and must never add or remove components.
+Whether the Inspector's "Add Component" menu offers a component is the `Addable` component on the same component entity (`INSPECTOR::addable<T>(world, init)`: `init` is an `InspectorInitFn(world, entity, data)` that writes the default value into zeroed bytes, defaulting to a copy of a value-initialized `T`, none for tags);
+`INSPECTOR::can_add(world, entity, id)` and `INSPECTOR::add(world, entity, id)` (builds the value in scratch, then `set`s it, so the added hook sees the final value;
+tags are `add`ed) are the editor's way in, `addable_of` reads it back.
 `Quaternion::to_euler` inverts `from_euler` (pitch, yaw, roll;
 roll reported 0 at the gimbal lock).

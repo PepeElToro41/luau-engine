@@ -48,6 +48,7 @@ void InspectorPanel::draw_entity(World& world, const EntityId entity) {
     ImGui::Separator();
     if (ImGui::BeginChild("components")) {
         this->draw_components(world, entity);
+        this->draw_add_component(world, entity);
     }
     ImGui::EndChild();
 }
@@ -237,6 +238,71 @@ void InspectorPanel::draw_components(World& world, const EntityId entity) {
             InspectorPanel::label_of_id(world, other[i], label, sizeof(label));
             ImGui::BulletText("%s", label);
         }
+    }
+}
+
+void InspectorPanel::draw_add_component(World& world, const EntityId entity) {
+    ImGui::Spacing();
+    ImGui::Separator();
+    ImGui::Spacing();
+    if (ImGui::Button("Add Component", ImVec2(-FLT_MIN, 0.0f))) {
+        ImGui::OpenPopup("add_component");
+    }
+    if (!ImGui::BeginPopup("add_component")) {
+        return;
+    }
+
+    // Every component with an Addable, by its Inspector header (or its
+    // entity's Name when it has no Inspector), in Inspector order.
+    struct Entry {
+        Id id;
+        u32 order;
+        char label[2 * ENTITY_NAME_CAPACITY + 16];
+    };
+    Entry entries[ECS::MAX_COMPONENT_ID];
+    usz count = 0;
+    world.query<Addable>().each([&](const EntityId id, Addable&) {
+        if (count == ECS::MAX_COMPONENT_ID) {
+            return;
+        }
+        Entry& entry = entries[count++];
+        entry.id = id;
+        const Inspector* inspector = INSPECTOR::of(world, id);
+        entry.order = inspector != nullptr ? inspector->order : 100;
+        if (inspector != nullptr && inspector->name[0] != '\0') {
+            snprintf(entry.label, sizeof(entry.label), "%s", inspector->name);
+        } else {
+            InspectorPanel::label_of_id(world, id, entry.label, sizeof(entry.label));
+        }
+    });
+    std::sort(entries, entries + count, [](const Entry& a, const Entry& b) {
+        if (a.order != b.order) {
+            return a.order < b.order;
+        }
+        const int by_name = strcmp(a.label, b.label);
+        return by_name != 0 ? by_name < 0 : a.id < b.id;
+    });
+
+    Id chosen = 0;
+    if (count == 0) {
+        ImGui::TextDisabled("(no addable components)");
+    }
+    for (usz i = 0; i < count; i++) {
+        const Entry& entry = entries[i];
+        ImGui::PushID(static_cast<int>(entry.id & 0x7fffffff));
+        ImGui::PushID(static_cast<int>(entry.id >> 32));
+        ImGui::BeginDisabled(!INSPECTOR::can_add(world, entity, entry.id));
+        if (ImGui::MenuItem(entry.label)) {
+            chosen = entry.id;
+        }
+        ImGui::EndDisabled();
+        ImGui::PopID();
+        ImGui::PopID();
+    }
+    ImGui::EndPopup();
+
+    if (chosen != 0) {
+        INSPECTOR::add(world, entity, chosen);
     }
 }
 

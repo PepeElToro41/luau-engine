@@ -19,7 +19,10 @@ struct World;
 // collapsing section drawn by its draw function, lowest `order` first, and
 // a change reported by the function becomes World::modified(). The ids
 // without one (pairs such as (CHILD_OF, parent), tags, components nothing
-// exposed) are listed at the bottom so nothing is hidden.
+// exposed) are listed at the bottom so nothing is hidden. Below them an
+// "Add Component" button opens a menu of every component with an Addable
+// (engine/scene/inspector.hpp), the ones the entity already holds greyed
+// out; a pick calls INSPECTOR::add, which sets the component's default.
 //
 // For a file: its name, folder, kind and size, and when the file is loaded
 // as an entity (a .material) the Save and Reload buttons followed by that
@@ -51,6 +54,9 @@ private:
     void draw_entity(World& world, EntityId entity);
     void draw_header(World& world, EntityId entity);
     void draw_components(World& world, EntityId entity);
+    // The "Add Component" button and its menu; adds after the menu closed,
+    // so no section drawn this frame still points into the old archetype.
+    void draw_add_component(World& world, EntityId entity);
     void draw_file(World* world, const Project* project, const Selection& selection);
     // Finds or claims the scratch slot for `id`, zeroing it when new.
     // nullptr once every slot is taken (the draw function then gets no
