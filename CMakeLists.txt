@@ -51,11 +51,15 @@ set(CMAKE_ARCHIVE_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/lib)
 # volk and shaderc come from the SDK through CMake's FindVulkan, which picks the
 # debug-CRT libraries (volkd, shaderc_combinedd) for Debug builds on Windows.
 find_package(Vulkan REQUIRED COMPONENTS volk shaderc_combined)
-# The Windows SDK keeps volk.h under Include/Volk; the Linux SDK has it in include/.
-if(EXISTS "${Vulkan_INCLUDE_DIR}/Volk/volk.h")
-    set_property(TARGET Vulkan::volk APPEND PROPERTY
-        INTERFACE_INCLUDE_DIRECTORIES "${Vulkan_INCLUDE_DIR}/Volk")
-endif()
+# The SDK keeps volk.h in a subdirectory FindVulkan does not add: Include/Volk on
+# Windows, include/volk on Linux (older Linux SDKs had it in include/ directly).
+foreach(volk_subdir IN ITEMS Volk volk)
+    if(EXISTS "${Vulkan_INCLUDE_DIR}/${volk_subdir}/volk.h")
+        set_property(TARGET Vulkan::volk APPEND PROPERTY
+            INTERFACE_INCLUDE_DIRECTORIES "${Vulkan_INCLUDE_DIR}/${volk_subdir}")
+        break()
+    endif()
+endforeach()
 find_package(SDL3 CONFIG REQUIRED)
 
 add_subdirectory(vendor/imgui)
