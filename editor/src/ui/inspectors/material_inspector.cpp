@@ -1,26 +1,122 @@
 #include "ui/inspectors/inspectors.hpp"
 
+#include "engine/asset/asset_entity.hpp"
 #include "engine/asset/asset_types/material_asset.hpp"
 #include "engine/asset/text_asset.hpp"
+#include "engine/ecs/query/query.hpp"
 #include "engine/ecs/world.hpp"
 #include "engine/render/components.hpp"
 #include "engine/render/materials.hpp"
+#include "engine/scene/scene.hpp"
 #include "engine/shaders/reflection.hpp"
 
 #include <imgui.h>
 
+#include <algorithm>
 #include <cstring>
+#include <vector>
 
-// Edit state kept across frames: the texture or sampler field being typed
-// into, so the text is not overwritten by the slot's value mid-edit.
+// Edit state kept across frames: the sampler field being typed into, so
+// the text is not overwritten by the slot's value mid-edit.
 struct MaterialScratch {
-    // Which field owns `text`: 1 + slot index for textures, 101 + index
-    // for samplers, 0 for none.
+    // Which field owns `text`: 101 + slot index for samplers, 0 for none.
     u32 editing = 0;
     char text[96] = {};
 };
 
 static_assert(sizeof(MaterialScratch) <= INSPECTOR_SCRATCH_CAPACITY, "MaterialScratch must fit the inspector scratch");
+
+// One texture asset a slot can be set to: the asset entity, its GUID and
+// its Name.
+struct TextureChoice {
+    EntityId entity = 0;
+    AssetGuid guid;
+    char name[ENTITY_NAME_CAPACITY] = {};
+};
+
+// Every asset entity typed (AssetType, AssetTexture), sorted by name so the
+// list reads the same from frame to frame whatever order the archetypes
+// hold them in.
+static void collect_textures(World& world, std::vector<TextureChoice>& out) {
+    world.query<AssetUuid>().with<ECS::Pair<AssetType, AssetTexture>>().each([&](const EntityId entity, const AssetUuid& asset) {
+        TextureChoice choice;
+        choice.entity = entity;
+        choice.guid = asset.guid;
+        const char* name = SCENE::name(world, entity);
+        snprintf(choice.name, sizeof(choice.name), "%s", name != nullptr && name[0] != '\0' ? name : "(unnamed)");
+        out.push_back(choice);
+    });
+    std::sort(out.begin(), out.end(), [](const TextureChoice& a, const TextureChoice& b) {
+        const int order = strcmp(a.name, b.name);
+        return order != 0 ? order < 0 : a.entity < b.entity;
+    });
+}
+
+// A combo over `textures` plus "none" for one texture slot. A slot set to
+// a GUID no texture entity carries (a file not registered, or typed into
+// the .material by hand) shows that GUID and stays selectable, so opening
+// the combo never changes the slot. Returns true when the slot changed.
+static bool draw_texture_combo(MaterialTextureSlot& slot, const std::vector<TextureChoice>& textures) {
+    const TextureChoice* current = nullptr;
+    for (const TextureChoice& choice : textures) {
+        if (choice.guid == slot.texture) {
+            current = &choice;
+            break;
+        }
+    }
+    char guid_text[TEXT_ASSET::GUID_TEXT_CAPACITY];
+    char preview[ENTITY_NAME_CAPACITY + TEXT_ASSET::GUID_TEXT_CAPACITY + 16];
+    if (slot.texture.is_null()) {
+        snprintf(preview, sizeof(preview), "none");
+    } else if (current != nullptr) {
+        snprintf(preview, sizeof(preview), "%s", current->name);
+    } else {
+        TEXT_ASSET::format_guid(slot.texture, guid_text);
+        snprintf(preview, sizeof(preview), "%s (not registered)", guid_text);
+    }
+
+    bool changed = false;
+    ImGui::SetNextItemWidth(-FLT_MIN);
+    if (ImGui::BeginCombo("##texture", preview)) {
+        const bool none_selected = slot.texture.is_null();
+        if (ImGui::Selectable("none", none_selected) && !none_selected) {
+            slot.texture = AssetGuid{};
+            changed = true;
+        }
+        if (none_selected) {
+            ImGui::SetItemDefaultFocus();
+        }
+        if (!slot.texture.is_null() && current == nullptr) {
+            // Keep the unresolved value in the list so it is visibly what is set.
+            ImGui::Selectable(preview, true);
+            ImGui::SetItemDefaultFocus();
+        }
+        for (const TextureChoice& choice : textures) {
+            const bool selected = &choice == current;
+            ImGui::PushID(static_cast<int>(choice.entity & 0x7fffffffu));
+            ImGui::PushID(static_cast<int>(choice.entity >> 32));
+            if (ImGui::Selectable(choice.name, selected) && !selected) {
+                slot.texture = choice.guid;
+                changed = true;
+            }
+            if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayNormal)) {
+                TEXT_ASSET::format_guid(choice.guid, guid_text);
+                ImGui::SetTooltip("%s", guid_text);
+            }
+            if (selected) {
+                ImGui::SetItemDefaultFocus();
+            }
+            ImGui::PopID();
+            ImGui::PopID();
+        }
+        ImGui::EndCombo();
+    }
+    if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayNormal) && current != nullptr) {
+        TEXT_ASSET::format_guid(current->guid, guid_text);
+        ImGui::SetTooltip("%s", guid_text);
+    }
+    return changed;
+}
 
 // One block member as a field matching its reflected shape. Writes into
 // `block` in place.
@@ -133,6 +229,11 @@ bool INSPECTORS::material(InspectorContext& ctx, void* data) {
     // --- Textures ---
     if (material.texture_count > 0) {
         ImGui::SeparatorText("Textures");
+        // Every texture asset the world knows, by name, for the combos.
+        std::vector<TextureChoice> textures;
+        if (ctx.world != nullptr) {
+            collect_textures(*ctx.world, textures);
+        }
         for (u32 i = 0; i < material.texture_count; ++i) {
             MaterialTextureSlot& slot = material.textures[i];
             const ReflectedBinding* binding = interface.find_binding(2, slot.binding);
@@ -140,25 +241,7 @@ bool INSPECTORS::material(InspectorContext& ctx, void* data) {
             snprintf(label, sizeof(label), "%s", binding != nullptr ? binding->name : "texture");
             ImGui::PushID(static_cast<int>(slot.binding));
             ImGui::TextUnformatted(label);
-            char shown[TEXT_ASSET::GUID_TEXT_CAPACITY];
-            if (slot.texture.is_null()) {
-                snprintf(shown, sizeof(shown), "none");
-            } else {
-                TEXT_ASSET::format_guid(slot.texture, shown);
-            }
-            if (draw_text_field("##guid", 1 + i, shown, *scratch)) {
-                AssetGuid guid;
-                if (TEXT_ASSET::word_is(scratch->text, strlen(scratch->text), "none") || scratch->text[0] == '\0') {
-                    slot.texture = AssetGuid{};
-                    changed = true;
-                } else if (TEXT_ASSET::parse_guid(scratch->text, strlen(scratch->text), &guid)) {
-                    slot.texture = guid;
-                    changed = true;
-                }
-            }
-            if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayNormal)) {
-                ImGui::SetTooltip("Texture asset GUID (32 hex digits) or none");
-            }
+            changed |= draw_texture_combo(slot, textures);
             ImGui::PopID();
         }
     }

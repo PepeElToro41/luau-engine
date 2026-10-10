@@ -52,8 +52,10 @@ void sync(Material& material, const Shader& shader);
 
 // The Material entity for the .material asset `asset`, registered with the
 // renderer's AssetResourceProvider (Engine::load_asset_file): the one
-// loaded before, or a new entity named after the file with the asset's
-// values applied. 0 (with messages) when the asset is unknown, does not
+// loaded before, or the asset's own entity (the one holding its AssetUuid,
+// see asset/asset_entity.hpp; a plain new entity when it has none) named
+// after the file with the asset's values applied, so a .material file,
+// its asset and its material are one entity. 0 (with messages) when the asset is unknown, does not
 // parse or its shader does not load; a value the shader does not declare
 // or of another shape is reported and skipped, the rest still applies.
 // The text payload is released from the provider after the load.

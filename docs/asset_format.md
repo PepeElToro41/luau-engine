@@ -56,7 +56,16 @@ detection and unloading are the code paths every `.lunaasset` uses. See
 **Identity travels with the file.** References between assets are GUIDs stored
 in the header's dependency table, never paths. Moving or renaming a file in the
 OS does not break references. The editor builds a path-to-GUID index by
-scanning headers at startup and caches it. Two files with the same GUID (a file
+scanning headers at startup and caches it. Every registered asset is also an
+ECS entity (`asset/asset_entity.hpp`): an `AssetUuid` component holding the
+GUID, an exclusive `(AssetType, AssetTexture | AssetMesh | AssetMaterial |
+AssetScene | AssetShader)` pair for the header's `type`, and a `Name` from
+the file stem, kept one per GUID by the `AssetEntities` index the runtime
+`Engine` fills from `load_asset_file`. Tools list assets by query (the
+Material inspector's texture combo is
+`world.query<AssetUuid>().with<ECS::Pair<AssetType, AssetTexture>>()`) and
+a loader may put its runtime component on that same entity, as
+`MATERIAL::load` does for a `.material`. Two files with the same GUID (a file
 copied in the OS) are resolved by the scan: the newer file gets a fresh GUID
 and its header is rewritten.
 

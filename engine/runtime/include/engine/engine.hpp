@@ -1,5 +1,6 @@
 #pragma once
 
+#include "engine/asset/asset_entity.hpp"
 #include "engine/asset/asset_resource_provider.hpp"
 #include "engine/asset/asset_view.hpp"
 #include "engine/defines.hpp"
@@ -41,7 +42,10 @@
 // (get_singleton<AssetResourceProvider>()), the ECS World every entity lives
 // in (get_singleton<World>()), the Scene whose "scene_root" entity every
 // scene entity is parented under through CHILD_OF (get_singleton<Scene>(),
-// spawn entities with scene->spawn(name, parent)), and the Renderer that
+// spawn entities with scene->spawn(name, parent)), the AssetEntities index
+// that gives every registered asset an unparented entity with AssetUuid,
+// an (AssetType, tag) pair and its file's name (get_singleton<AssetEntities>(),
+// see asset/asset_entity.hpp; load_asset_file fills it), and the Renderer that
 // owns the render graph, the shader and material entities (named but
 // unparented, so outside the scene) and draws the frame
 // (get_singleton<Renderer>(), driven through RENDERER::, SHADER_LIBRARY::
@@ -60,7 +64,9 @@ struct Engine {
     // Registers the asset file at `path` (a .lunaasset, or a text asset
     // such as a .material by its extension) with the AssetResourceProvider
     // and returns its GUID, or a null GUID (with a message) if the file is
-    // not a valid asset. Payloads are read later, on first use.
+    // not a valid asset. Payloads are read later, on first use. The asset
+    // also becomes (or already is) an entity:
+    // get_singleton<AssetEntities>()->find(guid) is it.
     AssetGuid load_asset_file(const char* path);
     // Records the frame into frame.frame.cmd, drawing into frame.target
     // through the Renderer's graph, and updates frame.target_state.

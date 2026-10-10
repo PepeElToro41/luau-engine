@@ -1,5 +1,6 @@
 #include "engine/render/materials.hpp"
 
+#include "engine/asset/asset_entity.hpp"
 #include "engine/asset/text_asset.hpp"
 #include "engine/ecs/world.hpp"
 #include "engine/memory/heap_allocator.hpp"
@@ -65,25 +66,35 @@ void MATERIAL::sync(Material& material, const Shader& shader) {
 
 // --- Create ----------------------------------------------------------------------
 
+// Puts a fresh Material for `shader_entity` on `entity`, which must be alive
+// and must not hold one yet. False (with a message) when the shader entity
+// is not a Shader.
+static bool attach(Renderer& renderer, const EntityId entity, const EntityId shader_entity) {
+    const Shader* shader = renderer.world != nullptr ? renderer.world->get<Shader>(shader_entity) : nullptr;
+    if (shader == nullptr) {
+        RENDERER::log(renderer, RENDER_LOG_ERROR, "create_material: entity %llu is not a shader", static_cast<unsigned long long>(shader_entity));
+        return false;
+    }
+    Material material;
+    material.shader = shader_entity;
+    material.shader_generation = shader->generation - 1;
+    MATERIAL::sync(material, *shader);
+    renderer.world->set(entity, material);
+    return true;
+}
+
 EntityId MATERIAL::create(Renderer& renderer, const EntityId shader_entity) {
     const Shader* shader = renderer.world != nullptr ? renderer.world->get<Shader>(shader_entity) : nullptr;
     if (shader == nullptr) {
         RENDERER::log(renderer, RENDER_LOG_ERROR, "create_material: entity %llu is not a shader", static_cast<unsigned long long>(shader_entity));
         return 0;
     }
-    Material material;
-    material.shader = shader_entity;
-    material.shader_generation = shader->generation - 1;
-    sync(material, *shader);
-
     char name[ENTITY_NAME_CAPACITY];
     snprintf(name, sizeof(name), "%s material", shader->name);
     const EntityId entity = SCENE::spawn(*renderer.world, name, 0);
-    if (entity == 0) {
-        MEMORY::heap_allocator()->free(material.params);
+    if (entity == 0 || !attach(renderer, entity, shader_entity)) {
         return 0;
     }
-    renderer.world->set(entity, material);
     return entity;
 }
 
@@ -240,24 +251,6 @@ MaterialSamplerDesc MATERIAL::sampler_asset(const GpuSamplerDesc& sampler) {
     return desc;
 }
 
-// The file name without directories or extension: what the entity is named.
-static void file_stem(const char* path, char* out, const usz capacity) {
-    const char* start = path;
-    for (const char* c = path; *c != '\0'; ++c) {
-        if (*c == '/' || *c == '\\') {
-            start = c + 1;
-        }
-    }
-    const char* end = start + strlen(start);
-    for (const char* c = end; c > start; --c) {
-        if (c[-1] == '.') {
-            end = c - 1;
-            break;
-        }
-    }
-    TEXT_ASSET::copy_span(start, static_cast<usz>(end - start), out, capacity);
-}
-
 // Writes one file param into the block by the member's reflected shape:
 // the count must be the member's component count, and every number is
 // converted to its scalar type. False (reported) when the member is absent
@@ -382,12 +375,23 @@ EntityId MATERIAL::load(Renderer& renderer, const AssetGuid& asset) {
         RENDERER::log(renderer, RENDER_LOG_ERROR, "%s: shader '%s' did not load", path, parsed.shader);
         return 0;
     }
-    const EntityId entity = create(renderer, shader);
-    if (entity == 0) {
-        return 0;
+    // The material lives on the asset's own entity when the file was
+    // registered as one (Engine::load_asset_file does that), so the file,
+    // the asset and the material are one entity; a GUID with no asset
+    // entity gets a plain one.
+    EntityId entity = ASSET_ENTITY::find(*renderer.world, asset);
+    if (entity != 0 && !renderer.world->has<Material>(entity)) {
+        if (!attach(renderer, entity, shader)) {
+            return 0;
+        }
+    } else {
+        entity = create(renderer, shader);
+        if (entity == 0) {
+            return 0;
+        }
     }
     char name[ENTITY_NAME_CAPACITY];
-    file_stem(path, name, sizeof(name));
+    ASSET_ENTITY::name_from_path(path, name, sizeof(name));
     SCENE::set_name(*renderer.world, entity, name);
     renderer.world->get<Material>(entity)->asset = asset;
     apply_asset(renderer, entity, parsed, name);
@@ -425,7 +429,7 @@ bool MATERIAL::reload(Renderer& renderer, const EntityId entity) {
     sync(*material, *shader);
 
     char name[ENTITY_NAME_CAPACITY];
-    file_stem(path, name, sizeof(name));
+    ASSET_ENTITY::name_from_path(path, name, sizeof(name));
     apply_asset(renderer, entity, parsed, name);
     renderer.world->modified<Material>(entity);
     return true;

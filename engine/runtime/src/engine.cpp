@@ -1,5 +1,6 @@
 #include "engine/engine.hpp"
 
+#include "engine/asset/asset_entity.hpp"
 #include "engine/asset/asset_reader.hpp"
 #include "engine/asset/text_asset.hpp"
 #include "engine/memory/heap_allocator.hpp"
@@ -30,6 +31,11 @@ bool Engine::init(GpuContext* gpu) {
         return false;
     }
     scene->init(world);
+    AssetEntities* asset_entities = this->create_singleton<AssetEntities>();
+    if (asset_entities == nullptr) {
+        return false;
+    }
+    asset_entities->init(world);
     Renderer* renderer = this->create_singleton<Renderer>();
     if (renderer == nullptr || !RENDERER::init(*renderer, gpu, world, assets, ENGINE_RENDER_DIR)) {
         return false;
@@ -42,7 +48,12 @@ bool Engine::init(GpuContext* gpu) {
 void Engine::shutdown() {
     // Singletons that own memory release it before the store destroys them.
     // The world first: its Shader and Material entities hand their
-    // resources back through the removed hooks; then the renderer.
+    // resources back through the removed hooks; then the renderer. The
+    // asset entity index owns nothing in the world and goes first, so the
+    // world's teardown does not keep it in step entity by entity.
+    if (AssetEntities* asset_entities = this->get_singleton<AssetEntities>()) {
+        asset_entities->free();
+    }
     if (World* world = this->get_singleton<World>()) {
         world->free();
     }
@@ -77,6 +88,11 @@ AssetGuid Engine::load_asset_file(const char* path) {
         fprintf(stderr, "[assets] %s: could not register (cooked-only provider, or duplicate GUID)\n", path);
         ASSET_FILE::free_prelude(&view, MEMORY::heap_allocator());
         return AssetGuid{};
+    }
+    // The asset is also an entity: created now, or found and brought up to
+    // date (type, name) when the file was registered before.
+    if (AssetEntities* asset_entities = this->get_singleton<AssetEntities>()) {
+        asset_entities->add(view, path);
     }
     ASSET_FILE::free_prelude(&view, MEMORY::heap_allocator());
     return guid;

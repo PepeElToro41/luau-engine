@@ -22,8 +22,12 @@ bool camera(InspectorContext& ctx, void* data);
 bool primitive_renderer(InspectorContext& ctx, void* data);
 // Material: the shader by name, then every member of its material block
 // as a drag / color / checkbox field by the reflected type, the texture
-// slots as GUID text (or `none`) and the sampler slots as their words,
-// written straight into the Material's block and slots.
+// slots as a combo over the texture asset entities (every AssetUuid with
+// (AssetType, AssetTexture), by Name, plus `none`; the GUID in the
+// tooltip) and the sampler slots as their words, written straight into
+// the Material's block and slots.
 bool material(InspectorContext& ctx, void* data);
+// AssetUuid: the asset's type (from its AssetType pair) and GUID, read-only.
+bool asset_uuid(InspectorContext& ctx, void* data);
 
 } // namespace INSPECTORS
