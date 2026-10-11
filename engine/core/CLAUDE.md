@@ -3,6 +3,9 @@
 `engine/core` -> `LuauEngine::core`: `defines.hpp`, `memory/`, `templates/`, `utils/`, `math/`, `ecs/`, `scene/`, `asset/`, `geometry/`, `platform/`.
 No external dependencies.
 Keep it that way: tests and benchmarks link only this.
+`memory/` is the allocators: `BaseAllocator` (the interface `DynamicArray` and the containers take), the heap, `ArenaAllocator` (bump, `reset` / `reset_to`, no `reallocate`),
+`TemporalAllocator` (scoped scratch on the thread's `MAIN_ARENA`, rewound when it goes out of scope;
+`Query::each` holds one while it runs, so a callback must not grow a container that lives on an outer one) and `FrameAllocator` (an arena for one frame, `reset` once per frame by its owner, the right home for anything a callback fills that the rest of the frame reads).
 `math/` is header-only (`math/math.hpp` includes it all): `Vector2` (scalar, 8 bytes),
 `Vector3` (SIMD, 16 bytes with a padding lane `w` that nothing reads;
 `load`/`store` move 12-byte vertex data),

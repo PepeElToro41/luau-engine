@@ -95,10 +95,14 @@ static bool init_frame_set(Renderer& renderer) {
     return GPU::upload_texture(renderer.gpu, renderer.white, &upload, 1);
 }
 
-bool RENDERER::init(Renderer& renderer, GpuContext* gpu, World* world, AssetResourceProvider* provider, const char* engine_render_dir) {
+bool RENDERER::init(Renderer& renderer, GpuContext* gpu, World* world, AssetResourceProvider* provider, BaseAllocator* frame_allocator, const char* engine_render_dir) {
+    if (frame_allocator == nullptr) {
+        return false;
+    }
     renderer.gpu = gpu;
     renderer.world = world;
     renderer.provider = provider;
+    renderer.frame_allocator = frame_allocator;
     if (engine_render_dir != nullptr) {
         strncpy(renderer.engine_render_dir, engine_render_dir, RENDERER_PATH_MAX - 1);
     }

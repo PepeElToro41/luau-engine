@@ -6,11 +6,15 @@
 #include "engine/defines.hpp"
 #include "engine/ecs/world.hpp"
 #include "engine/gpu/gpu.hpp"
+#include "engine/memory/frame_allocator.hpp"
 #include "engine/render/renderer.hpp"
 #include "engine/scene/scene.hpp"
 #include "engine/utils/singletons.hpp"
 
 #include <utility>
+
+// Scratch memory per frame (see FrameAllocator).
+inline constexpr usz ENGINE_FRAME_ARENA_BYTES = MEMORY::MB * 8;
 
 // The simulation and its renderer. It knows nothing about windows or
 // swapchains: the application owns the GpuContext and its frames and tells
@@ -49,8 +53,12 @@
 // owns the render graph, the shader and material entities (named but
 // unparented, so outside the scene) and draws the frame
 // (get_singleton<Renderer>(), driven through RENDERER::, SHADER_LIBRARY::
-// and MATERIAL::). shutdown() frees what they own before destroying them,
-// so the app must have waited for the GPU to go idle before calling it.
+// and MATERIAL::), and the FrameAllocator (get_singleton<FrameAllocator>(),
+// ENGINE_FRAME_ARENA_BYTES of scratch for anything a frame builds and drops:
+// reset at the start of every update(), so one update per frame, and what the
+// Renderer's draw lists live on). shutdown() frees what they own before
+// destroying them, so the app must have waited for the GPU to go idle before
+// calling it.
 struct Engine {
     // Creates the engine's GPU resources on `gpu`, which must outlive it,
     // and the engine's own singletons.
@@ -58,7 +66,8 @@ struct Engine {
     // Destroys every singleton and releases the engine's resources.
     void shutdown();
 
-    // Advances the simulation by `dt` seconds.
+    // Advances the simulation by `dt` seconds. Also begins the frame: resets
+    // the FrameAllocator, so anything allocated from it last frame is gone.
     void update(f32 dt);
 
     // Registers the asset file at `path` (a .lunaasset, or a text asset

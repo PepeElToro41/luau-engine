@@ -127,8 +127,24 @@ void RENDER_PASSES::draw_scene(Renderer& renderer, const RenderPassContext& ctx)
 
     // Collect. A MeshRenderer and a PrimitiveRenderer differ only in where
     // the GpuMesh comes from; `mesh` may be null when it could not be loaded.
-    TemporalAllocator temp = TemporalAllocator::create();
-    DynamicArray<DrawItem> items(&temp);
+    // The list is frame scratch, not a TemporalAllocator: it is filled from
+    // inside Query::each, which holds its own TemporalAllocator on
+    // MAIN_ARENA and would rewind away anything the callbacks allocated
+    // there. Reserved once at the exact upper bound, since an arena cannot
+    // resize a block and a doubling array would waste frame memory.
+    // TODO: drop the DynamicArray and the pre-count: bump DrawItems straight
+    // out of the frame arena as the queries run (the items are contiguous
+    // when nothing else allocates from it in between), so the collect pass
+    // neither counts nor reserves.
+    DynamicArray<DrawItem> items(renderer.frame_allocator);
+    const usz capacity = world->query<Transform, MeshRenderer>().count() + world->query<Transform, PrimitiveRenderer>().count();
+    if (capacity == 0) {
+        return;
+    }
+    items.reserve(capacity);
+    if (items.data == nullptr) {
+        return; // the frame allocator is full and has said so
+    }
     const auto collect = [&](const Transform& transform, const EntityId material_entity, const GpuMesh* mesh) {
         if (mesh == nullptr) {
             return;
@@ -218,7 +234,6 @@ void RENDER_PASSES::draw_scene(Renderer& renderer, const RenderPassContext& ctx)
             GPU::cmd_draw_indexed(ctx.cmd, submesh.index_count, submesh.first_index, static_cast<i32>(submesh.base_vertex));
         }
     }
-    items.free();
 }
 
 // --- Fullscreen -----------------------------------------------------------------

@@ -44,8 +44,13 @@
 //
 // The handle is a plain copyable value: the extra ids live in a fixed
 // array, and every run scans the world's archetypes afresh through
-// QUERY_SCAN, with its scratch state on a TemporalAllocator. Nothing has to
-// be destroyed unless the query was created with QUERY_CACHED:
+// QUERY_SCAN, with its scratch state on a TemporalAllocator. That allocator
+// is alive during each() / iter() callbacks, so a callback must not allocate
+// through an outer TemporalAllocator (growing a DynamicArray that lives on
+// one, say): the block would sit past the query's mark and be rewound away
+// when the run ends. reserve() such containers before the run, or put them
+// on another allocator. Nothing has to be destroyed unless the query was
+// created with QUERY_CACHED:
 //
 //     Query<Position, Velocity> movers = world.query<Position, Velocity>(QUERY_CACHED);
 //     movers.each(...);      // the first run builds the QueryScanCache

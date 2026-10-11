@@ -36,8 +36,12 @@ bool Engine::init(GpuContext* gpu) {
         return false;
     }
     asset_entities->init(world);
+    FrameAllocator* frame_allocator = this->create_singleton<FrameAllocator>(ENGINE_FRAME_ARENA_BYTES);
+    if (frame_allocator == nullptr) {
+        return false;
+    }
     Renderer* renderer = this->create_singleton<Renderer>();
-    if (renderer == nullptr || !RENDERER::init(*renderer, gpu, world, assets, ENGINE_RENDER_DIR)) {
+    if (renderer == nullptr || !RENDERER::init(*renderer, gpu, world, assets, frame_allocator, ENGINE_RENDER_DIR)) {
         return false;
     }
     memcpy(renderer->clear_color, this->clear_color, sizeof(this->clear_color));
@@ -63,11 +67,18 @@ void Engine::shutdown() {
     if (AssetResourceProvider* assets = this->get_singleton<AssetResourceProvider>()) {
         assets->free();
     }
+    if (FrameAllocator* frame_allocator = this->get_singleton<FrameAllocator>()) {
+        frame_allocator->release();
+    }
     this->singletons.free();
     this->gpu = nullptr;
 }
 
 void Engine::update(const f32 dt) {
+    // A new frame: last frame's scratch is gone.
+    if (FrameAllocator* frame_allocator = this->get_singleton<FrameAllocator>()) {
+        frame_allocator->reset();
+    }
     this->time += dt;
     this->last_dt = dt;
 }

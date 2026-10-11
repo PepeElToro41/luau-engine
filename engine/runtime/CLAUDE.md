@@ -9,7 +9,10 @@ spawn scene entities with `scene->spawn(name, parent)`),
 the `AssetEntities` index (every asset `load_asset_file` registers gets, or updates, its unparented entity with `AssetUuid`, `(AssetType, tag)` and `Name`;
 `get_singleton<AssetEntities>()->find(guid)` is it;
 freed first in `shutdown`) and the `Renderer` (driven through `RENDERER::`, `SHADER_LIBRARY::` and `MATERIAL::`;
-its `Shader` / `Material` entities are named but unparented, so they never appear in the scene tree) and registers the render components;
+its `Shader` / `Material` entities are named but unparented, so they never appear in the scene tree),
+the `FrameAllocator` (core `memory/frame_allocator.hpp`: one `ENGINE_FRAME_ARENA_BYTES` arena for whatever a frame builds and drops, `Renderer::frame_allocator`;
+`update` resets it, so it is one `update` per frame and nothing from it survives into the next;
+a full arena returns nullptr and logs once per frame, growing it is a TODO) and registers the render components;
 `load_asset_file(path)` registers a `.lunaasset` and returns its GUID.
 `shutdown` frees the World first (its removed hooks release shader programs, material blocks and pipelines),
 then the renderer, so the app must have waited for the GPU to go idle.

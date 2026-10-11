@@ -118,6 +118,10 @@ struct Renderer {
     GpuContext* gpu = nullptr;
     World* world = nullptr;
     AssetResourceProvider* provider = nullptr;
+    // Scratch for the frame being recorded (draw lists and the like): the
+    // Engine's FrameAllocator, reset by the Engine once per frame, never
+    // here. Never null after init.
+    BaseAllocator* frame_allocator = nullptr;
 
     // The graph and its plans.
     RenderGraph graph;
@@ -161,7 +165,9 @@ struct Renderer {
 
 namespace RENDERER {
 
-bool init(Renderer& renderer, GpuContext* gpu, World* world, AssetResourceProvider* provider, const char* engine_render_dir);
+// `frame_allocator` is where per-frame scratch goes; the caller resets it
+// once per frame, before render().
+bool init(Renderer& renderer, GpuContext* gpu, World* world, AssetResourceProvider* provider, BaseAllocator* frame_allocator, const char* engine_render_dir);
 // Destroys everything. The GPU must be idle and the World's Shader and
 // Material entities already removed (World::free fires their hooks).
 void shutdown(Renderer& renderer);
