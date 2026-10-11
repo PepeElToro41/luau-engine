@@ -1,0 +1,5 @@
+guid = ded637b4f3a476316a85340645dcc1a9
+shader = unlit
+
+[params]
+color = 1 1 1 1
