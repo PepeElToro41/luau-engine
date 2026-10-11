@@ -9,6 +9,8 @@
 #include "engine/memory/frame_allocator.hpp"
 #include "engine/render/renderer.hpp"
 #include "engine/scene/scene.hpp"
+#include "engine/scene/serialize.hpp"
+#include "engine/templates/dynamic_array.hpp"
 #include "engine/utils/singletons.hpp"
 
 #include <utility>
@@ -81,6 +83,41 @@ struct Engine {
     // through the Renderer's graph, and updates frame.target_state.
     void render(FrameContext& frame);
 
+    // --- Scenes ----------------------------------------------------------------
+    //
+    // A .scene file (asset/asset_types/scene_asset.hpp) registered through
+    // load_asset_file is loaded under the Scene's root. Loading is
+    // synchronous: the old content is deleted and the new one created on
+    // this thread, in the same call. Line-level problems in the file are
+    // warnings in the renderer log (the editor's Output panel); only a
+    // structurally broken file fails.
+
+    // Unloads what is under scene_root and instantiates the scene asset
+    // `guid` there; Scene::current then names it. False (with messages)
+    // when the asset is unknown, not a .scene, or structurally broken. The
+    // old content is only unloaded once the text is in hand, so an unknown
+    // asset leaves the scene as it was; a broken text still empties it.
+    bool load_scene(const AssetGuid& guid);
+    // Instantiates the scene asset `guid` under `parent` (an alive entity)
+    // without unloading anything: a prefab. Scene::current is untouched.
+    bool instantiate_scene(const AssetGuid& guid, EntityId parent);
+    // Writes the content under scene_root to `path` with Scene::current as
+    // its guid (a fresh random one when the scene has none), registers the
+    // file (so it is an asset entity like any other scene) and makes it
+    // Scene::current. False when the file cannot be written.
+    bool save_scene(const char* path);
+    // The text save_scene would write, appended to `out`: for an app that
+    // wants to compare the scene with its file. The guid is Scene::current
+    // (null for a new scene).
+    void write_scene(DynamicArray<char>& out);
+    // Unloads the scene and forgets Scene::current.
+    void new_scene();
+    // Fills `ctx` with the engine's asset resolver (a material GUID loads
+    // the material, a shader GUID the shader, any other asset is its entity)
+    // and the renderer log as the warning sink, for anything that
+    // serializes on its own.
+    void serialize_context(SerializeContext& ctx);
+
     // --- Singletons ----------------------------------------------------------
 
     // Creates T's singleton as T(args...) and returns it. The pointer stays
@@ -100,6 +137,15 @@ struct Engine {
 
     Singletons singletons;
     GpuContext* gpu = nullptr;
+
+private:
+    static EntityId resolve_asset(const AssetGuid& guid, void* user_data);
+    static void scene_warning(const char* text, void* user_data);
+    // The text of the scene asset `guid`, resident in the provider until
+    // unload_scene_text; nullptr (with a message) when it is not a scene.
+    const char* scene_text(const AssetGuid& guid, usz* out_size, const char** out_path);
+
+public:
     // Applied to the renderer's default forward pass every frame.
     f32 clear_color[4] = {0.05f, 0.05f, 0.08f, 1.0f};
     f64 time = 0.0;

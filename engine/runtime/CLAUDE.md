@@ -13,10 +13,15 @@ its `Shader` / `Material` entities are named but unparented, so they never appea
 the `FrameAllocator` (core `memory/frame_allocator.hpp`: one `ENGINE_FRAME_ARENA_BYTES` arena for whatever a frame builds and drops, `Renderer::frame_allocator`;
 `update` resets it, so it is one `update` per frame and nothing from it survives into the next;
 a full arena returns nullptr and logs once per frame, growing it is a TODO) and registers the render components;
-`load_asset_file(path)` registers a `.lunaasset` and returns its GUID.
+`load_asset_file(path)` registers a `.lunaasset` or a text asset (`.material`, `.scene`) and returns its GUID.
+Scenes are files (core `asset/asset_types/scene_asset.hpp`): `load_scene(guid)` unloads the content under `scene_root` once the registered `.scene`'s text is in hand and instantiates the file there, setting `Scene::current` / `current_path`;
+`instantiate_scene(guid, parent)` instantiates it under any alive entity without unloading, which is a prefab;
+`save_scene(path)` writes the content under `scene_root` with `Scene::current` as guid (a fresh `GUID::random()` for a new scene), registers the file and makes it current;
+`write_scene(out)` is the text a save would write (the editor hashes it to know whether the scene changed);
+`new_scene()` unloads and forgets current;
+`serialize_context(ctx)` fills a `SerializeContext` with the Engine's resolver (a material GUID loads the material through `MATERIAL::load`, a shader GUID the shader through `SHADER_LIBRARY::load`, any other asset is its entity) and the renderer log as the warning sink, so line-level problems reach the editor's Output panel and only a structurally broken file fails.
 `shutdown` frees the World first (its removed hooks release shader programs, material blocks and pipelines),
 then the renderer, so the app must have waited for the GPU to go idle.
 Links core and graphics.
-`render/demo_scene.hpp` is the stand-in scene both apps spawn (`camera` plus `cube`, `sphere` and `cylinder` `PrimitiveRenderer` entities under `scene_root`, one unlit material) with toggles for a post-process pass, a depth-only shadow pass, a textured material (`set_texture`) and a `.material` asset (`set_material(engine, guid)`;
-the editor applies the test project's `materials/demo.material` at startup) (editor: Render menu;
+`render/demo_scene.hpp` is the stand-in scene (`camera` plus `cube`, `sphere` and `cylinder` `PrimitiveRenderer` entities under `scene_root`, one unlit material) both apps fall back to when the project's `scenes/demo.scene` (the same content, drawn with `materials/demo.material`) is missing or does not load, with toggles for a post-process pass, a depth-only shadow pass, a textured material (`set_texture`) and a `.material` asset (`set_material(engine, guid)`) (editor: Render menu;
 standalone: F5 reload, F6 post, F7 shadow, `--post` / `--shadow`).

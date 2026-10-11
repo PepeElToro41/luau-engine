@@ -158,6 +158,12 @@ struct Renderer {
     f32 time = 0.0f;
     f32 delta_time = 0.0f;
     RenderLogSink log_sink;
+    // The entity the frame is drawn from when it is alive and holds a
+    // Transform and a Camera, whatever the RenderCamera tag says: how the
+    // editor keeps its own fly camera while the scene's camera carries the
+    // tag for the standalone. 0 (the default) falls back to the tag, then
+    // to the first Camera.
+    EntityId camera = 0;
 
     char engine_render_dir[RENDERER_PATH_MAX] = {};
     char project_render_dir[RENDERER_PATH_MAX] = {};

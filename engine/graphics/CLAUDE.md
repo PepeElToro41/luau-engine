@@ -49,15 +49,18 @@ push constants and vertex inputs (`GpuFormat`) into one fixed-array `ShaderRefle
 needs no device;
 the set convention it enforces: set 0 a subset of `ShaderProgramLoadDesc::frame_interface`, set 1 pass inputs, set 2 the material (one uniform block plus textures and samplers, identical in every pass that declares it),
 set 3 reserved).
-`render/` is the frontend, written once against `GPU::` so every backend shares it: `components.hpp` (`Transform`, `Camera`, the `RenderCamera` tag that marks the one camera the frame is drawn from (the renderer falls back to the first `Camera` when none is tagged;
-the editor tags its own fly camera, the standalone the scene's),
+`render/` is the frontend, written once against `GPU::` so every backend shares it: `components.hpp` (`Transform`, `Camera`, the `RenderCamera` tag that marks the one camera the frame is drawn from (`Renderer::camera` overrides it, the renderer falls back to the first `Camera` when none is tagged;
+a scene file tags its own camera for the standalone, the editor points `Renderer::camera` at its fly camera),
 `MeshRenderer` (a mesh asset GUID + material entity),
 `PrimitiveRenderer` (a `PrimitiveShape` + material entity;
 drawn exactly like a MeshRenderer, the geometry generated and uploaded once per shape through `GPU_ASSETS::get_primitive` and shared by every entity using it),
 `Shader` = `ShaderProgram` + `generation` + its bind layouts, `Material` = CPU block + texture and sampler slots, no GPU state, `FrameUniforms`;
-`RENDER_COMPONENTS::register_all` names the component entities and installs the removed hooks),
+`RENDER_COMPONENTS::register_all` names the component entities, installs the removed hooks and exposes the scene components' `Serializer`s (core `scene/serialize.hpp`) for `.scene` files: `Transform` (`position`, `rotation` as the quaternion `x y z w`, `scale`), `Camera` (`fov_y` in radians, `near_plane`, `far_plane`), the `RenderCamera` tag, `MeshRenderer` (`mesh` GUID, `material` entity reference) and `PrimitiveRenderer` (`shape` by `PRIMITIVES::name`, `material`);
+`Shader` and `Material` have none, a scene names a material by its asset GUID),
 `renderer.hpp` (the `Renderer` state struct: graph + plans + diagnostics, executor, pipeline cache, asset cache, custom passes, the frame's set 0 (`frame_layout`, `frame_interface`, the `RENDERER_SAMPLER_*` table, the `white` texture),
-per-frame `frame_group` and `material_groups`, `log_sink`;
+per-frame `frame_group` and `material_groups`, `log_sink`,
+`camera` (the entity the frame is drawn from when set and alive with a Transform and a Camera, ahead of the `RenderCamera` tag;
+the editor sets its fly camera so a scene file's tagged camera is left for the standalone);
 `FrameContext` = `GpuFrame` + target texture + `target_state` in/out;
 `RenderPassContext` for pass functions and custom callbacks;
 `RENDERER::init` / `shutdown` / `render` / `build_default_graph` (one DRAW_SCENE pass tagged `forward` into the backbuffer) / `register_custom_pass` / `log`),

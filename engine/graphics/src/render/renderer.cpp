@@ -210,8 +210,12 @@ static bool recompile(Renderer& renderer, const RenderBackbufferInfo& info) {
 
 // --- Frame -----------------------------------------------------------------------
 
-// The camera tagged RenderCamera, else the first camera there is, else 0.
-static EntityId find_render_camera(World* world) {
+// The renderer's own pick, else the camera tagged RenderCamera, else the
+// first camera there is, else 0.
+static EntityId find_render_camera(const Renderer& renderer, World* world) {
+    if (renderer.camera != 0 && world->alive(renderer.camera) && world->has<Transform>(renderer.camera) && world->has<Camera>(renderer.camera)) {
+        return renderer.camera;
+    }
     const EntityId tagged = world->query<Transform, Camera>().with<RenderCamera>().first();
     if (tagged != 0) {
         return tagged;
@@ -227,7 +231,7 @@ static void write_frame_set(Renderer& renderer, const u32 width, const u32 heigh
     f32 near_plane = 0.1f;
     f32 far_plane = 1000.0f;
     if (renderer.world != nullptr) {
-        const EntityId camera_entity = find_render_camera(renderer.world);
+        const EntityId camera_entity = find_render_camera(renderer, renderer.world);
         if (camera_entity != 0) {
             const Transform* transform = renderer.world->get<Transform>(camera_entity);
             const Camera* camera = renderer.world->get<Camera>(camera_entity);

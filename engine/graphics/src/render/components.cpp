@@ -1,10 +1,12 @@
 #include "engine/render/components.hpp"
 
 #include "engine/asset/asset_entity.hpp"
+#include "engine/asset/text_asset.hpp"
 #include "engine/ecs/world.hpp"
 #include "engine/memory/heap_allocator.hpp"
 #include "engine/render/renderer.hpp"
 #include "engine/scene/scene.hpp"
+#include "engine/scene/serialize.hpp"
 
 static void shader_removed(World* world, const EntityId entity, Id, void* user_data) {
     Renderer* renderer = static_cast<Renderer*>(user_data);
@@ -45,6 +47,98 @@ static void material_changed(World* world, const EntityId entity, const Observer
     }
 }
 
+// --- Serializers ---------------------------------------------------------------
+//
+// How the scene components read and write in a .scene file (see
+// engine/scene/serialize.hpp). Rotations are saved as the quaternion so a
+// round trip is lossless, the field of view in radians as stored, a
+// primitive's shape by name and materials as entity references (the
+// material's asset GUID, resolved by the Engine on load).
+
+static void transform_write(SerializeContext&, const void* data, TextWriter& out) {
+    const Transform* transform = static_cast<const Transform*>(data);
+    SERIALIZE::write_vec3(out, "position", transform->position);
+    SERIALIZE::write_quat(out, "rotation", transform->rotation);
+    SERIALIZE::write_vec3(out, "scale", transform->scale);
+}
+
+static bool transform_read(SerializeContext&, void* data, const char* field, const usz field_length, const char* value, const usz value_length) {
+    Transform* transform = static_cast<Transform*>(data);
+    if (TEXT_ASSET::word_is(field, field_length, "position")) {
+        return SERIALIZE::read_vec3(value, value_length, &transform->position);
+    }
+    if (TEXT_ASSET::word_is(field, field_length, "rotation")) {
+        return SERIALIZE::read_quat(value, value_length, &transform->rotation);
+    }
+    if (TEXT_ASSET::word_is(field, field_length, "scale")) {
+        return SERIALIZE::read_vec3(value, value_length, &transform->scale);
+    }
+    return false;
+}
+
+static void camera_write(SerializeContext&, const void* data, TextWriter& out) {
+    const Camera* camera = static_cast<const Camera*>(data);
+    SERIALIZE::write_f32(out, "fov_y", camera->fov_y);
+    SERIALIZE::write_f32(out, "near_plane", camera->near_plane);
+    SERIALIZE::write_f32(out, "far_plane", camera->far_plane);
+}
+
+static bool camera_read(SerializeContext&, void* data, const char* field, const usz field_length, const char* value, const usz value_length) {
+    Camera* camera = static_cast<Camera*>(data);
+    if (TEXT_ASSET::word_is(field, field_length, "fov_y")) {
+        return SERIALIZE::read_f32(value, value_length, &camera->fov_y);
+    }
+    if (TEXT_ASSET::word_is(field, field_length, "near_plane")) {
+        return SERIALIZE::read_f32(value, value_length, &camera->near_plane);
+    }
+    if (TEXT_ASSET::word_is(field, field_length, "far_plane")) {
+        return SERIALIZE::read_f32(value, value_length, &camera->far_plane);
+    }
+    return false;
+}
+
+static void mesh_renderer_write(SerializeContext& ctx, const void* data, TextWriter& out) {
+    const MeshRenderer* renderer = static_cast<const MeshRenderer*>(data);
+    SERIALIZE::write_guid(out, "mesh", renderer->mesh);
+    SERIALIZE::write_entity_ref(ctx, out, "material", renderer->material);
+}
+
+static bool mesh_renderer_read(SerializeContext& ctx, void* data, const char* field, const usz field_length, const char* value, const usz value_length) {
+    MeshRenderer* renderer = static_cast<MeshRenderer*>(data);
+    if (TEXT_ASSET::word_is(field, field_length, "mesh")) {
+        return SERIALIZE::read_guid(value, value_length, &renderer->mesh);
+    }
+    if (TEXT_ASSET::word_is(field, field_length, "material")) {
+        return SERIALIZE::read_entity_ref(ctx, value, value_length, &renderer->material);
+    }
+    return false;
+}
+
+static void primitive_renderer_write(SerializeContext& ctx, const void* data, TextWriter& out) {
+    const PrimitiveRenderer* renderer = static_cast<const PrimitiveRenderer*>(data);
+    SERIALIZE::write_word(out, "shape", PRIMITIVES::name(renderer->shape));
+    SERIALIZE::write_entity_ref(ctx, out, "material", renderer->material);
+}
+
+static bool primitive_renderer_read(SerializeContext& ctx, void* data, const char* field, const usz field_length, const char* value, const usz value_length) {
+    PrimitiveRenderer* renderer = static_cast<PrimitiveRenderer*>(data);
+    if (TEXT_ASSET::word_is(field, field_length, "shape")) {
+        // By name, never by number: the enum's values are an implementation detail.
+        for (u32 i = 0; i < PRIMITIVE_COUNT; ++i) {
+            const PrimitiveShape shape = static_cast<PrimitiveShape>(i);
+            if (TEXT_ASSET::word_is(value, value_length, PRIMITIVES::name(shape))) {
+                renderer->shape = shape;
+                return true;
+            }
+        }
+        return false;
+    }
+    if (TEXT_ASSET::word_is(field, field_length, "material")) {
+        return SERIALIZE::read_entity_ref(ctx, value, value_length, &renderer->material);
+    }
+    return false;
+}
+
 void RENDER_COMPONENTS::register_all(World& world, Renderer& renderer) {
     // Named so the editor can list them by name even where nothing draws them.
     SCENE::set_name(world, world.component<Transform>(), "Transform");
@@ -54,6 +148,13 @@ void RENDER_COMPONENTS::register_all(World& world, Renderer& renderer) {
     SCENE::set_name(world, world.component<PrimitiveRenderer>(), "PrimitiveRenderer");
     SCENE::set_name(world, world.component<Shader>(), "Shader");
     SCENE::set_name(world, world.component<Material>(), "Material");
+    // Scene content, as a .scene file stores it. Shader and Material are not
+    // scene content: a scene refers to a material by its asset GUID.
+    SERIALIZE::expose<Transform>(world, "Transform", &transform_write, &transform_read, 0);
+    SERIALIZE::expose<Camera>(world, "Camera", &camera_write, &camera_read, 10);
+    SERIALIZE::expose_tag<RenderCamera>(world, "RenderCamera");
+    SERIALIZE::expose<MeshRenderer>(world, "MeshRenderer", &mesh_renderer_write, &mesh_renderer_read, 20);
+    SERIALIZE::expose<PrimitiveRenderer>(world, "PrimitiveRenderer", &primitive_renderer_write, &primitive_renderer_read, 20);
     world.hook_removed<Shader>(shader_removed, &renderer);
     world.hook_removed<Material>(material_removed, &renderer);
     world.query<Material>().observe(material_changed);
