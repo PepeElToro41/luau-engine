@@ -7,3 +7,9 @@ cmake-build-*/
 .idea/
 imgui.ini
 .claude/worktrees/
+
+# Large sample meshes of the testing project stay local; cube is the one tracked.
+editor/testing_project/meshes/originals/
+!editor/testing_project/meshes/originals/cube.obj
+editor/testing_project/meshes/*.lunaasset
+!editor/testing_project/meshes/cube.lunaasset
