@@ -64,6 +64,72 @@ void MATERIAL::sync(Material& material, const Shader& shader) {
     }
 }
 
+void MATERIAL::migrate(Material& material, const ShaderProgram& old_program, const Shader& shader) {
+    // Take the old block and slots away from the material, build the new
+    // ones zeroed, then copy over by name.
+    u8* old_params = material.params;
+    const u32 old_param_size = material.param_size;
+    MaterialTextureSlot old_textures[MATERIAL_MAX_TEXTURES];
+    memcpy(old_textures, material.textures, sizeof(old_textures));
+    const u32 old_texture_count = material.texture_count;
+    MaterialSamplerSlot old_samplers[MATERIAL_MAX_SAMPLERS];
+    memcpy(old_samplers, material.samplers, sizeof(old_samplers));
+    const u32 old_sampler_count = material.sampler_count;
+    material.params = nullptr;
+    material.param_size = 0;
+    material.texture_count = 0;
+    material.sampler_count = 0;
+    material.shader_generation = shader.generation - 1;
+    sync(material, shader);
+
+    const ShaderProgram& program = shader.program;
+    const ShaderReflection& old_interface = old_program.material_interface;
+    const ShaderReflection& interface = program.material_interface;
+    const ReflectedBinding* old_block = old_program.has_material_block() ? old_interface.find_binding(2, old_program.material_block_binding) : nullptr;
+    const ReflectedBinding* block = program.has_material_block() ? interface.find_binding(2, program.material_block_binding) : nullptr;
+    if (old_block != nullptr && block != nullptr && old_params != nullptr && material.params != nullptr) {
+        for (u32 m = 0; m < block->member_count; ++m) {
+            const ReflectedMember& member = interface.members[block->first_member + m];
+            const ReflectedMember* old_member = old_interface.find_member(*old_block, member.name);
+            if (old_member == nullptr || old_member->scalar != member.scalar || old_member->columns != member.columns || old_member->rows != member.rows
+                || old_member->size != member.size) {
+                continue;
+            }
+            if (member.offset + member.size > material.param_size || old_member->offset + old_member->size > old_param_size) {
+                continue;
+            }
+            memcpy(material.params + member.offset, old_params + old_member->offset, member.size);
+        }
+    }
+    for (u32 i = 0; i < material.texture_count; ++i) {
+        MaterialTextureSlot& slot = material.textures[i];
+        const ReflectedBinding* binding = interface.find_binding(2, slot.binding);
+        const ReflectedBinding* old_binding = binding != nullptr ? old_interface.find_binding(2, binding->name) : nullptr;
+        if (old_binding == nullptr || old_binding->type != GPU_BINDING_TEXTURE) {
+            continue;
+        }
+        for (u32 j = 0; j < old_texture_count; ++j) {
+            if (old_textures[j].binding == old_binding->binding) {
+                slot.texture = old_textures[j].texture;
+            }
+        }
+    }
+    for (u32 i = 0; i < material.sampler_count; ++i) {
+        MaterialSamplerSlot& slot = material.samplers[i];
+        const ReflectedBinding* binding = interface.find_binding(2, slot.binding);
+        const ReflectedBinding* old_binding = binding != nullptr ? old_interface.find_binding(2, binding->name) : nullptr;
+        if (old_binding == nullptr || old_binding->type != GPU_BINDING_SAMPLER) {
+            continue;
+        }
+        for (u32 j = 0; j < old_sampler_count; ++j) {
+            if (old_samplers[j].binding == old_binding->binding) {
+                slot.sampler = old_samplers[j].sampler;
+            }
+        }
+    }
+    MEMORY::heap_allocator()->free(old_params);
+}
+
 // --- Create ----------------------------------------------------------------------
 
 // Puts a fresh Material for `shader_entity` on `entity`, which must be alive

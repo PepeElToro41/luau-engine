@@ -25,6 +25,7 @@
 struct Renderer;
 struct Material;
 struct Shader;
+struct ShaderProgram;
 
 namespace MATERIAL {
 
@@ -45,8 +46,16 @@ bool set_texture(Renderer& renderer, EntityId material, const char* name, const 
 bool set_sampler(Renderer& renderer, EntityId material, const char* name, const GpuSamplerDesc& sampler);
 
 // Rebuilds the material's block and slots for the shader's current
-// generation if they are stale. Called before every draw.
+// generation if they are stale: a zeroed block, texture and sampler slots
+// kept by binding number. Called before every draw.
 void sync(Material& material, const Shader& shader);
+// What SHADER_LIBRARY::reload calls on every material of a shader it just
+// recompiled, with the program the material's values were laid out by:
+// rebuilds the block and slots for the shader's new program and carries
+// over every block member that kept its name and shape, and every texture
+// and sampler whose binding kept its name. Members and slots new to the
+// program start zeroed, the same way sync() leaves them.
+void migrate(Material& material, const ShaderProgram& old_program, const Shader& shader);
 
 // --- Files ---------------------------------------------------------------------
 

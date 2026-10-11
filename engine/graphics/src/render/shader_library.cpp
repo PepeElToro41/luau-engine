@@ -4,6 +4,7 @@
 #include "engine/memory/heap_allocator.hpp"
 #include "engine/platform/file.hpp"
 #include "engine/render/components.hpp"
+#include "engine/render/materials.hpp"
 #include "engine/render/renderer.hpp"
 #include "engine/scene/scene.hpp"
 #include "engine/templates/dynamic_array.hpp"
@@ -138,13 +139,21 @@ bool SHADER_LIBRARY::reload(Renderer& renderer, const EntityId entity) {
         return false;
     }
     PIPELINES::release_shader(renderer, entity);
-    shader->program.free();
+    // The old program stays alive until every material carried its values
+    // over to the new interface, which needs the old reflection.
+    ShaderProgram old_program = shader->program;
     shader->program = fresh.program;
     shader->material_layout = fresh.material_layout;
     for (u32 p = 0; p < SHADER_PREPROCESSING::MAX_PASSES; ++p) {
         shader->input_layouts[p] = fresh.input_layouts[p];
     }
     shader->generation += 1;
+    renderer.world->query<Material>().each([&](const EntityId, Material& material) {
+        if (material.shader == entity) {
+            MATERIAL::migrate(material, old_program, *shader);
+        }
+    });
+    old_program.free();
     renderer.world->modified<Shader>(entity);
     return true;
 }

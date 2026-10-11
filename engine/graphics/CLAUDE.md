@@ -65,7 +65,7 @@ per-frame `frame_group` and `material_groups`, `log_sink`;
 `reload` / `reload_all` swap the program in place and bump `generation`),
 `materials.hpp` (`MATERIAL::create(renderer, shader)` and the by-name setters `set_float` ...
 `set_mat4` / `set_texture` / `set_sampler`;
-`sync` rebuilds the block after a reload;
+`sync` rebuilds the block and slots when the shader's generation moved on (zeroed block, slots kept by binding number) and `migrate(material, old_program, shader)` is what `SHADER_LIBRARY::reload` calls on each material of the shader first, carrying over block members by name and shape and texture / sampler slots by binding name, so a reload keeps the values the file or the Inspector set;
 `MATERIAL::load(renderer, guid)` turns a registered `.material` asset into a Material on the asset's own entity (the one holding its `AssetUuid`, found with `ASSET_ENTITY::find`;
 a plain new entity when there is none) named after the file (shader loaded by name through `SHADER_LIBRARY::load`, every param / texture / sampler applied by reflection, mismatches logged and skipped, the text unloaded from the provider afterwards;
 `Renderer::materials` maps asset GUID to entity so the same asset loads once, `Material::asset` points back, the removed hook drops the entry),
