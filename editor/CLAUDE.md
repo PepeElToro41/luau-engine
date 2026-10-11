@@ -35,7 +35,9 @@ right-click opens a context menu: Import on importable files sets `activated` li
 Reimport reports `reimport_source` + `reimport_asset` for the App to queue, Save Original... asks for a path in a modal and writes the bytes with `IMPORT::save_source`),
 Delete removes the entry after a confirmation modal, Rename... (or F2 on the selection) asks for a new name in a modal, New Folder... creates a folder in the current one after asking for a name in a modal;
 right-clicking the empty space of the listing offers New Folder..., Create and Refresh;
-the toolbar's Create dropdown (the same entries as the Create submenu of both context menus: Material, Shader, Code > Luau / Cpp) writes a template file in the current folder through the name modal with the extension fixed (a `.material` with a fresh GUID on the `unlit` shader and `color = 1 1 1 1`, a `.slang` skeleton of the unlit shader, a `.luau` or `.cpp` stub;
+the toolbar's Create dropdown (the same entries as the Create submenu of both context menus: Material, Shader > one entry per engine shader, Code > Luau / Cpp) writes a template file in the current folder through the name modal with the extension fixed (a `.material` with a fresh GUID on the `unlit` shader and `color = 1 1 1 1`,
+a byte-for-byte copy of the picked engine shader (every `.slang` directly in the engine's `render/`, which the App hands the panel as `shader_template_dir`, listed by stem on each refresh, the empty `surface.slang` included, defaulting the name to `new_<stem>`),
+a `.luau` or `.cpp` stub;
 `AssetBrowserPanel::create_file`) and selects it, so a new `.material` lands in the Inspector at once;
 all reporting to the Output panel),
 `import_panel` (a floating window: queue of source files, per-kind `MeshImportOptions` / `TextureImportOptions` including a "Keep original" checkbox, destination folder + name, runs `OBJ::import` / `IMAGE::import`;

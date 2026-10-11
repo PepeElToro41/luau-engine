@@ -38,10 +38,13 @@
 // empty space of the listing opens a menu with New Folder..., Create and
 // Refresh. The toolbar's Create dropdown (also a Create submenu of both
 // context menus) makes a new file in the current folder from a template:
-// Material (a .material with a fresh GUID on the unlit shader), Shader (a
-// .slang skeleton) or Code > Luau / Cpp (a .luau / .cpp stub); each asks
-// for the name in the same modal, with the extension fixed, writes the
-// file and selects it, so a .material shows up in the Inspector at once.
+// Material (a .material with a fresh GUID on the unlit shader), Shader > a
+// submenu of the engine's shaders (every .slang directly in
+// `shader_template_dir`, the engine's render/, listed by stem and copied
+// byte for byte, so an empty one like surface.slang makes an empty file)
+// or Code > Luau / Cpp (a .luau / .cpp stub); each asks for the name in
+// the same modal, with the extension fixed, writes the file and selects
+// it, so a .material shows up in the Inspector at once.
 // No previews or drag and drop yet.
 struct AssetBrowserPanel {
     struct Entry {
@@ -81,6 +84,10 @@ struct AssetBrowserPanel {
     std::filesystem::path reimport_asset;
     ImGuiTextFilter filter;
     bool show_hidden = false; // entries whose name starts with '.'
+    // Where Create > Shader takes its templates from: the engine's render/
+    // directory, set by the App. Its .slang files are listed again on every
+    // refresh(), so File > Refresh Assets picks up a new one.
+    std::filesystem::path shader_template_dir;
 
 private:
     void rescan(const Project& project);
@@ -94,8 +101,17 @@ private:
     enum struct CreateKind { MATERIAL, SHADER, LUAU, CPP };
     static const char* create_extension(CreateKind kind); // lowercase, with the dot
     static const char* create_label(CreateKind kind);     // "material", "shader", ...
-    // The dropdown's entries (Material, Shader, Code > Luau / Cpp); picking
-    // one sets `create_requested` + `create_kind` for the end of draw_entries().
+    // A shader template: the file's stem (the submenu label and the default
+    // name's suffix) and the file itself.
+    struct ShaderTemplate {
+        std::string name;
+        std::filesystem::path path;
+    };
+    // Re-lists `shader_template_dir`'s .slang files into `shader_templates`.
+    void rescan_shader_templates();
+    // The dropdown's entries (Material, Shader > templates, Code > Luau / Cpp);
+    // picking one sets `create_requested` + `create_kind` (+ `create_template`
+    // for a shader) for the end of draw_entries().
     void draw_create_items();
     void begin_new_folder();
     void begin_rename(const Entry& entry);
@@ -129,6 +145,10 @@ private:
     // The Create entry picked this frame, if any, and what it makes.
     bool create_requested = false;
     CreateKind create_kind = CreateKind::MATERIAL;
+    // The templates Create > Shader offers, sorted by name, and the one
+    // picked (an index into `shader_templates`).
+    std::vector<ShaderTemplate> shader_templates;
+    usz create_template = 0;
     // The entry whose context menu is open and, for a .lunaasset, the
     // original it keeps, probed once when the menu opens (a prelude and a
     // 256-byte read). `context_has_source` is false for everything else.

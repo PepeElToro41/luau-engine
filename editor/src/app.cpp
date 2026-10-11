@@ -44,6 +44,8 @@ bool App::init() {
         return false;
     }
     this->explorer.editor_camera = this->editor_camera.entity;
+    // Create > Shader in the Asset Browser copies one of the engine's shaders.
+    this->asset_browser.shader_template_dir = this->engine.get_singleton<Renderer>()->engine_render_dir;
     if (!this->init_ui()) {
         return false;
     }

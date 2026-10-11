@@ -72,47 +72,38 @@ void AssetBrowserPanel::rescan(const Project& project) {
         }
         return a.name < b.name;
     });
+    this->rescan_shader_templates();
+}
+
+void AssetBrowserPanel::rescan_shader_templates() {
+    this->shader_templates.clear();
+    if (this->shader_template_dir.empty()) {
+        return;
+    }
+    std::error_code error;
+    std::filesystem::directory_iterator it(this->shader_template_dir, std::filesystem::directory_options::skip_permission_denied, error);
+    if (error) {
+        return;
+    }
+    // Only the shaders directly in the directory: engine/ holds the includes.
+    for (const std::filesystem::directory_entry& item : it) {
+        if (!item.is_regular_file(error) || lowercase_extension(item.path()) != ".slang") {
+            error.clear();
+            continue;
+        }
+        ShaderTemplate shader_template;
+        shader_template.name = item.path().stem().string();
+        shader_template.path = item.path();
+        this->shader_templates.push_back(std::move(shader_template));
+    }
+    std::sort(this->shader_templates.begin(), this->shader_templates.end(), [](const ShaderTemplate& a, const ShaderTemplate& b) {
+        return a.name < b.name;
+    });
 }
 
 static const char* DELETE_POPUP = "Delete?";
 static const char* NAME_POPUP = "##name_popup";
 static const char* SAVE_ORIGINAL_POPUP = "Save Original";
-
-// What Create > Shader writes: the unlit shader's shape with one color
-// param, ready to be loaded by name from the project's render/ folder.
-static const char* SHADER_TEMPLATE =
-    "#pragma pass forward vertex fragment\n"
-    "#pragma pass shadow vertex\n"
-    "\n"
-    "#include \"engine/frame.slang\"\n"
-    "#include \"engine/object.slang\"\n"
-    "#include \"engine/vertex.slang\"\n"
-    "#include \"engine/bindings.slang\"\n"
-    "\n"
-    "struct MaterialParams {\n"
-    "    float4 color;\n"
-    "};\n"
-    "MATERIAL(0) ConstantBuffer<MaterialParams> material;\n"
-    "\n"
-    "struct VertexInput {\n"
-    "    VERTEX_POSITION float3 position;\n"
-    "};\n"
-    "\n"
-    "struct VertexOutput {\n"
-    "    float4 clip_position : SV_Position;\n"
-    "};\n"
-    "\n"
-    "[shader(\"vertex\")]\n"
-    "VertexOutput vertex(VertexInput v) {\n"
-    "    VertexOutput o;\n"
-    "    o.clip_position = mul(frame.view_projection, mul(object.model, float4(v.position, 1.0)));\n"
-    "    return o;\n"
-    "}\n"
-    "\n"
-    "[shader(\"fragment\")]\n"
-    "float4 fragment(VertexOutput v) : SV_Target {\n"
-    "    return material.color;\n"
-    "}\n";
 
 // What Create > Code > Luau writes.
 static const char* LUAU_TEMPLATE =
@@ -157,9 +148,18 @@ void AssetBrowserPanel::draw_create_items() {
         picked = CreateKind::MATERIAL;
         any = true;
     }
-    if (ImGui::MenuItem("Shader")) {
-        picked = CreateKind::SHADER;
-        any = true;
+    if (ImGui::BeginMenu("Shader")) {
+        if (this->shader_templates.empty()) {
+            ImGui::MenuItem("No templates found", nullptr, false, false);
+        }
+        for (usz i = 0; i < this->shader_templates.size(); ++i) {
+            if (ImGui::MenuItem(this->shader_templates[i].name.c_str())) {
+                picked = CreateKind::SHADER;
+                this->create_template = i;
+                any = true;
+            }
+        }
+        ImGui::EndMenu();
     }
     if (ImGui::BeginMenu("Code")) {
         if (ImGui::MenuItem("Luau")) {
@@ -553,16 +553,19 @@ void AssetBrowserPanel::begin_rename(const Entry& entry) {
 }
 
 void AssetBrowserPanel::begin_create(const CreateKind kind) {
-    // Default to "new_<kind>", or the first "new_<kind>_N" not taken in the
-    // current listing (with the extension; shader and script names end up
-    // as identifiers, so no spaces).
+    // Default to "new_<kind>" (a shader: "new_<template>"), or the first
+    // "new_<kind>_N" not taken in the current listing (with the extension;
+    // shader and script names end up as identifiers, so no spaces).
     static const char* stems[] = {"new_material", "new_shader", "new_script", "new_source"};
-    const char* stem = stems[static_cast<int>(kind)];
+    std::string stem = stems[static_cast<int>(kind)];
+    if (kind == CreateKind::SHADER && this->create_template < this->shader_templates.size()) {
+        stem = "new_" + this->shader_templates[this->create_template].name;
+    }
     this->name_mode = NameMode::NEW_FILE;
     this->create_kind = kind;
-    std::snprintf(this->name_buffer, sizeof(this->name_buffer), "%s", stem);
+    std::snprintf(this->name_buffer, sizeof(this->name_buffer), "%s", stem.c_str());
     for (int n = 2; this->name_problem(this->create_file_name().c_str(), {}) != nullptr && n < 1000; ++n) {
-        std::snprintf(this->name_buffer, sizeof(this->name_buffer), "%s_%d", stem, n);
+        std::snprintf(this->name_buffer, sizeof(this->name_buffer), "%s_%d", stem.c_str(), n);
     }
 }
 
@@ -629,8 +632,11 @@ void AssetBrowserPanel::draw_name_popup(const Project& project, OutputPanel& out
         file_name = this->create_file_name();
         ImGui::SameLine(0.0f, ImGui::GetStyle().ItemInnerSpacing.x);
         ImGui::TextDisabled("%s", AssetBrowserPanel::create_extension(this->create_kind));
-        if (this->create_kind == CreateKind::SHADER && this->current != std::filesystem::path("render")) {
-            ImGui::TextDisabled("Shaders load by name from the project's render folder.");
+        if (this->create_kind == CreateKind::SHADER) {
+            if (this->create_template < this->shader_templates.size()) {
+                ImGui::TextDisabled("A copy of the engine's %s shader.", this->shader_templates[this->create_template].name.c_str());
+            }
+            ImGui::TextDisabled("Shaders are referenced by this name, which must be unique in the project.");
         }
     }
 
@@ -738,10 +744,23 @@ bool AssetBrowserPanel::create_file(const Project& project, const char* name, Ou
         const f64 color[4] = {1.0, 1.0, 1.0, 1.0};
         material.set_param("color", color, 4);
         ok = MATERIAL_ASSET::write_file(material, path.c_str());
+    } else if (this->create_kind == CreateKind::SHADER) {
+        // A byte-for-byte copy of the engine shader picked in the submenu
+        // (an empty template makes an empty file).
+        if (this->create_template >= this->shader_templates.size()) {
+            output.error("Create %s %s failed: no template picked", label, shown.c_str());
+            this->refresh();
+            return false;
+        }
+        const ShaderTemplate& shader_template = this->shader_templates[this->create_template];
+        ok = std::filesystem::copy_file(shader_template.path, target, std::filesystem::copy_options::none, error);
+        if (!ok) {
+            output.error("Create %s %s failed: cannot copy %s: %s", label, shown.c_str(), shader_template.path.string().c_str(), error.message().c_str());
+            this->refresh();
+            return false;
+        }
     } else {
-        const char* text = this->create_kind == CreateKind::SHADER ? SHADER_TEMPLATE
-                         : this->create_kind == CreateKind::LUAU   ? LUAU_TEMPLATE
-                                                                   : CPP_TEMPLATE;
+        const char* text = this->create_kind == CreateKind::LUAU ? LUAU_TEMPLATE : CPP_TEMPLATE;
         ok = ASSET_FILE::write_file(path.c_str(), text, std::strlen(text));
     }
     if (!ok) {
