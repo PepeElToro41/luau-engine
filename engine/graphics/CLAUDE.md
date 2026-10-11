@@ -61,7 +61,8 @@ per-frame `frame_group` and `material_groups`, `log_sink`;
 `FrameContext` = `GpuFrame` + target texture + `target_state` in/out;
 `RenderPassContext` for pass functions and custom callbacks;
 `RENDERER::init` / `shutdown` / `render` / `build_default_graph` (one DRAW_SCENE pass tagged `forward` into the backbuffer) / `register_custom_pass` / `log`),
-`shader_library.hpp` (`SHADER_LIBRARY::load(renderer, name)` finds `<project>/render/<name>.slang` (or `.glsl`) then the engine's `render/`, both include roots, into a named unparented `Shader` entity;
+`shader_library.hpp` (`SHADER_LIBRARY::load(renderer, name)` opens the `AssetPath` of the name's asset entity when the World holds one (`AssetUuid` = `SHADER_LIBRARY::asset_guid(name)`, a hash of the name since the file carries no GUID, found with `ASSET_ENTITY::find`;
+that is how a project shader in any folder is found) and otherwise `<project>/render/<name>.slang` (or `.glsl`) then the engine's `render/`, the two render directories being the include roots either way, into that asset entity or else a new named unparented `Shader` entity, so a shader file, its asset and its `Shader` are one entity;
 `reload` / `reload_all` swap the program in place and bump `generation`),
 `materials.hpp` (`MATERIAL::create(renderer, shader)` and the by-name setters `set_float` ...
 `set_mat4` / `set_texture` / `set_sampler`;

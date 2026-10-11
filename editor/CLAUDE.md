@@ -48,7 +48,13 @@ The open project is `Project` (`editor/src/project.hpp`: root path + name),
 editor-only since standalone loads assets differently;
 the editor registers it as an engine singleton at startup.
 There is no open-project page yet: the editor opens `EDITOR_TEST_PROJECT_DIR` (`editor/testing_project/`, set in `editor/CMakeLists.txt`;
-it holds sample `meshes/*.obj` and `textures/*.png` to import, and `materials/demo.material`) and `App::scan_project_assets` registers every `.lunaasset` and `.material` under it with the provider through `Engine::load_asset_file`, so GUID references (a material's textures) resolve.
+it holds sample `meshes/*.obj` and `textures/*.png` to import, and `materials/demo.material`) and `App::scan_project_assets` registers every `.lunaasset` and `.material` under it with the provider through `Engine::load_asset_file`, so GUID references (a material's textures) resolve,
+and every `.slang` / `.glsl` directly in the engine's `render/` and then anywhere under the project as a shader asset entity (`App::register_shader_assets`: `AssetEntities::add` with `SHADER_LIBRARY::asset_guid(stem)`, type SHADER, the stem as `Name`, which is the name the library loads it by, and the file as `AssetPath`, which is where the library opens it), so the Inspector can offer shaders not compiled yet and a project shader may sit in any folder;
+a project file with an engine file's name shares its GUID and so its entity, and its path replaces the engine's, which is the override;
+two project files of one stem keep the first met and warn in the Output panel;
+a listed shader that fails to compile (an empty file, a Slang error) stays listed and reports the error when picked;
+the project root is also what the editor hands `RENDERER::set_project_render_dir`, so it is the project's shader include root and the place a name falls back to without an asset entity;
+File > Refresh Assets runs the same scan again (registering a file twice only refreshes it) and refreshes the Asset Browser, which is how a shader or material file created after startup reaches the dropdowns.
 Importers live in `editor/src/import/`: `importer.hpp` (`ImportSource`: the bytes to import as a path + offset + size + original name + the asset's GUID when they sit inside a `.lunaasset`, `ImportSource::file(path)` for a plain file;
 `IMPORT::read_file` / `read_source`, `find_source(asset)` probes a `.lunaasset` for its kept original, `save_source` writes it out, `fnv1a` for `content_hash`, `random_guid`, `add_editor_chunks(writer, source, bytes, size, keep_source)` writes the NAME / IMPS placeholders and the SRC chunk or its placeholder, `write_asset`),
 `obj_importer.hpp` (`OBJ::parse` text -> `ObjMesh`, one interleaved 32-byte stream of position/normal/texcoord, fan-triangulated, one submesh per `usemtl`, smooth normals generated when absent, v flipped;

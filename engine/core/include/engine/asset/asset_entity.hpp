@@ -16,6 +16,9 @@
 //     (AssetType, T)        exclusive relation; T is one of the tags below and
 //                           says what kind of asset it is
 //     Name                  the file's stem, for display (scene.hpp)
+//     AssetPath             the file the asset was registered from, when the
+//                           registrar knew it; what a loader that reads the
+//                           file itself (the shader library) opens
 //
 //     world.query<AssetUuid>().with<ECS::Pair<AssetType, AssetTexture>>().each([](EntityId e, AssetUuid& asset) { ... });
 //
@@ -38,6 +41,15 @@ struct World;
 // The asset an entity stands for.
 struct AssetUuid {
     AssetGuid guid;
+};
+
+constexpr usz ASSET_PATH_CAPACITY = 512;
+
+// The file an asset entity was registered from, as the registrar gave it
+// (absolute or relative to the working directory). Set by
+// AssetEntities::add when a path is passed, never by the index on its own.
+struct AssetPath {
+    char value[ASSET_PATH_CAPACITY] = {};
 };
 
 // Relation on asset entities: (AssetType, AssetTexture) and so on, one per
@@ -96,10 +108,13 @@ struct AssetEntities {
     // and Name `name` the first time, otherwise the existing one with its
     // type pair and name brought up to date. `asset_type` is an
     // ASSET_TYPE::* value; an unknown one leaves the entity without a type
-    // pair. Returns 0 for a null GUID or when no entity could be created.
-    EntityId add(const AssetGuid& guid, u32 asset_type, const char* name);
-    // add() with the GUID and type from `view`'s header and the name from
-    // `path` (ASSET_ENTITY::name_from_path). 0 when `view` is not ok.
+    // pair. A non-null `path` sets (or replaces) the entity's AssetPath,
+    // cut to ASSET_PATH_CAPACITY; nullptr leaves whatever it holds.
+    // Returns 0 for a null GUID or when no entity could be created.
+    EntityId add(const AssetGuid& guid, u32 asset_type, const char* name, const char* path = nullptr);
+    // add() with the GUID and type from `view`'s header, the name from
+    // `path` (ASSET_ENTITY::name_from_path) and `path` as the AssetPath.
+    // 0 when `view` is not ok.
     EntityId add(const AssetView& view, const char* path);
 
     // The entity for `guid`, or 0 if none (never added, or deleted since).

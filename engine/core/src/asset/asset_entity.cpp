@@ -19,6 +19,7 @@ constexpr u32 KNOWN_TYPES[] = {ASSET_TYPE::TEXTURE, ASSET_TYPE::MESH, ASSET_TYPE
 
 void ASSET_ENTITY::register_components(World& world) {
     SCENE::set_name(world, world.component<AssetUuid>(), "AssetUuid");
+    SCENE::set_name(world, world.component<AssetPath>(), "AssetPath");
     const EntityId type = world.tag<AssetType>();
     SCENE::set_name(world, type, "AssetType");
     world.add(type, ECS::EXCLUSIVE);
@@ -120,7 +121,7 @@ void AssetEntities::init(World* world) {
     this->removed_hook = world->hook_removed<AssetUuid>(&AssetEntities::on_removed, this);
 }
 
-EntityId AssetEntities::add(const AssetGuid& guid, const u32 asset_type, const char* name) {
+EntityId AssetEntities::add(const AssetGuid& guid, const u32 asset_type, const char* name, const char* path) {
     if (this->world == nullptr || guid.is_null()) {
         return 0;
     }
@@ -145,6 +146,11 @@ EntityId AssetEntities::add(const AssetGuid& guid, const u32 asset_type, const c
         }
     }
     SCENE::set_name(*this->world, entity, name != nullptr ? name : "");
+    if (path != nullptr) {
+        AssetPath asset_path;
+        strncpy(asset_path.value, path, ASSET_PATH_CAPACITY - 1);
+        this->world->set<AssetPath>(entity, asset_path);
+    }
     return entity;
 }
 
@@ -154,7 +160,7 @@ EntityId AssetEntities::add(const AssetView& view, const char* path) {
     }
     char name[ENTITY_NAME_CAPACITY];
     ASSET_ENTITY::name_from_path(path, name, sizeof(name));
-    return this->add(view.header->guid, view.header->type, name);
+    return this->add(view.header->guid, view.header->type, name, path);
 }
 
 EntityId AssetEntities::find(const AssetGuid& guid) const {

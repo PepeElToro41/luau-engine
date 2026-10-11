@@ -1,8 +1,10 @@
 #include "app.hpp"
 
+#include "engine/asset/asset_entity.hpp"
 #include "engine/asset/text_asset.hpp"
 #include "engine/render/demo_scene.hpp"
 #include "engine/render/renderer.hpp"
+#include "engine/render/shader_library.hpp"
 
 #include "ui/dock_layout.hpp"
 #include "ui/inspectors/inspectors.hpp"
@@ -13,6 +15,8 @@
 #include <imgui_impl_vulkan.h>
 
 #include <cstdio>
+#include <string>
+#include <unordered_map>
 
 bool App::init() {
     if (!DISPLAY_WINDOW::sdl_initialize()) {
@@ -85,7 +89,9 @@ void App::open_test_project() {
     if (project->open(EDITOR_TEST_PROJECT_DIR)) {
         this->output.info("Project '%s' opened at %s", project->name.c_str(), project->root.string().c_str());
         // The project's render/ directory overrides the engine's shaders.
-        const std::string render_dir = (project->root / "render").string();
+        // The whole project is shader source: its root is the include root
+        // and where a name falls back to when no asset entity carries a path.
+        const std::string render_dir = project->root.string();
         RENDERER::set_project_render_dir(*this->engine.get_singleton<Renderer>(), render_dir.c_str());
         this->scan_project_assets(*project);
     } else {
@@ -97,7 +103,11 @@ void App::open_test_project() {
 // (.lunaasset containers and .material text assets), so references by GUID
 // resolve: a material names its textures by GUID and the GPU asset cache
 // asks the provider for them. Stands in for the path-to-GUID index
-// docs/asset_format.md describes.
+// docs/asset_format.md describes. The shader files the shader library can
+// load (the project's render/ and the engine's) become shader asset
+// entities too, so the Inspector can offer them; they are not provider
+// assets, SHADER_LIBRARY reads them itself through the AssetPath the
+// entity carries, which is why a project shader may sit in any folder.
 void App::scan_project_assets(const Project& project) {
     std::error_code error;
     u32 registered = 0;
@@ -120,6 +130,63 @@ void App::scan_project_assets(const Project& project) {
         }
     }
     this->output.info("%u asset files registered", registered);
+
+    // Engine shaders first: a project file of the same name has the same
+    // GUID and points the entity at its own path, which is the override.
+    u32 shaders = 0;
+    const Renderer* renderer = this->engine.get_singleton<Renderer>();
+    if (renderer != nullptr && renderer->engine_render_dir[0] != '\0') {
+        shaders += this->register_shader_assets(renderer->engine_render_dir, false);
+    }
+    shaders += this->register_shader_assets(project.root, true);
+    this->output.info("%u shader files registered", shaders);
+}
+
+u32 App::register_shader_assets(const std::filesystem::path& directory, const bool recursive) {
+    AssetEntities* assets = this->engine.get_singleton<AssetEntities>();
+    if (assets == nullptr) {
+        return 0;
+    }
+    std::error_code error;
+    u32 registered = 0;
+    // Stem -> path of the files this walk registered, to report a second
+    // file of the same name: the name is the GUID, so only one can win.
+    std::unordered_map<std::string, std::string> seen;
+    const auto visit = [&](const std::filesystem::path& file) {
+        std::string extension = file.extension().string();
+        for (char& c : extension) {
+            c = static_cast<char>(tolower(static_cast<unsigned char>(c)));
+        }
+        if (extension != ".slang" && extension != ".glsl") {
+            return;
+        }
+        const std::string stem = file.stem().string();
+        const std::string path = file.string();
+        const auto [where, inserted] = seen.emplace(stem, path);
+        if (!inserted) {
+            this->output.warning("Shader %s is ignored: %s already registered the name '%s'", path.c_str(), where->second.c_str(), stem.c_str());
+            return;
+        }
+        if (assets->add(SHADER_LIBRARY::asset_guid(stem.c_str()), ASSET_TYPE::SHADER, stem.c_str(), path.c_str()) != 0) {
+            registered += 1;
+        } else {
+            this->output.warning("Shader %s could not be registered", path.c_str());
+        }
+    };
+    if (recursive) {
+        for (std::filesystem::recursive_directory_iterator it(directory, error), end; it != end; it.increment(error)) {
+            if (!error && it->is_regular_file(error)) {
+                visit(it->path());
+            }
+        }
+    } else {
+        for (std::filesystem::directory_iterator it(directory, error), end; it != end; it.increment(error)) {
+            if (!error && it->is_regular_file(error)) {
+                visit(it->path());
+            }
+        }
+    }
+    return registered;
 }
 
 void App::run() {
@@ -507,6 +574,15 @@ void App::draw_main_menu() {
         ImGui::BeginDisabled(!has_project || this->file_dialog.is_pending());
         if (ImGui::MenuItem("Import...")) {
             this->open_import_dialog();
+        }
+        ImGui::EndDisabled();
+        ImGui::BeginDisabled(!has_project);
+        // Registers files added since startup (a .material or .slang
+        // created outside the editor, or a shader file the Asset Browser
+        // wrote), so the Inspector's dropdowns offer them.
+        if (ImGui::MenuItem("Refresh Assets")) {
+            this->scan_project_assets(*project);
+            this->asset_browser.refresh();
         }
         ImGui::EndDisabled();
         ImGui::Separator();

@@ -43,6 +43,13 @@ struct App {
 private:
     void open_test_project();
     void scan_project_assets(const Project& project);
+    // Registers every .slang / .glsl in `directory` (its subfolders too
+    // when `recursive`) as a shader asset entity named after its stem
+    // (SHADER_LIBRARY::asset_guid) carrying the file's path, so the
+    // Inspector can list it before it is compiled and the shader library
+    // finds it wherever it sits. Two files of one stem in the walk keep the
+    // first and warn. Returns the count.
+    u32 register_shader_assets(const std::filesystem::path& directory, bool recursive);
     bool init_ui();
     void shutdown_ui();
     bool init_viewport(u32 width, u32 height);

@@ -111,6 +111,17 @@ TEST_CASE("asset/asset_entities: add creates one entity per GUID with uuid, type
         CHECK_FALSE(world.has<AssetType, AssetTexture>(entity));
     }
 
+    SUBCASE("a path sets AssetPath, a null path leaves it alone") {
+        CHECK(world.get<AssetPath>(entity) == nullptr);
+        CHECK(assets.add(rock, ASSET_TYPE::TEXTURE, "rock", "textures/rock.lunaasset") == entity);
+        REQUIRE(world.get<AssetPath>(entity) != nullptr);
+        CHECK(strcmp(world.get<AssetPath>(entity)->value, "textures/rock.lunaasset") == 0);
+        CHECK(assets.add(rock, ASSET_TYPE::TEXTURE, "rock") == entity);
+        CHECK(strcmp(world.get<AssetPath>(entity)->value, "textures/rock.lunaasset") == 0);
+        CHECK(assets.add(rock, ASSET_TYPE::TEXTURE, "rock", "other/rock.lunaasset") == entity);
+        CHECK(strcmp(world.get<AssetPath>(entity)->value, "other/rock.lunaasset") == 0);
+    }
+
     SUBCASE("a null GUID is refused") {
         CHECK(assets.add(AssetGuid{}, ASSET_TYPE::TEXTURE, "nothing") == 0);
         CHECK(assets.find(AssetGuid{}) == 0);
@@ -245,6 +256,8 @@ TEST_CASE("asset/asset_entities: add from a view takes guid and type from the he
     CHECK(world.get<AssetUuid>(entity)->guid == guid_of(7, 8));
     CHECK(world.has<AssetType, AssetMesh>(entity));
     CHECK(strcmp(SCENE::name(world, entity), "cube") == 0);
+    REQUIRE(world.get<AssetPath>(entity) != nullptr);
+    CHECK(strcmp(world.get<AssetPath>(entity)->value, "meshes/cube.lunaasset") == 0);
 
     AssetView bad;
     CHECK(assets.add(bad, "x") == 0);

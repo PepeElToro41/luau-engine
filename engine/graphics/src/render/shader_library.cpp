@@ -1,5 +1,6 @@
 #include "engine/render/shader_library.hpp"
 
+#include "engine/asset/asset_entity.hpp"
 #include "engine/ecs/world.hpp"
 #include "engine/memory/heap_allocator.hpp"
 #include "engine/platform/file.hpp"
@@ -8,13 +9,30 @@
 #include "engine/render/renderer.hpp"
 #include "engine/scene/scene.hpp"
 #include "engine/templates/dynamic_array.hpp"
+#include "engine/utils/hash.hpp"
 
 #include <cstdio>
 #include <cstring>
 
 // --- Helpers -------------------------------------------------------------------
 
+// The file for shader `name`: the AssetPath of its asset entity when the
+// editor registered one (any file of the project, or a project file
+// overriding an engine one), else <project render dir>/<name>.slang (or
+// .glsl), then the same under the engine render dir.
 static bool resolve_path(const Renderer& renderer, const char* name, char* out, const usz out_size) {
+    if (renderer.world != nullptr) {
+        const EntityId entity = ASSET_ENTITY::find(*renderer.world, SHADER_LIBRARY::asset_guid(name));
+        const AssetPath* asset_path = entity != 0 ? renderer.world->get<AssetPath>(entity) : nullptr;
+        if (asset_path != nullptr && asset_path->value[0] != '\0') {
+            snprintf(out, out_size, "%s", asset_path->value);
+            File file;
+            if (PLATFORM::file_open(&file, out, FILE_ACCESS_READ)) {
+                PLATFORM::file_close(&file);
+                return true;
+            }
+        }
+    }
     const char* roots[2] = {renderer.project_render_dir, renderer.engine_render_dir};
     const char* extensions[2] = {"slang", "glsl"};
     for (const char* root : roots) {
@@ -86,6 +104,19 @@ static bool load_program(Renderer& renderer, const char* name, const char* path,
 
 // --- SHADER_LIBRARY --------------------------------------------------------------
 
+AssetGuid SHADER_LIBRARY::asset_guid(const char* name) {
+    AssetGuid guid;
+    if (name == nullptr || name[0] == '\0') {
+        return guid;
+    }
+    // Two independent hashes of the name; the "shader:" prefix keeps the
+    // GUID from colliding with a mesh or texture that happened to hash its
+    // own name the same way.
+    guid.lo = HASH::fnv1a_str(name);
+    guid.hi = HASH::fnv1a_str_append(HASH::fnv1a_str("shader:"), name);
+    return guid;
+}
+
 EntityId SHADER_LIBRARY::load(Renderer& renderer, const char* name) {
     if (name == nullptr || name[0] == '\0' || renderer.world == nullptr) {
         return 0;
@@ -103,7 +134,7 @@ EntityId SHADER_LIBRARY::load(Renderer& renderer, const char* name) {
 
     char path[RENDERER_PATH_MAX];
     if (!resolve_path(renderer, name, path, sizeof(path))) {
-        RENDERER::log(renderer, RENDER_LOG_ERROR, "no %s.slang (or .glsl) in the project or engine render directories", name);
+        RENDERER::log(renderer, RENDER_LOG_ERROR, "shader %s: no registered file, and no %s.slang (or .glsl) in the project or engine render directories", name, name);
         return 0;
     }
     Shader shader;
@@ -112,8 +143,12 @@ EntityId SHADER_LIBRARY::load(Renderer& renderer, const char* name) {
         shader.program.free();
         return 0;
     }
-    // Named, unparented: shaders are not scene content (see scene/scene.hpp).
-    const EntityId entity = SCENE::spawn(*renderer.world, name, 0);
+    // The shader file's asset entity if it was registered, else a named,
+    // unparented entity: shaders are not scene content (see scene/scene.hpp).
+    EntityId entity = ASSET_ENTITY::find(*renderer.world, asset_guid(name));
+    if (entity == 0) {
+        entity = SCENE::spawn(*renderer.world, name, 0);
+    }
     if (entity == 0) {
         shader.program.free();
         return 0;

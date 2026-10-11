@@ -6,6 +6,8 @@
 
 #include <imgui.h>
 
+#include <cstring>
+
 bool INSPECTORS::asset_uuid(InspectorContext& ctx, void* data) {
     const AssetUuid& asset = *static_cast<const AssetUuid*>(data);
     char guid[TEXT_ASSET::GUID_TEXT_CAPACITY];
@@ -18,6 +20,14 @@ bool INSPECTORS::asset_uuid(InspectorContext& ctx, void* data) {
     ImGui::InputText("##guid", guid, sizeof(guid), ImGuiInputTextFlags_ReadOnly);
     if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayNormal)) {
         ImGui::SetTooltip("Select the text to copy it");
+    }
+    const AssetPath* path = ctx.world != nullptr ? ctx.world->get<AssetPath>(ctx.entity) : nullptr;
+    if (path != nullptr && path->value[0] != '\0') {
+        char shown[ASSET_PATH_CAPACITY];
+        std::memcpy(shown, path->value, sizeof(shown));
+        ImGui::TextUnformatted("File");
+        ImGui::SetNextItemWidth(-FLT_MIN);
+        ImGui::InputText("##path", shown, sizeof(shown), ImGuiInputTextFlags_ReadOnly);
     }
     return false;
 }

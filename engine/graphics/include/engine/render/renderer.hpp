@@ -172,8 +172,10 @@ bool init(Renderer& renderer, GpuContext* gpu, World* world, AssetResourceProvid
 // Material entities already removed (World::free fires their hooks).
 void shutdown(Renderer& renderer);
 
-// The project's render/ directory, searched before the engine's. nullptr
-// clears it.
+// The project's shader root, searched before the engine's render/
+// directory and an include root beside it (the editor passes the project
+// root, since a project shader may sit in any folder and is normally found
+// through its asset entity's AssetPath anyway). nullptr clears it.
 void set_project_render_dir(Renderer& renderer, const char* path);
 
 // Records the frame into frame.frame.cmd, drawing into frame.target.
