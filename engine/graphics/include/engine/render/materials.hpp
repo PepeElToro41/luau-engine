@@ -21,6 +21,14 @@
 // names, reporting the ones the shader does not declare. The same asset
 // loads once; reload() re-reads the file into the same entity, and save()
 // writes an entity's current values back as a file.
+//
+// A material from a file knows when it is ahead of it: every write to the
+// Material (the setters below, set_shader, or an editor writing the block
+// and calling World::modified) reaches an observer that tags the entity
+// AssetDirty (asset/asset_entity.hpp), and load / reload / save clear the
+// tag. An editor's Save All is `world.query<Material>().with<AssetDirty>()`
+// and save(renderer, entity) on each. Materials built in code are never
+// tagged. RENDER_COMPONENTS::register_all installs the observer.
 
 struct Renderer;
 struct Material;
@@ -38,7 +46,9 @@ EntityId create(Renderer& renderer, EntityId shader);
 // says; the material is then untouched.
 bool set_shader(Renderer& renderer, EntityId material, EntityId shader);
 // Set a member of the material block by name. False (with a message) if
-// the member does not exist or has another type.
+// the member does not exist or has another type. Every setter that wrote
+// something reports it through World::modified<Material>, which is what
+// tags a file material AssetDirty.
 bool set_float(Renderer& renderer, EntityId material, const char* name, f32 value);
 bool set_int(Renderer& renderer, EntityId material, const char* name, i32 value);
 bool set_vec2(Renderer& renderer, EntityId material, const char* name, Vector2 value);
@@ -76,7 +86,8 @@ void migrate(Material& material, const ShaderProgram& old_program, const Shader&
 EntityId load(Renderer& renderer, const AssetGuid& asset);
 // Re-reads the file of a loaded material into the same entity: every value
 // reset, the file applied again, the shader switched if the file names
-// another. False (the entity untouched) when it was not loaded from a file
+// another, the AssetDirty tag cleared (so it is also the discard of unsaved
+// edits). False (the entity untouched) when it was not loaded from a file
 // or the file no longer parses.
 bool reload(Renderer& renderer, EntityId material);
 // Reloads every material that came from a file.
@@ -88,11 +99,15 @@ void reload_all(Renderer& renderer);
 // set `out.guid` before writing it). False if `material` is not a material
 // entity.
 bool to_asset(Renderer& renderer, EntityId material, MaterialAsset& out);
-// Writes the entity's current state to `path` as a .material file. The
-// material must have a guid: its asset's, or one assigned to
-// Material::asset beforehand. False (with a message) otherwise or when the
-// file cannot be written.
+// Writes the entity's current state to `path` as a .material file and
+// clears its AssetDirty tag. The material must have a guid: its asset's,
+// or one assigned to Material::asset beforehand. False (with a message)
+// otherwise or when the file cannot be written.
 bool save(Renderer& renderer, EntityId material, const char* path);
+// save() to the file the material came from: the entity's AssetPath when
+// it is an asset entity, else the path the provider registered its asset
+// under. False (with a message) when neither knows one.
+bool save(Renderer& renderer, EntityId material);
 
 // The GPU sampler a file's sampler words describe, and back.
 GpuSamplerDesc sampler_desc(const MaterialSamplerDesc& sampler);

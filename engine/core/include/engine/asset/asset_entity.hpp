@@ -19,6 +19,7 @@
 //     AssetPath             the file the asset was registered from, when the
 //                           registrar knew it; what a loader that reads the
 //                           file itself (the shader library) opens
+//     AssetDirty            tag: the entity has changes its file lacks
 //
 //     world.query<AssetUuid>().with<ECS::Pair<AssetType, AssetTexture>>().each([](EntityId e, AssetUuid& asset) { ... });
 //
@@ -51,6 +52,14 @@ constexpr usz ASSET_PATH_CAPACITY = 512;
 struct AssetPath {
     char value[ASSET_PATH_CAPACITY] = {};
 };
+
+// Tag: the entity's data is ahead of its file, so saving would write
+// something new. Whoever loads a file into its asset entity decides what
+// counts as a change and adds the tag (the renderer observes writes to a
+// Material whose asset is a file), and clears it when the file is written
+// or re-read (MATERIAL::save / reload); nothing in core adds or removes it.
+// An editor's Save All is a query for every entity holding it.
+struct AssetDirty {};
 
 // Relation on asset entities: (AssetType, AssetTexture) and so on, one per
 // entity (exclusive).

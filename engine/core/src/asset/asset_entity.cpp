@@ -20,6 +20,7 @@ constexpr u32 KNOWN_TYPES[] = {ASSET_TYPE::TEXTURE, ASSET_TYPE::MESH, ASSET_TYPE
 void ASSET_ENTITY::register_components(World& world) {
     SCENE::set_name(world, world.component<AssetUuid>(), "AssetUuid");
     SCENE::set_name(world, world.component<AssetPath>(), "AssetPath");
+    SCENE::set_name(world, world.tag<AssetDirty>(), "AssetDirty");
     const EntityId type = world.tag<AssetType>();
     SCENE::set_name(world, type, "AssetType");
     world.add(type, ECS::EXCLUSIVE);

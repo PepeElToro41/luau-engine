@@ -18,6 +18,7 @@
 #include <cstdio>
 #include <string>
 #include <unordered_map>
+#include <vector>
 
 bool App::init() {
     if (!DISPLAY_WINDOW::sdl_initialize()) {
@@ -424,6 +425,11 @@ void App::draw_editor() {
 
     this->poll_import_dialog();
     this->draw_main_menu();
+    // Global, so it fires whichever panel has the focus; a text field being
+    // typed in keeps the route (ImGui gives active items precedence).
+    if (ImGui::Shortcut(ImGuiMod_Ctrl | ImGuiKey_S, ImGuiInputFlags_RouteGlobal)) {
+        this->save_all();
+    }
     if (this->show_explorer) {
         this->explorer.draw(&this->show_explorer, this->engine.get_singleton<World>(), this->engine.get_singleton<Scene>(), this->selection);
     }
@@ -522,6 +528,44 @@ void App::apply_file_action(const InspectorFileAction action) {
         break;
     case InspectorFileAction::NONE:
         break;
+    }
+}
+
+void App::save_all() {
+    Renderer* renderer = this->engine.get_singleton<Renderer>();
+    World* world = this->engine.get_singleton<World>();
+    const Project* project = this->engine.get_singleton<Project>();
+    if (renderer == nullptr || world == nullptr) {
+        return;
+    }
+    // Collect first: saving moves the entity out of the archetype being
+    // iterated when it drops the tag.
+    std::vector<EntityId> dirty;
+    world->query<Material>().with<AssetDirty>().each([&](const EntityId entity, Material&) { dirty.push_back(entity); });
+    if (dirty.empty()) {
+        this->output.info("Nothing to save");
+        return;
+    }
+    u32 saved = 0;
+    for (const EntityId entity : dirty) {
+        const AssetPath* asset_path = world->get<AssetPath>(entity);
+        const char* entity_name = SCENE::name(*world, entity);
+        std::string shown = asset_path != nullptr ? asset_path->value : entity_name != nullptr ? entity_name : "(unnamed)";
+        if (asset_path != nullptr && project != nullptr && project->is_open()) {
+            const std::filesystem::path relative = std::filesystem::path(asset_path->value).lexically_relative(project->root);
+            if (!relative.empty() && relative.native()[0] != '.') {
+                shown = relative.generic_string();
+            }
+        }
+        if (MATERIAL::save(*renderer, entity)) {
+            this->output.info("Saved %s", shown.c_str());
+            saved += 1;
+        } else {
+            this->output.error("Could not save %s", shown.c_str());
+        }
+    }
+    if (saved > 0) {
+        this->asset_browser.refresh();
     }
 }
 
@@ -627,6 +671,12 @@ void App::draw_main_menu() {
         if (ImGui::MenuItem("Refresh Assets")) {
             this->scan_project_assets(*project);
             this->asset_browser.refresh();
+        }
+        ImGui::Separator();
+        // Every file-backed entity with unsaved edits (AssetDirty); the
+        // shortcut itself is polled in draw_editor so it works from any panel.
+        if (ImGui::MenuItem("Save All", "Ctrl+S")) {
+            this->save_all();
         }
         ImGui::EndDisabled();
         ImGui::Separator();

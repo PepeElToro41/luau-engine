@@ -51,6 +51,8 @@ and a `Name` from the file stem (`ASSET_ENTITY::name_from_path`);
 query them as `world.query<AssetUuid>().with<ECS::Pair<AssetType, AssetTexture>>()` (on `Query`, `with<A, B>()` is two separate terms, a pair is spelled `ECS::Pair`).
 `AssetEntities` is the GUID-to-entity index that keeps one entity per asset (`init(world)` registers and names the components and installs the removed hook on `AssetUuid` that drops deleted entities;
 `add(guid, type, name, path = nullptr)` / `add(view, path)` create or bring up to date, a non-null path also setting the `AssetPath` component (the file the asset was registered from, `ASSET_PATH_CAPACITY` 512, what a loader that reads the file itself opens), `find`, `remove` deletes the entity, `free`);
+the `AssetDirty` tag says an asset entity has edits its file lacks (added and cleared by whoever loads that kind of file, the renderer for materials, never by core;
+`world.query<Material>().with<AssetDirty>()` is the editor's Save All);
 `ASSET_ENTITY::find(world, guid)` is the scan for code that only has the World.
 Asset entities are unparented, so never scene content.
 `docs/asset_format.md` is the specification and the place to record layout decisions.

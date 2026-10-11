@@ -217,6 +217,9 @@ static bool set_param(Renderer& renderer, const EntityId entity, const char* nam
         return false;
     }
     memcpy(material->params + member->offset, data, size);
+    // The write is what the dirty observer listens for; the pointers above
+    // are dead after this, since the observer may move the entity.
+    renderer.world->modified<Material>(entity);
     return true;
 }
 
@@ -261,6 +264,7 @@ bool MATERIAL::set_texture(Renderer& renderer, const EntityId entity, const char
     for (u32 i = 0; i < material->texture_count; ++i) {
         if (material->textures[i].binding == binding->binding) {
             material->textures[i].texture = texture;
+            renderer.world->modified<Material>(entity);
             return true;
         }
     }
@@ -281,6 +285,7 @@ bool MATERIAL::set_sampler(Renderer& renderer, const EntityId entity, const char
     for (u32 i = 0; i < material->sampler_count; ++i) {
         if (material->samplers[i].binding == binding->binding) {
             material->samplers[i].sampler = sampler;
+            renderer.world->modified<Material>(entity);
             return true;
         }
     }
@@ -480,6 +485,9 @@ EntityId MATERIAL::load(Renderer& renderer, const AssetGuid& asset) {
     renderer.world->get<Material>(entity)->asset = asset;
     apply_asset(renderer, entity, parsed, name);
     renderer.materials.insert(asset, entity);
+    // Applying the file went through the setters, which tagged the entity
+    // dirty; it is exactly what the file says.
+    renderer.world->remove<AssetDirty>(entity);
     return entity;
 }
 
@@ -516,6 +524,7 @@ bool MATERIAL::reload(Renderer& renderer, const EntityId entity) {
     ASSET_ENTITY::name_from_path(path, name, sizeof(name));
     apply_asset(renderer, entity, parsed, name);
     renderer.world->modified<Material>(entity);
+    renderer.world->remove<AssetDirty>(entity);
     return true;
 }
 
@@ -606,5 +615,27 @@ bool MATERIAL::save(Renderer& renderer, const EntityId entity, const char* path)
         RENDERER::log(renderer, RENDER_LOG_ERROR, "save %s: could not write the file", path != nullptr ? path : "");
         return false;
     }
+    renderer.world->remove<AssetDirty>(entity);
     return true;
+}
+
+bool MATERIAL::save(Renderer& renderer, const EntityId entity) {
+    const Material* material = renderer.world != nullptr ? renderer.world->get<Material>(entity) : nullptr;
+    if (material == nullptr) {
+        RENDERER::log(renderer, RENDER_LOG_ERROR, "save: entity %llu is not a material", static_cast<unsigned long long>(entity));
+        return false;
+    }
+    // The asset entity's own path first (what the editor registered the
+    // file as), else the provider's: a material loaded for a GUID that had
+    // no asset entity still has a registered file.
+    const AssetPath* asset_path = renderer.world->get<AssetPath>(entity);
+    if (asset_path != nullptr && asset_path->value[0] != '\0') {
+        return save(renderer, entity, asset_path->value);
+    }
+    const AssetResource* resource = !material->asset.is_null() && renderer.provider != nullptr ? renderer.provider->find(material->asset) : nullptr;
+    if (resource == nullptr || resource->path == nullptr) {
+        RENDERER::log(renderer, RENDER_LOG_ERROR, "save: material %llu has no file; save it to a path first", static_cast<unsigned long long>(entity));
+        return false;
+    }
+    return save(renderer, entity, resource->path);
 }

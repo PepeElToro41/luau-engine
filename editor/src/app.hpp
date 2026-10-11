@@ -67,6 +67,10 @@ private:
     void resolve_selection();
     // Performs the Inspector's Save / Reload request on the selected file.
     void apply_file_action(InspectorFileAction action);
+    // File > Save All (Ctrl+S): writes every file-backed entity tagged
+    // AssetDirty (today the materials) back to its file and reports each
+    // in the Output panel. The scene joins this once it is a file.
+    void save_all();
     // Performs what a component's draw function asked for: loading a picked
     // .material, or compiling a picked shader and giving it to a Material.
     void apply_inspector_request(const InspectorRequest& request);

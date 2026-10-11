@@ -68,6 +68,8 @@ TEST_CASE("asset/asset_entity: type_tag, type_of and type_name cover every ASSET
     // The component entities are named for the editor.
     CHECK(strcmp(SCENE::name(world, world.id<AssetUuid>()), "AssetUuid") == 0);
     CHECK(strcmp(SCENE::name(world, world.tag<AssetType>()), "AssetType") == 0);
+    CHECK(strcmp(SCENE::name(world, world.id<AssetPath>()), "AssetPath") == 0);
+    CHECK(strcmp(SCENE::name(world, world.tag<AssetDirty>()), "AssetDirty") == 0);
     CHECK(world.has(world.tag<AssetType>(), ECS::EXCLUSIVE));
 
     world.free();

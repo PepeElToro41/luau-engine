@@ -1,5 +1,6 @@
 #include "ui/inspector_panel.hpp"
 
+#include "engine/asset/asset_entity.hpp"
 #include "engine/ecs/archetype/archetype.hpp"
 #include "engine/ecs/entity_index.hpp"
 #include "engine/ecs/world.hpp"
@@ -116,13 +117,24 @@ void InspectorPanel::draw_file(World* world, const Project* project, const Selec
     if (!loaded) {
         return;
     }
+    // AssetDirty: the entity has edits the file lacks (see asset_entity.hpp).
+    const bool dirty = world->has<AssetDirty>(selection.entity);
+    if (dirty) {
+        ImGui::TextColored(ImVec4(1.0f, 0.8f, 0.3f, 1.0f), "Modified, not saved");
+    }
     ImGui::Spacing();
-    if (ImGui::Button("Save")) {
+    if (ImGui::Button(dirty ? "Save*" : "Save")) {
         this->file_action = InspectorFileAction::SAVE;
     }
+    if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayNormal)) {
+        ImGui::SetTooltip("Write the entity's values to the file (File > Save All writes every modified file)");
+    }
     ImGui::SameLine();
-    if (ImGui::Button("Reload")) {
+    if (ImGui::Button(dirty ? "Discard" : "Reload")) {
         this->file_action = InspectorFileAction::RELOAD;
+    }
+    if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayNormal)) {
+        ImGui::SetTooltip("Re-read the file into the entity, dropping unsaved edits");
     }
     ImGui::SameLine();
     const char* entity_name = SCENE::name(*world, selection.entity);

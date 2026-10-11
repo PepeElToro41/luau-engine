@@ -71,6 +71,8 @@ that is how a project shader in any folder is found) and otherwise `<project>/re
 a plain new entity when there is none) named after the file (shader loaded by name through `SHADER_LIBRARY::load`, every param / texture / sampler applied by reflection, mismatches logged and skipped, the text unloaded from the provider afterwards;
 `Renderer::materials` maps asset GUID to entity so the same asset loads once, `Material::asset` points back, the removed hook drops the entry),
 `reload` / `reload_all` re-read the file into the same entity, `to_asset` / `save(renderer, entity, path)` write an entity's current values back as a file (the entity needs a non-null `Material::asset` guid),
+`save(renderer, entity)` writes to the file it came from (its `AssetPath`, else the provider's path);
+a file material tracks unsaved edits: every setter and `set_shader` call `World::modified<Material>`, the observer `register_all` installs on `Material` tags the entity `AssetDirty` on CHANGED when `Material::asset` is set, and `load` / `reload` / `save` clear the tag,
 `sampler_desc` / `sampler_asset` convert between the file's `MaterialSamplerDesc` and `GpuSamplerDesc`),
 `pipelines.hpp` (`PIPELINES::get(renderer, shader, program, tag, formats, mesh layout)` cached by shader entity, generation, pass tag, vertex layout hash and target formats;
 `release_shader`),
