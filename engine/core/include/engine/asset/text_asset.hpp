@@ -51,10 +51,11 @@ constexpr usz GUID_TEXT_LENGTH = 32;
 constexpr usz GUID_TEXT_CAPACITY = GUID_TEXT_LENGTH + 1;
 
 constexpr const char* MATERIAL_EXTENSION = ".material";
+constexpr const char* SCENE_EXTENSION = ".scene";
 
 // The asset type a text file's extension names (`.material` ->
-// ASSET_TYPE::MATERIAL), or 0 when `path` is not a text asset's. Case
-// insensitive.
+// ASSET_TYPE::MATERIAL, `.scene` -> ASSET_TYPE::SCENE), or 0 when `path` is
+// not a text asset's. Case insensitive.
 u32 type_of_path(const char* path);
 // The extension of a text asset type, with the dot; nullptr for a type that
 // is not a text asset.
@@ -134,6 +135,10 @@ bool word_is(const char* word, usz length, const char* name);
 // Copies a span into a fixed buffer, terminated; false (and the copy
 // truncated) when it does not fit.
 bool copy_span(const char* text, usz length, char* out, usz capacity);
+// Formats a number with the fewest significant digits that read back to
+// the same f32, so a value that came from a float round-trips exactly;
+// what every text asset writes numbers with. `capacity` of 32 is enough.
+void format_number(f64 value, char* out, usz capacity);
 
 // --- Preludes ---------------------------------------------------------------
 

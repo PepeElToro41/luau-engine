@@ -33,26 +33,54 @@ void trim(const char** text, usz* length) {
 
 } // namespace
 
+namespace {
+
+struct TextExtension {
+    const char* extension;
+    u32 type;
+};
+
+constexpr TextExtension TEXT_EXTENSIONS[] = {
+    {TEXT_ASSET::MATERIAL_EXTENSION, ASSET_TYPE::MATERIAL},
+    {TEXT_ASSET::SCENE_EXTENSION, ASSET_TYPE::SCENE},
+};
+
+bool ends_with_insensitive(const char* path, const usz length, const char* extension) {
+    const usz extension_length = strlen(extension);
+    if (length < extension_length) {
+        return false;
+    }
+    const char* tail = path + length - extension_length;
+    for (usz i = 0; i < extension_length; ++i) {
+        if (lower(tail[i]) != extension[i]) {
+            return false;
+        }
+    }
+    return true;
+}
+
+} // namespace
+
 u32 TEXT_ASSET::type_of_path(const char* path) {
     if (path == nullptr) {
         return 0;
     }
     const usz length = strlen(path);
-    const usz extension_length = strlen(MATERIAL_EXTENSION);
-    if (length < extension_length) {
-        return 0;
-    }
-    const char* extension = path + length - extension_length;
-    for (usz i = 0; i < extension_length; ++i) {
-        if (lower(extension[i]) != MATERIAL_EXTENSION[i]) {
-            return 0;
+    for (const TextExtension& entry : TEXT_EXTENSIONS) {
+        if (ends_with_insensitive(path, length, entry.extension)) {
+            return entry.type;
         }
     }
-    return ASSET_TYPE::MATERIAL;
+    return 0;
 }
 
 const char* TEXT_ASSET::extension_of_type(const u32 type) {
-    return type == ASSET_TYPE::MATERIAL ? MATERIAL_EXTENSION : nullptr;
+    for (const TextExtension& entry : TEXT_EXTENSIONS) {
+        if (entry.type == type) {
+            return entry.extension;
+        }
+    }
+    return nullptr;
 }
 
 // --- GUIDs --------------------------------------------------------------------
@@ -241,6 +269,18 @@ bool TEXT_ASSET::parse_numbers(const char* value, const usz length, f64* out, co
     }
     *out_count = count;
     return true;
+}
+
+void TEXT_ASSET::format_number(const f64 value, char* out, const usz capacity) {
+    const f32 single = static_cast<f32>(value);
+    char buffer[32];
+    for (int precision = 1; precision <= 9; ++precision) {
+        snprintf(buffer, sizeof(buffer), "%.*g", precision, static_cast<f64>(single));
+        if (strtof(buffer, nullptr) == single) {
+            break;
+        }
+    }
+    snprintf(out, capacity, "%s", buffer);
 }
 
 bool TEXT_ASSET::copy_span(const char* text, const usz length, char* out, const usz capacity) {

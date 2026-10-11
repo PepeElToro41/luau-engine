@@ -1,5 +1,7 @@
 #pragma once
 
+#include "engine/asset/asset_entity.hpp"
+#include "engine/asset/asset_view.hpp"
 #include "engine/defines.hpp"
 #include "engine/ecs/ecs.hpp"
 #include "engine/ecs/ecs_types.hpp"
@@ -77,6 +79,12 @@ struct Scene {
     World* world = nullptr;
     // The "scene_root" entity every scene entity descends from.
     EntityId root = 0;
+    // The scene asset the content under `root` was loaded from or saved to
+    // (null for a new scene) and its file's path (empty when none). Set by
+    // whoever loads and saves, the runtime Engine; the Scene itself reads
+    // no files.
+    AssetGuid current;
+    char current_path[ASSET_PATH_CAPACITY] = {};
 
     // Creates the root entity in `world`, which must be initialized and
     // outlive the Scene. There is nothing to free: the root is an ordinary
@@ -88,4 +96,14 @@ struct Scene {
     EntityId spawn(const char* name, EntityId parent = 0);
     // Whether `entity` is the root or descends from it.
     bool contains(EntityId entity);
+
+    // Deletes every child of the root, and so every descendant (the
+    // CHILD_OF cleanup policy). The root survives; `current` is untouched.
+    // Synchronous: a scene of a hundred thousand entities goes in well
+    // under a frame.
+    void unload();
+    // Records what the content came from: `guid` and `path` (nullptr or
+    // empty clears it).
+    void set_current(const AssetGuid& guid, const char* path);
+    bool has_current() const { return !this->current.is_null(); }
 };

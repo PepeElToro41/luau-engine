@@ -149,3 +149,27 @@ bool Scene::contains(const EntityId entity) {
     }
     return entity == this->root || SCENE::is_descendant_of(*this->world, entity, this->root);
 }
+
+void Scene::unload() {
+    if (this->world == nullptr || !this->world->alive(this->root)) {
+        return;
+    }
+    // Collected first: deleting moves the siblings' archetype rows under a
+    // running query.
+    DynamicArray<EntityId> children;
+    SCENE::children(*this->world, this->root, children);
+    for (usz i = 0; i < children.count; ++i) {
+        this->world->delete_entity(children[i]);
+    }
+    children.free();
+}
+
+void Scene::set_current(const AssetGuid& guid, const char* path) {
+    this->current = guid;
+    if (path != nullptr) {
+        strncpy(this->current_path, path, ASSET_PATH_CAPACITY - 1);
+        this->current_path[ASSET_PATH_CAPACITY - 1] = '\0';
+    } else {
+        this->current_path[0] = '\0';
+    }
+}

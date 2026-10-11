@@ -190,9 +190,11 @@ the file read as the name in a hex dump: `fourcc("TEX2")` is the bytes
 | `TEX2` | texture  | `.lunaasset`; payloads below |
 | `MESH` | mesh     | `.lunaasset`; payloads below |
 | `MATL` | material | a `.material` text asset; see [Material files](#material-files) |
+| `SCNE` | scene    | a `.scene` text asset; see [Scene files](#scene-files) |
 
-Scenes (`SCNE`) and shaders (`SHDR`) are planned and reserve their fourcc;
-nothing writes them yet.
+Shaders (`SHDR`) reserve their fourcc; nothing writes them yet (a shader
+file is registered as an asset entity by name, without a file of this
+format).
 
 ### Chunk tags
 
@@ -513,7 +515,8 @@ one covering every index with no material.
 ## Text assets
 
 Defined in `engine/core/include/engine/asset/text_asset.hpp`. A text asset
-is a UTF-8 file whose extension names its type (`.material` is `MATL`) and
+is a UTF-8 file whose extension names its type (`.material` is `MATL`,
+`.scene` is `SCNE`) and
 whose text carries its identity: a top-level `guid` key, 32 hex digits
 (`hi` then `lo`, the order every GUID is printed in). Nothing else about
 the container applies to the file itself: no header, no chunk table, no
@@ -605,6 +608,93 @@ material produces a byte-identical file and a diff shows exactly the value
 that changed. `MATERIAL::save` (graphics) builds a `MaterialAsset` from a
 material entity's current block, slots and shader name and writes it, so
 the editor can round-trip a material it edited.
+
+## Scene files
+
+Defined in `engine/core/include/engine/asset/asset_types/scene_asset.hpp`
+(`SCENE_ASSET::write` / `read`) over the component reflection layer in
+`engine/core/include/engine/scene/serialize.hpp` (`Serializer`,
+`SERIALIZE::expose<T>`). A `.scene` holds everything under the Scene's
+`scene_root`: every entity's name, parent and the components that have a
+`Serializer`.
+
+```
+guid = 3f1c9a0e7b2d4c6f8a1b2c3d4e5f6a7b
+
+[entity 1]
+name = camera
+Transform.position = 0 1.5 4.5
+Transform.rotation = -0.1650476 0 0 0.9862856   # a quaternion x y z w, so a round trip is lossless
+Transform.scale = 1 1 1
+Camera.fov_y = 1.0471976                        # radians, as stored
+Camera.near_plane = 0.1
+Camera.far_plane = 1000
+tags = RenderCamera                             # data-less components, by serializer name
+
+[entity 2]
+name = cube
+Transform.position = 0 0 0
+Transform.rotation = 0 0.258819 0 0.9659258
+Transform.scale = 1 1 1
+PrimitiveRenderer.shape = cube                  # enums by word, never by number
+PrimitiveRenderer.material = 1786f887a24190b435cd7dd4cbef587f   # an entity reference: an asset, by GUID
+
+[entity 3]
+name = wheel
+parent = 2                                      # a file-local id; absent (or 0) means the load target
+MeshRenderer.mesh = 9c2d1e0f3a4b5c6d7e8f9a0b1c2d3e4f
+MeshRenderer.material = none
+```
+
+**Ids are file-local and regenerated at every save**, assigned in
+depth-first tree order (children lowest entity id first, the order the
+Explorer shows). They exist so references inside the file can be expressed
+and mean nothing outside it: the loader never reuses one as an `EntityId`,
+every section gets a fresh `new_entity()` and a table maps the numbers to
+them. That is also what makes instantiating a file under any entity (a
+prefab, `Engine::instantiate_scene`) the same operation as loading it under
+`scene_root` (`Engine::load_scene`, which unloads the root's children
+first). Should stability across saves ever be needed (prefab overrides,
+cross-scene references), the number in the header becomes stored instead
+of regenerated and nothing else changes.
+
+**Entity references go through one rule** (`SERIALIZE::write_entity_ref` /
+`read_entity_ref`): an entity of the scene being saved is written as its
+file-local id, an entity carrying `AssetUuid` as its asset GUID (32 hex
+digits; a value shorter than that made of digits is a local id), anything
+else as `none` with a warning naming the entity and the field. Reading
+mirrors it: a local id is looked up in the table (filled before any
+component is read, so a forward reference works), a GUID goes through the
+resolver the Engine provides (a material GUID loads the material onto its
+asset entity, a shader GUID the shader, any other asset is its entity), an
+unknown GUID or id resolves to 0 with a warning. File-backed entities
+(materials) are never embedded in a scene: two copies of one material means
+picking a winner on load and losing an edit. A `[embedded N]` section
+outside the entity list is the reserved shape for scene-local sub-assets;
+today it warns and is skipped.
+
+**Layout rules.** Top level: `guid` (required). `[entity N]`: N a positive
+integer, unique in the file, sections in any order (a parent may follow its
+child). `name` is the `Name` component, raw text to end of line, cut to
+`ENTITY_NAME_CAPACITY`, omitted when empty. `parent = N` is a file-local
+id. `tags = A B C` lists tags by serializer name, written only when there
+is one. `Component.field = value` dispatches on the part before the first
+dot to the `Serializer` of that name; values follow the shared conventions
+(shortest round-trip numbers, vectors space separated, quaternions `x y z
+w`, booleans `true` / `false`, enums as words, GUIDs as hex, `none` for a
+null GUID or reference). The writer is canonical: `name`, `parent`, then
+the components lowest `Serializer::order` first (then by id), fields in the
+order the serializer writes them, then `tags`, a blank line before every
+section, so a save after a load is byte-identical when nothing changed.
+
+**Reading is forgiving per line and strict per file.** An unknown
+component, an unknown field, a bad value, an unknown tag or top-level key
+warns with `path:line` and skips that line; a missing field keeps the
+component's default (the serializer's `init`, a value-initialized `T`); a
+component with no serializer is never written. Only a structural problem
+fails the read, and then nothing was created: no `guid`, a duplicate
+`[entity N]`, a malformed line. Warnings reach the renderer log, which the
+editor shows in its Output panel.
 
 ## Reading
 
@@ -733,7 +823,10 @@ matched to the editor file it came from.
 - GUID generation and the editor's path-to-GUID index (the editor
   registers every `.lunaasset` and `.material` under the project at
   startup for now).
-- A scene text asset (`.scene`), on the same line syntax.
+- Scene files: stored per-entity ids for prefab overrides and cross-scene
+  references, `[embedded N]` sub-assets, a `HashMap` for the serializer
+  name lookup if a per-line scan shows, `World::modified` after a loaded
+  component's fields are read (observers see only the add today).
 - Dependencies of text assets in the synthesized header (a material's
   textures), so a loader can prefetch without parsing.
 - Platform-specific compiled data (BC7 on desktop, ASTC on mobile) is not

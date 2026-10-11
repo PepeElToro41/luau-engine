@@ -392,16 +392,9 @@ void append_text(DynamicArray<char>& out, const char* text) {
     }
 }
 
-// The fewest significant digits that read back to the same f32.
 void append_number(DynamicArray<char>& out, const f64 value) {
-    const f32 single = static_cast<f32>(value);
     char buffer[32];
-    for (int precision = 1; precision <= 9; ++precision) {
-        snprintf(buffer, sizeof(buffer), "%.*g", precision, static_cast<f64>(single));
-        if (strtof(buffer, nullptr) == single) {
-            break;
-        }
-    }
+    TEXT_ASSET::format_number(value, buffer, sizeof(buffer));
     append_text(out, buffer);
 }
 
