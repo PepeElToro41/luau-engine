@@ -18,6 +18,26 @@ struct World;
 // (entity, id) and must hold trivially copyable data only.
 constexpr usz INSPECTOR_SCRATCH_CAPACITY = 128;
 
+// What a draw function may ask the App to do after the draw, since it must
+// not add components itself (loading a material or a shader creates or
+// fills an entity): the Inspector panel keeps the last request of a draw
+// and the App performs it and resets it (App::apply_inspector_request).
+enum struct InspectorRequestKind : u8 {
+    NONE,
+    // Load the .material asset entity `asset` as a Material (MATERIAL::load);
+    // `target`'s renderer component already points at it.
+    LOAD_MATERIAL,
+    // Load the shader asset entity `asset` (SHADER_LIBRARY::load by its name)
+    // and make it the shader of the Material on `target` (MATERIAL::set_shader).
+    SET_MATERIAL_SHADER,
+};
+
+struct InspectorRequest {
+    InspectorRequestKind kind = InspectorRequestKind::NONE;
+    EntityId target = 0;
+    EntityId asset = 0;
+};
+
 struct InspectorContext {
     World* world = nullptr;
     EntityId entity = 0;
@@ -26,6 +46,8 @@ struct InspectorContext {
     // the first frame it is handed out.
     void* scratch_bytes = nullptr;
     bool scratch_fresh = false;
+    // Set by the draw function; the panel hands it to the App after the draw.
+    InspectorRequest request;
 
     // The scratch as a T. Zeroed memory on the first use, so T must treat
     // all-zero bytes as "no state yet".

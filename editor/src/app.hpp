@@ -67,6 +67,9 @@ private:
     void resolve_selection();
     // Performs the Inspector's Save / Reload request on the selected file.
     void apply_file_action(InspectorFileAction action);
+    // Performs what a component's draw function asked for: loading a picked
+    // .material, or compiling a picked shader and giving it to a Material.
+    void apply_inspector_request(const InspectorRequest& request);
     // Renderer messages land in the Output panel.
     static void render_log(RenderLogLevel level, const char* text, void* user_data);
     void draw_viewport();

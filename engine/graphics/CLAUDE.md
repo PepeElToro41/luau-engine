@@ -64,7 +64,7 @@ per-frame `frame_group` and `material_groups`, `log_sink`;
 `shader_library.hpp` (`SHADER_LIBRARY::load(renderer, name)` opens the `AssetPath` of the name's asset entity when the World holds one (`AssetUuid` = `SHADER_LIBRARY::asset_guid(name)`, a hash of the name since the file carries no GUID, found with `ASSET_ENTITY::find`;
 that is how a project shader in any folder is found) and otherwise `<project>/render/<name>.slang` (or `.glsl`) then the engine's `render/`, the two render directories being the include roots either way, into that asset entity or else a new named unparented `Shader` entity, so a shader file, its asset and its `Shader` are one entity;
 `reload` / `reload_all` swap the program in place and bump `generation`),
-`materials.hpp` (`MATERIAL::create(renderer, shader)` and the by-name setters `set_float` ...
+`materials.hpp` (`MATERIAL::create(renderer, shader)`, `set_shader(renderer, material, shader)` (switches the shader and starts the block and slots over, as `reload` does) and the by-name setters `set_float` ...
 `set_mat4` / `set_texture` / `set_sampler`;
 `sync` rebuilds the block and slots when the shader's generation moved on (zeroed block, slots kept by binding number) and `migrate(material, old_program, shader)` is what `SHADER_LIBRARY::reload` calls on each material of the shader first, carrying over block members by name and shape and texture / sampler slots by binding name, so a reload keeps the values the file or the Inspector set;
 `MATERIAL::load(renderer, guid)` turns a registered `.material` asset into a Material on the asset's own entity (the one holding its `AssetUuid`, found with `ASSET_ENTITY::find`;

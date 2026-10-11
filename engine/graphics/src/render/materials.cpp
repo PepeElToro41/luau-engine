@@ -164,6 +164,24 @@ EntityId MATERIAL::create(Renderer& renderer, const EntityId shader_entity) {
     return entity;
 }
 
+bool MATERIAL::set_shader(Renderer& renderer, const EntityId entity, const EntityId shader_entity) {
+    Material* material = renderer.world != nullptr ? renderer.world->get<Material>(entity) : nullptr;
+    const Shader* shader = renderer.world != nullptr ? renderer.world->get<Shader>(shader_entity) : nullptr;
+    if (material == nullptr || shader == nullptr) {
+        RENDERER::log(renderer, RENDER_LOG_ERROR, "set_shader: entity %llu is not a material or %llu not a shader", static_cast<unsigned long long>(entity),
+            static_cast<unsigned long long>(shader_entity));
+        return false;
+    }
+    // Start over, as reload does: nothing of the old interface carries over.
+    material->shader = shader_entity;
+    material->shader_generation = shader->generation - 1;
+    material->texture_count = 0;
+    material->sampler_count = 0;
+    sync(*material, *shader);
+    renderer.world->modified<Material>(entity);
+    return true;
+}
+
 // --- Setters ---------------------------------------------------------------------
 
 static bool resolve(Renderer& renderer, const EntityId entity, const char* what, const char* name, Material** material, const Shader** shader) {

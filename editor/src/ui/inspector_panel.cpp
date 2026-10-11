@@ -15,6 +15,7 @@
 
 void InspectorPanel::draw(bool* open, World* world, const Project* project, const Selection& selection) {
     this->file_action = InspectorFileAction::NONE;
+    this->request = InspectorRequest{};
     if (!ImGui::Begin(PANELS::INSPECTOR, open)) {
         ImGui::End();
         return;
@@ -221,6 +222,9 @@ void InspectorPanel::draw_components(World& world, const EntityId entity) {
                 ctx.scratch_bytes = this->scratch_for(item.id, &ctx.scratch_fresh);
                 if (item.inspector->draw(ctx, data)) {
                     world.modified(entity, item.id);
+                }
+                if (ctx.request.kind != InspectorRequestKind::NONE) {
+                    this->request = ctx.request;
                 }
             } else {
                 ImGui::TextDisabled("(no data)");

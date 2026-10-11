@@ -27,7 +27,9 @@ struct World;
 // For a file: its name, folder, kind and size, and when the file is loaded
 // as an entity (a .material) the Save and Reload buttons followed by that
 // entity's component sections, the same way. The buttons only set
-// `file_action`; the App performs it after the draw and resets it.
+// `file_action`; the App performs it after the draw and resets it. A draw
+// function that needs an asset loaded leaves an InspectorRequest in its
+// context, kept in `request` the same way.
 enum struct InspectorFileAction : u8 {
     NONE,
     SAVE,
@@ -41,6 +43,9 @@ struct InspectorPanel {
 
     // What the file header's button asked for during the last draw().
     InspectorFileAction file_action = InspectorFileAction::NONE;
+    // What a component's draw function asked for during the last draw()
+    // (see inspector_context.hpp); NONE when nothing did.
+    InspectorRequest request;
 
 private:
     // Scratch slots the draw functions keep edit state in, one per id of

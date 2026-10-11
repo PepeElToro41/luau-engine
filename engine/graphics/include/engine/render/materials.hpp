@@ -32,6 +32,11 @@ namespace MATERIAL {
 // A new entity with a Material for `shader`, every value zero, every
 // texture white, every sampler linear. 0 if `shader` is not a Shader entity.
 EntityId create(Renderer& renderer, EntityId shader);
+// Switches `material` to `shader`: the block zeroed for the new shader's
+// interface, every texture white, every sampler linear, as create() makes
+// them. False (with a message) when either entity is not what its name
+// says; the material is then untouched.
+bool set_shader(Renderer& renderer, EntityId material, EntityId shader);
 // Set a member of the material block by name. False (with a message) if
 // the member does not exist or has another type.
 bool set_float(Renderer& renderer, EntityId material, const char* name, f32 value);

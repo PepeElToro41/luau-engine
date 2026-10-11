@@ -1,18 +1,16 @@
 #include "ui/inspectors/inspectors.hpp"
 
-#include "engine/asset/asset_entity.hpp"
 #include "engine/asset/asset_types/material_asset.hpp"
+#include "engine/asset/asset_view.hpp"
 #include "engine/asset/text_asset.hpp"
-#include "engine/ecs/query/query.hpp"
 #include "engine/ecs/world.hpp"
 #include "engine/render/components.hpp"
 #include "engine/render/materials.hpp"
-#include "engine/scene/scene.hpp"
 #include "engine/shaders/reflection.hpp"
+#include "ui/inspectors/asset_combo.hpp"
 
 #include <imgui.h>
 
-#include <algorithm>
 #include <cstring>
 #include <vector>
 
@@ -26,46 +24,14 @@ struct MaterialScratch {
 
 static_assert(sizeof(MaterialScratch) <= INSPECTOR_SCRATCH_CAPACITY, "MaterialScratch must fit the inspector scratch");
 
-// One texture asset a slot can be set to: the asset entity, its GUID and
-// its Name.
-struct TextureChoice {
-    EntityId entity = 0;
-    AssetGuid guid;
-    char name[ENTITY_NAME_CAPACITY] = {};
-};
-
-// Every asset entity typed (AssetType, AssetTexture), sorted by name so the
-// list reads the same from frame to frame whatever order the archetypes
-// hold them in.
-static void collect_textures(World& world, std::vector<TextureChoice>& out) {
-    world.query<AssetUuid>().with<ECS::Pair<AssetType, AssetTexture>>().each([&](const EntityId entity, const AssetUuid& asset) {
-        TextureChoice choice;
-        choice.entity = entity;
-        choice.guid = asset.guid;
-        const char* name = SCENE::name(world, entity);
-        snprintf(choice.name, sizeof(choice.name), "%s", name != nullptr && name[0] != '\0' ? name : "(unnamed)");
-        out.push_back(choice);
-    });
-    std::sort(out.begin(), out.end(), [](const TextureChoice& a, const TextureChoice& b) {
-        const int order = strcmp(a.name, b.name);
-        return order != 0 ? order < 0 : a.entity < b.entity;
-    });
-}
-
 // A combo over `textures` plus "none" for one texture slot. A slot set to
 // a GUID no texture entity carries (a file not registered, or typed into
 // the .material by hand) shows that GUID and stays selectable, so opening
 // the combo never changes the slot. Returns true when the slot changed.
-static bool draw_texture_combo(MaterialTextureSlot& slot, const std::vector<TextureChoice>& textures) {
-    const TextureChoice* current = nullptr;
-    for (const TextureChoice& choice : textures) {
-        if (choice.guid == slot.texture) {
-            current = &choice;
-            break;
-        }
-    }
+static bool draw_texture_combo(MaterialTextureSlot& slot, const std::vector<AssetChoice>& textures) {
+    const AssetChoice* current = ASSET_COMBO::find_guid(textures, slot.texture);
     char guid_text[TEXT_ASSET::GUID_TEXT_CAPACITY];
-    char preview[ENTITY_NAME_CAPACITY + TEXT_ASSET::GUID_TEXT_CAPACITY + 16];
+    char preview[TEXT_ASSET::GUID_TEXT_CAPACITY + 32];
     if (slot.texture.is_null()) {
         snprintf(preview, sizeof(preview), "none");
     } else if (current != nullptr) {
@@ -74,48 +40,12 @@ static bool draw_texture_combo(MaterialTextureSlot& slot, const std::vector<Text
         TEXT_ASSET::format_guid(slot.texture, guid_text);
         snprintf(preview, sizeof(preview), "%s (not registered)", guid_text);
     }
-
-    bool changed = false;
-    ImGui::SetNextItemWidth(-FLT_MIN);
-    if (ImGui::BeginCombo("##texture", preview)) {
-        const bool none_selected = slot.texture.is_null();
-        if (ImGui::Selectable("none", none_selected) && !none_selected) {
-            slot.texture = AssetGuid{};
-            changed = true;
-        }
-        if (none_selected) {
-            ImGui::SetItemDefaultFocus();
-        }
-        if (!slot.texture.is_null() && current == nullptr) {
-            // Keep the unresolved value in the list so it is visibly what is set.
-            ImGui::Selectable(preview, true);
-            ImGui::SetItemDefaultFocus();
-        }
-        for (const TextureChoice& choice : textures) {
-            const bool selected = &choice == current;
-            ImGui::PushID(static_cast<int>(choice.entity & 0x7fffffffu));
-            ImGui::PushID(static_cast<int>(choice.entity >> 32));
-            if (ImGui::Selectable(choice.name, selected) && !selected) {
-                slot.texture = choice.guid;
-                changed = true;
-            }
-            if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayNormal)) {
-                TEXT_ASSET::format_guid(choice.guid, guid_text);
-                ImGui::SetTooltip("%s", guid_text);
-            }
-            if (selected) {
-                ImGui::SetItemDefaultFocus();
-            }
-            ImGui::PopID();
-            ImGui::PopID();
-        }
-        ImGui::EndCombo();
+    const AssetChoice* picked = nullptr;
+    if (!ASSET_COMBO::draw("##texture", preview, current, slot.texture.is_null(), textures, true, &picked)) {
+        return false;
     }
-    if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayNormal) && current != nullptr) {
-        TEXT_ASSET::format_guid(current->guid, guid_text);
-        ImGui::SetTooltip("%s", guid_text);
-    }
-    return changed;
+    slot.texture = picked != nullptr ? picked->guid : AssetGuid{};
+    return true;
 }
 
 // One block member as a field matching its reflected shape. Writes into
@@ -206,12 +136,15 @@ bool INSPECTORS::material(InspectorContext& ctx, void* data) {
         scratch = &spill;
     }
 
+    // --- Shader ---
+    // Picking one is a request the App performs after the draw
+    // (SET_MATERIAL_SHADER), so the field is read here, never written.
+    ASSET_COMBO::shader(ctx, material.shader);
     const Shader* shader = ctx.world != nullptr ? ctx.world->get<Shader>(material.shader) : nullptr;
     if (shader == nullptr) {
-        ImGui::TextDisabled("Shader: entity %llu (not a shader)", static_cast<unsigned long long>(material.shader));
+        ImGui::TextDisabled("(no shader loaded: nothing to edit)");
         return false;
     }
-    ImGui::Text("Shader: %s", shader->name);
     MATERIAL::sync(material, *shader);
     bool changed = false;
 
@@ -230,9 +163,9 @@ bool INSPECTORS::material(InspectorContext& ctx, void* data) {
     if (material.texture_count > 0) {
         ImGui::SeparatorText("Textures");
         // Every texture asset the world knows, by name, for the combos.
-        std::vector<TextureChoice> textures;
+        std::vector<AssetChoice> textures;
         if (ctx.world != nullptr) {
-            collect_textures(*ctx.world, textures);
+            ASSET_COMBO::collect(*ctx.world, ASSET_TYPE::TEXTURE, textures);
         }
         for (u32 i = 0; i < material.texture_count; ++i) {
             MaterialTextureSlot& slot = material.textures[i];

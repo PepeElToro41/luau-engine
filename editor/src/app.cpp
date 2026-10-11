@@ -3,6 +3,7 @@
 #include "engine/asset/asset_entity.hpp"
 #include "engine/asset/text_asset.hpp"
 #include "engine/render/demo_scene.hpp"
+#include "engine/render/materials.hpp"
 #include "engine/render/renderer.hpp"
 #include "engine/render/shader_library.hpp"
 
@@ -430,6 +431,9 @@ void App::draw_editor() {
         if (this->inspector.file_action != InspectorFileAction::NONE) {
             this->apply_file_action(this->inspector.file_action);
         }
+        if (this->inspector.request.kind != InspectorRequestKind::NONE) {
+            this->apply_inspector_request(this->inspector.request);
+        }
     }
     if (this->show_viewport) {
         this->draw_viewport();
@@ -515,6 +519,44 @@ void App::apply_file_action(const InspectorFileAction action) {
         }
         break;
     case InspectorFileAction::NONE:
+        break;
+    }
+}
+
+void App::apply_inspector_request(const InspectorRequest& request) {
+    Renderer* renderer = this->engine.get_singleton<Renderer>();
+    World* world = this->engine.get_singleton<World>();
+    if (renderer == nullptr || world == nullptr || !world->alive(request.asset)) {
+        return;
+    }
+    const char* asset_name = SCENE::name(*world, request.asset);
+    if (asset_name == nullptr || asset_name[0] == '\0') {
+        asset_name = "(unnamed)";
+    }
+    switch (request.kind) {
+    case InspectorRequestKind::LOAD_MATERIAL: {
+        const AssetUuid* asset = world->get<AssetUuid>(request.asset);
+        if (asset == nullptr) {
+            this->output.error("%s is not an asset entity", asset_name);
+        } else if (MATERIAL::load(*renderer, asset->guid) == 0) {
+            this->output.error("Material %s did not load", asset_name);
+        } else {
+            this->output.info("Loaded material %s", asset_name);
+        }
+        break;
+    }
+    case InspectorRequestKind::SET_MATERIAL_SHADER: {
+        // A shader asset is named after its file's stem, which is the name
+        // the library loads it by; loading an already compiled one is a lookup.
+        const EntityId shader = SHADER_LIBRARY::load(*renderer, asset_name);
+        if (shader == 0) {
+            this->output.error("Shader %s did not load", asset_name);
+        } else if (MATERIAL::set_shader(*renderer, request.target, shader)) {
+            this->output.info("Material now uses shader %s", asset_name);
+        }
+        break;
+    }
+    case InspectorRequestKind::NONE:
         break;
     }
 }
