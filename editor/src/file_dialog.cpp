@@ -23,6 +23,21 @@ bool NativeFileDialog::open_files(
     return true;
 }
 
+bool NativeFileDialog::save_file(SDL_Window* window, const SDL_DialogFileFilter* filters, const int filter_count, const char* default_location) {
+    if (this->pending) {
+        return false;
+    }
+    {
+        std::lock_guard<std::mutex> lock(this->mutex);
+        this->results.clear();
+        this->failure.clear();
+        this->finished = false;
+    }
+    this->pending = true;
+    SDL_ShowSaveFileDialog(&NativeFileDialog::on_result, this, window, filters, filter_count, default_location);
+    return true;
+}
+
 void NativeFileDialog::on_result(void* userdata, const char* const* filelist, int /*filter*/) {
     NativeFileDialog* self = static_cast<NativeFileDialog*>(userdata);
     std::lock_guard<std::mutex> lock(self->mutex);

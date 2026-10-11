@@ -3,12 +3,18 @@
 `LuauEngine::engine`: INTERFACE target linking all three.
 `standalone/` and `editor/` link this.
 Each has an `App` (`src/app.hpp`) that owns `DisplayWindow`, the `GpuContext*` from `GPU::init` and `Engine` and runs the loop.
-Standalone renders the engine straight into `GpuFrame::backbuffer`;
+Standalone renders the engine straight into `GpuFrame::backbuffer`, opens a project directory (`--project <dir>`, the testing project by default, baked in as `STANDALONE_DEFAULT_PROJECT_DIR`), registers every asset file under it, loads `--scene <path>` (relative to the project, `scenes/demo.scene` by default) through `Engine::load_scene` and draws from the scene camera tagged `RenderCamera` (else the first camera under `scene_root`, which it tags);
+its asset provider accepts uncooked files unless `--cooked` is given, since a development project's imports are not cooked;
 the editor renders it into per-slot viewport textures (sRGB with a UNORM `sampled_format`, so ImGui copies the encoded bytes through to the UNORM swapchain) shown in an ImGui Viewport panel, barriers them to SAMPLED, and draws only the UI into the swapchain through `imgui_impl_vulkan`, fed by `gpu/vulkan/vk_access.hpp` (the one Vulkan-specific piece of the editor).
 The editor has one selection, `editor/src/selection.hpp`: a `Selection` (kind NONE / ENTITY / FILE, the entity, and for a file its project-relative path plus the entity the file is loaded as, 0 when none) owned by the App and handed to the Explorer, the Asset Browser and the Inspector, so clicking in one panel replaces the other's highlight;
 `App::resolve_selection` runs before the Inspector draws and, once per picked `.material`, registers the file (`Engine::load_asset_file`) and loads it with `MATERIAL::load` so the selection carries the Material entity, and `App::apply_file_action` performs the Inspector's Save (`MATERIAL::save` to the file's path) or Reload (`MATERIAL::reload`).
 A file whose entity carries `AssetDirty` shows "Modified, not saved" in the Inspector with the buttons reading Save* and Discard;
-File > Save All (Ctrl+S, `App::save_all`, polled with `ImGui::Shortcut` so it works from any panel) writes every `Material` entity tagged `AssetDirty` through the pathless `MATERIAL::save` and reports each file in the Output panel, which is where the scene file will join once it exists.
+File > Save All (Ctrl+S, `App::save_all`, polled with `ImGui::Shortcut` so it works from any panel) writes every `Material` entity tagged `AssetDirty` through the pathless `MATERIAL::save`, then the scene when it needs saving, and reports each file in the Output panel.
+The scene is a file: `App::load_startup_scene` opens the project's `scenes/demo.scene` (`App::open_scene`: `Engine::load_asset_file` + `Engine::load_scene`, clearing the selection) and falls back to `RENDER_DEMO::spawn`;
+File > New Scene / Open Scene... (Ctrl+O, the OS picker through a second `NativeFileDialog`, `scene_dialog`) / Save Scene / Save Scene As... (`NativeFileDialog::save_file`, SDL3 `SDL_ShowSaveFileDialog`, `.scene` appended when missing), a double-clicked `.scene` in the Asset Browser and Create > Scene (a `.scene` holding only a fresh `guid`) are the other ways in;
+the Explorer's first line is the scene's project-relative path (`ExplorerPanel::scene_title`, `(unsaved scene)` for a new one) with a `*` while `App::scene_dirty` is set, which the panels raise through `ExplorerPanel::changed` (New Entity) and `InspectorPanel::changed` (a rename, an edited component, an added component) when the selected entity is scene content, and `App::scene_needs_save` backs the flag with a hash of `Engine::write_scene` against the one recorded at the last load or save (`scene_saved_hash`);
+New, Open and Quit (the window close too) go through `request_*`, which keeps the action in `App::pending` and opens the Unsaved Scene modal (Save / Save As... / Discard / Cancel) when something would be lost, `perform_pending` running it once the save went through (a Save As waits for the dialog) or the changes were discarded.
+The Viewport is always the fly camera: the App sets `Renderer::camera` to it, so a scene file's `RenderCamera` tag is kept for the standalone.
 A component's draw function never adds components itself, so when a pick needs an asset loaded it leaves an `InspectorRequest` in its `InspectorContext` (LOAD_MATERIAL: `MATERIAL::load` of the picked `.material` asset entity;
 SET_MATERIAL_SHADER: `SHADER_LIBRARY::load` of the picked shader asset by its name, then `MATERIAL::set_shader` on the target entity),
 which the panel keeps in `InspectorPanel::request` and `App::apply_inspector_request` performs after the draw.
@@ -37,7 +43,8 @@ right-click opens a context menu: Import on importable files sets `activated` li
 Reimport reports `reimport_source` + `reimport_asset` for the App to queue, Save Original... asks for a path in a modal and writes the bytes with `IMPORT::save_source`),
 Delete removes the entry after a confirmation modal, Rename... (or F2 on the selection) asks for a new name in a modal, New Folder... creates a folder in the current one after asking for a name in a modal;
 right-clicking the empty space of the listing offers New Folder..., Create and Refresh;
-the toolbar's Create dropdown (the same entries as the Create submenu of both context menus: Material, Shader > one entry per engine shader, Code > Luau / Cpp) writes a template file in the current folder through the name modal with the extension fixed (a `.material` with a fresh GUID on the `unlit` shader and `color = 1 1 1 1`,
+the toolbar's Create dropdown (the same entries as the Create submenu of both context menus: Material, Scene, Shader > one entry per engine shader, Code > Luau / Cpp) writes a template file in the current folder through the name modal with the extension fixed (a `.material` with a fresh GUID on the `unlit` shader and `color = 1 1 1 1`,
+a `.scene` with a fresh GUID and no entities,
 a byte-for-byte copy of the picked engine shader (every `.slang` directly in the engine's `render/`, which the App hands the panel as `shader_template_dir`, listed by stem on each refresh, the empty `surface.slang` included, defaulting the name to `new_<stem>`),
 a `.luau` or `.cpp` stub;
 `AssetBrowserPanel::create_file`) and selects it, so a new `.material` lands in the Inspector at once;
@@ -58,7 +65,7 @@ The open project is `Project` (`editor/src/project.hpp`: root path + name),
 editor-only since standalone loads assets differently;
 the editor registers it as an engine singleton at startup.
 There is no open-project page yet: the editor opens `EDITOR_TEST_PROJECT_DIR` (`editor/testing_project/`, set in `editor/CMakeLists.txt`;
-it holds sample `meshes/*.obj` and `textures/*.png` to import, and `materials/demo.material`) and `App::scan_project_assets` registers every `.lunaasset` and `.material` under it with the provider through `Engine::load_asset_file`, so GUID references (a material's textures) resolve,
+it holds sample `meshes/*.obj` and `textures/*.png` to import, and `materials/demo.material`) and `App::scan_project_assets` registers every `.lunaasset`, `.material` and `.scene` under it with the provider through `Engine::load_asset_file`, so GUID references (a material's textures) resolve,
 and every `.slang` / `.glsl` directly in the engine's `render/` and then anywhere under the project as a shader asset entity (`App::register_shader_assets`: `AssetEntities::add` with `SHADER_LIBRARY::asset_guid(stem)`, type SHADER, the stem as `Name`, which is the name the library loads it by, and the file as `AssetPath`, which is where the library opens it), so the Inspector can offer shaders not compiled yet and a project shader may sit in any folder;
 a project file with an engine file's name shares its GUID and so its entity, and its path replaces the engine's, which is the override;
 two project files of one stem keep the first met and warn in the Output panel;

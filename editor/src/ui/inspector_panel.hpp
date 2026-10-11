@@ -46,6 +46,10 @@ struct InspectorPanel {
     // What a component's draw function asked for during the last draw()
     // (see inspector_context.hpp); NONE when nothing did.
     InspectorRequest request;
+    // Whether the last draw() wrote to the selected entity: a rename, a
+    // component edit or an added component. The App turns that into the
+    // scene's dirty flag when the entity is scene content.
+    bool changed = false;
 
 private:
     // Scratch slots the draw functions keep edit state in, one per id of

@@ -1,15 +1,22 @@
 #include "app.hpp"
 
+#include "engine/asset/asset_view.hpp"
+#include "engine/asset/text_asset.hpp"
 #include "engine/ecs/world.hpp"
 #include "engine/render/components.hpp"
 #include "engine/render/demo_scene.hpp"
 #include "engine/render/renderer.hpp"
 #include "engine/scene/scene.hpp"
 
+#include <cctype>
 #include <cstdio>
 
-// Draws the frame from the scene's first camera: the standalone has no
-// camera of its own, so the one under scene_root gets the RenderCamera tag.
+#ifndef STANDALONE_DEFAULT_PROJECT_DIR
+#define STANDALONE_DEFAULT_PROJECT_DIR "."
+#endif
+
+// Draws the frame from the scene's camera: the one tagged RenderCamera by
+// the scene file, else the first one under scene_root, which gets the tag.
 static bool tag_scene_camera(Engine& engine) {
     World* world = engine.get_singleton<World>();
     Scene* scene = engine.get_singleton<Scene>();
@@ -17,6 +24,14 @@ static bool tag_scene_camera(Engine& engine) {
         return false;
     }
     EntityId camera = 0;
+    world->query<Transform, Camera>().with<RenderCamera>().each([&](const EntityId entity, Transform&, Camera&) {
+        if (camera == 0 && scene->contains(entity)) {
+            camera = entity;
+        }
+    });
+    if (camera != 0) {
+        return true;
+    }
     world->query<Transform, Camera>().each([&](const EntityId entity, Transform&, Camera&) {
         if (camera == 0 && scene->contains(entity)) {
             camera = entity;
@@ -46,9 +61,14 @@ bool App::init() {
     if (!this->engine.init(this->gpu)) {
         return false;
     }
-    // A shipped build only ever loads cooked assets (see docs/asset_format.md).
-    this->engine.get_singleton<AssetResourceProvider>()->require_cooked = true;
-    if (!RENDER_DEMO::spawn(this->engine)) {
+    // A shipped build only ever loads cooked assets (see docs/asset_format.md);
+    // a development project's imports are not cooked yet, so that is opt-in.
+    this->engine.get_singleton<AssetResourceProvider>()->require_cooked = this->cooked_only;
+    if (this->project_dir.empty()) {
+        this->project_dir = STANDALONE_DEFAULT_PROJECT_DIR;
+    }
+    this->scan_project();
+    if (!this->load_scene() && !RENDER_DEMO::spawn(this->engine)) {
         fprintf(stderr, "[app] demo scene could not be created\n");
     }
     if (!tag_scene_camera(this->engine)) {
@@ -62,6 +82,53 @@ bool App::init() {
     }
     this->running = true;
     return true;
+}
+
+void App::scan_project() {
+    std::error_code error;
+    if (!std::filesystem::is_directory(this->project_dir, error) || error) {
+        fprintf(stderr, "[app] project directory %s not found\n", this->project_dir.string().c_str());
+        return;
+    }
+    const std::string root = this->project_dir.string();
+    RENDERER::set_project_render_dir(*this->engine.get_singleton<Renderer>(), root.c_str());
+    u32 registered = 0;
+    for (std::filesystem::recursive_directory_iterator it(this->project_dir, error), end; it != end; it.increment(error)) {
+        if (error || !it->is_regular_file(error)) {
+            continue;
+        }
+        std::string extension = it->path().extension().string();
+        for (char& c : extension) {
+            c = static_cast<char>(tolower(static_cast<unsigned char>(c)));
+        }
+        if (extension != ASSET_FILE::EXTENSION && TEXT_ASSET::type_of_path(extension.c_str()) == 0) {
+            continue;
+        }
+        const std::string path = it->path().string();
+        if (!this->engine.load_asset_file(path.c_str()).is_null()) {
+            registered += 1;
+        }
+    }
+    printf("[app] project %s: %u asset files registered\n", root.c_str(), registered);
+}
+
+bool App::load_scene() {
+    std::filesystem::path scene = this->scene_path;
+    if (scene.is_relative()) {
+        scene = this->project_dir / scene;
+    }
+    const std::string path = scene.string();
+    std::error_code error;
+    if (!std::filesystem::exists(scene, error) || error) {
+        fprintf(stderr, "[app] scene %s not found\n", path.c_str());
+        return false;
+    }
+    const AssetGuid guid = this->engine.load_asset_file(path.c_str());
+    if (guid.is_null()) {
+        fprintf(stderr, "[app] scene %s could not be registered\n", path.c_str());
+        return false;
+    }
+    return this->engine.load_scene(guid);
 }
 
 void App::run() {

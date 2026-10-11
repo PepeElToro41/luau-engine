@@ -4,9 +4,9 @@
 #include "engine/asset/source_chunk.hpp"
 #include "engine/memory/heap_allocator.hpp"
 #include "engine/platform/file.hpp"
+#include "engine/utils/guid.hpp"
 #include "engine/utils/hash.hpp"
 
-#include <random>
 
 ImportSource ImportSource::file(const std::filesystem::path& file) {
     ImportSource source;
@@ -142,13 +142,7 @@ u64 IMPORT::fnv1a(const void* data, const usz size) {
 }
 
 AssetGuid IMPORT::random_guid() {
-    static std::mt19937_64 generator{std::random_device{}()};
-    AssetGuid guid;
-    do {
-        guid.lo = generator();
-        guid.hi = generator();
-    } while (guid.is_null());
-    return guid;
+    return GUID::random();
 }
 
 bool IMPORT::add_editor_chunks(AssetWriter& writer, const ImportSource& source, const void* bytes, const usz size, const bool keep_source,

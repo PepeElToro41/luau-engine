@@ -38,7 +38,8 @@
 // empty space of the listing opens a menu with New Folder..., Create and
 // Refresh. The toolbar's Create dropdown (also a Create submenu of both
 // context menus) makes a new file in the current folder from a template:
-// Material (a .material with a fresh GUID on the unlit shader), Shader > a
+// Material (a .material with a fresh GUID on the unlit shader), Scene (a
+// .scene with a fresh GUID and no entities), Shader > a
 // submenu of the engine's shaders (every .slang directly in
 // `shader_template_dir`, the engine's render/, listed by stem and copied
 // byte for byte, so an empty one like surface.slang makes an empty file)
@@ -98,7 +99,7 @@ private:
     // The one name modal, used by New Folder..., Rename... and Create.
     enum struct NameMode { NEW_FOLDER, RENAME, NEW_FILE };
     // What the Create dropdown makes.
-    enum struct CreateKind { MATERIAL, SHADER, LUAU, CPP };
+    enum struct CreateKind { MATERIAL, SHADER, LUAU, CPP, SCENE };
     static const char* create_extension(CreateKind kind); // lowercase, with the dot
     static const char* create_label(CreateKind kind);     // "material", "shader", ...
     // A shader template: the file's stem (the submenu label and the default

@@ -5,4 +5,7 @@ file(GLOB_RECURSE STANDALONE_SOURCES CONFIGURE_DEPENDS
 add_executable(standalone ${STANDALONE_SOURCES})
 
 target_include_directories(standalone PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+# The project opened without --project: the editor's testing project, so
+# both apps show the same scene.
+target_compile_definitions(standalone PRIVATE STANDALONE_DEFAULT_PROJECT_DIR="${PROJECT_SOURCE_DIR}/editor/testing_project")
 target_link_libraries(standalone PRIVATE LuauEngine::engine)

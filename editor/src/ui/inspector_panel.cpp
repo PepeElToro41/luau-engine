@@ -17,6 +17,7 @@
 void InspectorPanel::draw(bool* open, World* world, const Project* project, const Selection& selection) {
     this->file_action = InspectorFileAction::NONE;
     this->request = InspectorRequest{};
+    this->changed = false;
     if (!ImGui::Begin(PANELS::INSPECTOR, open)) {
         ImGui::End();
         return;
@@ -66,6 +67,9 @@ static const char* file_kind(const std::filesystem::path& file, const bool is_di
     }
     if (extension == ".material") {
         return "Material";
+    }
+    if (extension == ".scene") {
+        return "Scene";
     }
     if (extension == ".lunaasset") {
         return "Asset";
@@ -160,6 +164,7 @@ void InspectorPanel::draw_header(World& world, const EntityId entity) {
     ImGui::SetNextItemWidth(-FLT_MIN);
     if (ImGui::InputText("##name", this->name_buffer, sizeof(this->name_buffer), ImGuiInputTextFlags_EnterReturnsTrue)) {
         SCENE::set_name(world, entity, this->name_buffer);
+        this->changed = true;
     }
     if (!ImGui::IsItemActive()) {
         // Not being typed into: track renames made elsewhere.
@@ -234,6 +239,7 @@ void InspectorPanel::draw_components(World& world, const EntityId entity) {
                 ctx.scratch_bytes = this->scratch_for(item.id, &ctx.scratch_fresh);
                 if (item.inspector->draw(ctx, data)) {
                     world.modified(entity, item.id);
+                    this->changed = true;
                 }
                 if (ctx.request.kind != InspectorRequestKind::NONE) {
                     this->request = ctx.request;
@@ -317,8 +323,8 @@ void InspectorPanel::draw_add_component(World& world, const EntityId entity) {
     }
     ImGui::EndPopup();
 
-    if (chosen != 0) {
-        INSPECTOR::add(world, entity, chosen);
+    if (chosen != 0 && INSPECTOR::add(world, entity, chosen)) {
+        this->changed = true;
     }
 }
 

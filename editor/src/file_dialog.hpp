@@ -30,6 +30,10 @@ struct NativeFileDialog {
     // be null. Returns false if a dialog is already pending.
     bool open_files(SDL_Window* window, const SDL_DialogFileFilter* filters, int filter_count,
                     const char* default_location, bool allow_many);
+    // The same for a save-file dialog: take() then yields the one path the
+    // user chose (which may not exist yet), or none for a cancel.
+    bool save_file(SDL_Window* window, const SDL_DialogFileFilter* filters, int filter_count,
+                   const char* default_location);
 
     // Moves the files picked since the last call into `out` and returns true
     // once per finished dialog, also for a cancel (empty `out`). `error` is

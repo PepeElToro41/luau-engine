@@ -26,6 +26,15 @@
 // through vk_access.hpp. The Viewport is drawn from the editor's own fly
 // camera (editor_camera.hpp), driven from SDL's input state each frame
 // before the engine renders.
+//
+// The scene is a file: the editor opens the project's scenes/demo.scene at
+// startup (Engine::load_scene), File > New / Open / Save / Save As and a
+// double-clicked .scene in the Asset Browser switch it, and Save All writes
+// it after the dirty materials. Whether it needs saving is a flag the
+// panels raise when they change scene content (`scene_dirty`), backed by a
+// comparison of the serialized text's hash with the one recorded at the
+// last save, so an edit made by other code is caught at the prompts: New,
+// Open and Quit ask Save / Discard / Cancel when something would be lost.
 struct App {
     bool init();
     void run();
@@ -68,8 +77,8 @@ private:
     // Performs the Inspector's Save / Reload request on the selected file.
     void apply_file_action(InspectorFileAction action);
     // File > Save All (Ctrl+S): writes every file-backed entity tagged
-    // AssetDirty (today the materials) back to its file and reports each
-    // in the Output panel. The scene joins this once it is a file.
+    // AssetDirty (the materials) back to its file, then the scene when it
+    // needs saving, and reports each in the Output panel.
     void save_all();
     // Performs what a component's draw function asked for: loading a picked
     // .material, or compiling a picked shader and giving it to a Material.
@@ -78,6 +87,40 @@ private:
     static void render_log(RenderLogLevel level, const char* text, void* user_data);
     void draw_viewport();
     void draw_stats();
+
+    // --- Scenes ----------------------------------------------------------------
+
+    // Opens the project's scenes/demo.scene, or spawns the built-in demo
+    // when there is none.
+    void load_startup_scene();
+    // Registers the file and loads it as the scene; clears the selection
+    // and the dirty state. False (reported) when it did not load.
+    bool open_scene(const std::filesystem::path& absolute);
+    // Writes the scene to `absolute` (Engine::save_scene) and records the
+    // saved state. False (reported) when it could not be written.
+    bool save_scene_to(const std::filesystem::path& absolute);
+    // Saves to the scene's own file, or asks for one when it has none.
+    void save_scene();
+    // Shows the save dialog; a pending action (see below) runs after a
+    // successful save.
+    void save_scene_as();
+    // Empties the scene and forgets its file.
+    void new_scene_now();
+    // New / Open / Quit first ask what to do with unsaved changes; the
+    // chosen action is kept in `pending` and performed by perform_pending()
+    // once the scene is saved or discarded. An empty `file` for Open means
+    // "show the file dialog".
+    void request_new_scene();
+    void request_open_scene(const std::filesystem::path& file = {});
+    void request_quit();
+    void perform_pending();
+    // Whether the scene differs from its file: the flag, else the hash.
+    bool scene_needs_save();
+    u64 scene_hash();
+    // The scene's path relative to the project, or "(unsaved scene)".
+    std::string scene_display_name() const;
+    void draw_unsaved_scene_popup();
+    void poll_scene_dialog();
 
     bool ui_ready = false;
     bool reset_layout = false;
@@ -91,6 +134,19 @@ private:
     AssetBrowserPanel asset_browser;
     ImportPanel import_panel;
     NativeFileDialog file_dialog;
+    // The Open Scene... / Save Scene As... dialog, and which one is up.
+    NativeFileDialog scene_dialog;
+    enum struct SceneDialog : u8 { NONE, OPEN, SAVE_AS };
+    SceneDialog scene_dialog_kind = SceneDialog::NONE;
+    // What the Save / Discard / Cancel prompt is guarding.
+    enum struct PendingAction : u8 { NONE, NEW, OPEN, OPEN_FILE, QUIT };
+    PendingAction pending = PendingAction::NONE;
+    std::filesystem::path pending_file;
+    bool open_unsaved_popup = false;
+    // Scene content changed since the last load or save, as far as the
+    // panels know; `scene_saved_hash` is the serialized text at that point.
+    bool scene_dirty = false;
+    u64 scene_saved_hash = 0;
     EditorCameraController editor_camera;
     // Whether the mouse was over the Viewport image when the UI was last
     // drawn; where right-click starts fly mode.

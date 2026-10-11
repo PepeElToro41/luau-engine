@@ -10,11 +10,15 @@
 #include <cstdio>
 
 void ExplorerPanel::draw(bool* open, World* world, Scene* scene, Selection& selection) {
+    this->changed = false;
     if (!ImGui::Begin(PANELS::EXPLORER, open)) {
         ImGui::End();
         return;
     }
 
+    if (!this->scene_title.empty()) {
+        ImGui::TextDisabled("%s", this->scene_title.c_str());
+    }
     this->filter.Draw("##filter", -FLT_MIN);
     ImGui::Separator();
 
@@ -88,6 +92,7 @@ void ExplorerPanel::create_entity(World& world, const EntityId parent, Selection
     world.set(entity, Transform{});
     selection.select_entity(entity);
     this->reveal = parent;
+    this->changed = true;
 }
 
 void ExplorerPanel::draw_entity(World& world, const EntityId entity, const bool is_root, const bool in_scene, DynamicArray<EntityId>& stack, Selection& selection) {

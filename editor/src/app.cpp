@@ -1,11 +1,13 @@
 #include "app.hpp"
 
 #include "engine/asset/asset_entity.hpp"
+#include "engine/asset/asset_types/scene_asset.hpp"
 #include "engine/asset/text_asset.hpp"
 #include "engine/render/demo_scene.hpp"
 #include "engine/render/materials.hpp"
 #include "engine/render/renderer.hpp"
 #include "engine/render/shader_library.hpp"
+#include "engine/utils/hash.hpp"
 
 #include "ui/dock_layout.hpp"
 #include "ui/inspectors/inspectors.hpp"
@@ -45,6 +47,9 @@ bool App::init() {
         return false;
     }
     this->explorer.editor_camera = this->editor_camera.entity;
+    // The Viewport is always drawn from the fly camera, whichever scene
+    // camera carries the RenderCamera tag for the standalone.
+    this->engine.get_singleton<Renderer>()->camera = this->editor_camera.entity;
     // Create > Shader in the Asset Browser copies one of the engine's shaders.
     this->asset_browser.shader_template_dir = this->engine.get_singleton<Renderer>()->engine_render_dir;
     if (!this->init_ui()) {
@@ -61,17 +66,7 @@ bool App::init() {
         this->output.warning("Surface does not offer the UNORM swapchain format; UI colors will look washed out");
     }
     this->open_test_project();
-    if (!RENDER_DEMO::spawn(this->engine)) {
-        this->output.error("Demo scene could not be created");
-    } else if (const Project* project = this->engine.get_singleton<Project>(); project != nullptr && project->is_open()) {
-        // Draw the demo primitives with the material the test project ships,
-        // if it has it; its texture comes from the scan above.
-        const std::string material_path = (project->root / "materials" / "demo.material").string();
-        const AssetGuid material = this->engine.load_asset_file(material_path.c_str());
-        if (!material.is_null() && !RENDER_DEMO::set_material(this->engine, material)) {
-            this->output.error("Demo material %s did not load", material_path.c_str());
-        }
-    }
+    this->load_startup_scene();
     this->output.info("Editor ready");
 
     this->running = true;
@@ -123,7 +118,7 @@ void App::scan_project_assets(const Project& project) {
         for (char& c : extension) {
             c = static_cast<char>(tolower(static_cast<unsigned char>(c)));
         }
-        if (extension != ASSET_FILE::EXTENSION && extension != TEXT_ASSET::MATERIAL_EXTENSION) {
+        if (extension != ASSET_FILE::EXTENSION && TEXT_ASSET::type_of_path(extension.c_str()) == 0) {
             continue;
         }
         const std::string path = it->path().string();
@@ -350,7 +345,7 @@ void App::poll_events() {
         switch (event.type) {
         case SDL_EVENT_QUIT:
         case SDL_EVENT_WINDOW_CLOSE_REQUESTED:
-            this->running = false;
+            this->request_quit();
             break;
         case SDL_EVENT_WINDOW_PIXEL_SIZE_CHANGED:
             GPU::mark_resized(this->gpu);
@@ -424,18 +419,31 @@ void App::draw_editor() {
     }
 
     this->poll_import_dialog();
+    this->poll_scene_dialog();
     this->draw_main_menu();
+    this->draw_unsaved_scene_popup();
     // Global, so it fires whichever panel has the focus; a text field being
     // typed in keeps the route (ImGui gives active items precedence).
     if (ImGui::Shortcut(ImGuiMod_Ctrl | ImGuiKey_S, ImGuiInputFlags_RouteGlobal)) {
         this->save_all();
     }
+    if (ImGui::Shortcut(ImGuiMod_Ctrl | ImGuiKey_O, ImGuiInputFlags_RouteGlobal)) {
+        this->request_open_scene();
+    }
+    Scene* scene = this->engine.get_singleton<Scene>();
     if (this->show_explorer) {
-        this->explorer.draw(&this->show_explorer, this->engine.get_singleton<World>(), this->engine.get_singleton<Scene>(), this->selection);
+        this->explorer.scene_title = this->scene_display_name() + (this->scene_dirty ? "*" : "");
+        this->explorer.draw(&this->show_explorer, this->engine.get_singleton<World>(), scene, this->selection);
+        if (this->explorer.changed) {
+            this->scene_dirty = true;
+        }
     }
     if (this->show_inspector) {
         this->resolve_selection();
         this->inspector.draw(&this->show_inspector, this->engine.get_singleton<World>(), this->engine.get_singleton<Project>(), this->selection);
+        if (this->inspector.changed && this->selection.is_entity() && scene != nullptr && scene->contains(this->selection.entity)) {
+            this->scene_dirty = true;
+        }
         if (this->inspector.file_action != InspectorFileAction::NONE) {
             this->apply_file_action(this->inspector.file_action);
         }
@@ -452,8 +460,11 @@ void App::draw_editor() {
         this->asset_browser.draw(&this->show_asset_browser, this->engine.get_singleton<Project>(), this->output, this->selection);
         if (!this->asset_browser.activated.empty()) {
             const std::filesystem::path& file = this->asset_browser.activated;
+            const Project* project = this->engine.get_singleton<Project>();
             if (ImportPanel::kind_of(file.extension().string()) != ImportPanel::Kind::UNSUPPORTED) {
                 this->queue_import(file);
+            } else if (TEXT_ASSET::type_of_path(file.string().c_str()) == ASSET_TYPE::SCENE && project != nullptr && project->is_open()) {
+                this->request_open_scene(project->root / file);
             }
         }
         if (!this->asset_browser.reimport_asset.empty()) {
@@ -542,7 +553,8 @@ void App::save_all() {
     // iterated when it drops the tag.
     std::vector<EntityId> dirty;
     world->query<Material>().with<AssetDirty>().each([&](const EntityId entity, Material&) { dirty.push_back(entity); });
-    if (dirty.empty()) {
+    const bool scene_pending = this->scene_needs_save();
+    if (dirty.empty() && !scene_pending) {
         this->output.info("Nothing to save");
         return;
     }
@@ -566,6 +578,11 @@ void App::save_all() {
     }
     if (saved > 0) {
         this->asset_browser.refresh();
+    }
+    // The scene last: its materials are on disk by now, so what it
+    // references is current.
+    if (scene_pending) {
+        this->save_scene();
     }
 }
 
@@ -659,6 +676,23 @@ void App::draw_main_menu() {
     if (ImGui::BeginMenu("File")) {
         const Project* project = this->engine.get_singleton<Project>();
         const bool has_project = project != nullptr && project->is_open();
+        const Scene* scene = this->engine.get_singleton<Scene>();
+        const bool scene_has_file = scene != nullptr && scene->current_path[0] != '\0';
+        if (ImGui::MenuItem("New Scene")) {
+            this->request_new_scene();
+        }
+        ImGui::BeginDisabled(this->scene_dialog.is_pending());
+        if (ImGui::MenuItem("Open Scene...", "Ctrl+O")) {
+            this->request_open_scene();
+        }
+        if (ImGui::MenuItem(scene_has_file ? "Save Scene" : "Save Scene...")) {
+            this->save_scene();
+        }
+        if (ImGui::MenuItem("Save Scene As...")) {
+            this->save_scene_as();
+        }
+        ImGui::EndDisabled();
+        ImGui::Separator();
         ImGui::BeginDisabled(!has_project || this->file_dialog.is_pending());
         if (ImGui::MenuItem("Import...")) {
             this->open_import_dialog();
@@ -673,15 +707,16 @@ void App::draw_main_menu() {
             this->asset_browser.refresh();
         }
         ImGui::Separator();
-        // Every file-backed entity with unsaved edits (AssetDirty); the
-        // shortcut itself is polled in draw_editor so it works from any panel.
+        ImGui::EndDisabled();
+        // Every file-backed entity with unsaved edits (AssetDirty) and the
+        // scene; the shortcut itself is polled in draw_editor so it works
+        // from any panel.
         if (ImGui::MenuItem("Save All", "Ctrl+S")) {
             this->save_all();
         }
-        ImGui::EndDisabled();
         ImGui::Separator();
         if (ImGui::MenuItem("Quit", "Alt+F4")) {
-            this->running = false;
+            this->request_quit();
         }
         ImGui::EndMenu();
     }
@@ -779,4 +814,275 @@ void App::draw_stats() {
         ImGui::Text("GPU %s", this->gpu->info.device_name);
     }
     ImGui::End();
+}
+
+// --- Scenes -----------------------------------------------------------------
+
+// What Open Scene... and Save Scene As... offer; static for SDL (see
+// IMPORT_FILTERS).
+static constexpr SDL_DialogFileFilter SCENE_FILTERS[] = {
+    {"Scenes (scene)", "scene"},
+};
+
+void App::load_startup_scene() {
+    const Project* project = this->engine.get_singleton<Project>();
+    if (project != nullptr && project->is_open()) {
+        const std::filesystem::path scene = project->root / "scenes" / "demo.scene";
+        std::error_code error;
+        if (std::filesystem::exists(scene, error) && !error) {
+            if (this->open_scene(scene)) {
+                return;
+            }
+        } else {
+            this->output.warning("No startup scene at %s; spawning the built-in demo", scene.string().c_str());
+        }
+    }
+    if (!RENDER_DEMO::spawn(this->engine)) {
+        this->output.error("Demo scene could not be created");
+    }
+    this->scene_dirty = false;
+    this->scene_saved_hash = this->scene_hash();
+}
+
+bool App::open_scene(const std::filesystem::path& absolute) {
+    const std::string path = absolute.string();
+    const AssetGuid guid = this->engine.load_asset_file(path.c_str());
+    if (guid.is_null()) {
+        this->output.error("Scene %s could not be registered", path.c_str());
+        return false;
+    }
+    // Whatever was selected is about to be deleted with the old content.
+    this->selection.clear();
+    const bool ok = this->engine.load_scene(guid);
+    if (!ok) {
+        this->output.error("Scene %s did not load", path.c_str());
+    }
+    this->scene_dirty = false;
+    this->scene_saved_hash = this->scene_hash();
+    return ok;
+}
+
+bool App::save_scene_to(const std::filesystem::path& absolute) {
+    const std::string path = absolute.string();
+    if (!this->engine.save_scene(path.c_str())) {
+        this->output.error("Could not save scene %s", path.c_str());
+        return false;
+    }
+    this->scene_dirty = false;
+    this->scene_saved_hash = this->scene_hash();
+    this->output.info("Saved %s", this->scene_display_name().c_str());
+    this->asset_browser.refresh();
+    return true;
+}
+
+void App::save_scene() {
+    const Scene* scene = this->engine.get_singleton<Scene>();
+    if (scene != nullptr && scene->current_path[0] != '\0') {
+        this->save_scene_to(scene->current_path);
+    } else {
+        this->save_scene_as();
+    }
+}
+
+void App::save_scene_as() {
+    const Project* project = this->engine.get_singleton<Project>();
+    std::string start;
+    if (project != nullptr && project->is_open()) {
+        std::error_code error;
+        const std::filesystem::path scenes = project->root / "scenes";
+        start = (std::filesystem::is_directory(scenes, error) && !error ? scenes : project->root).string();
+    }
+    this->scene_dialog_kind = SceneDialog::SAVE_AS;
+    if (!this->scene_dialog.save_file(this->window.window, SCENE_FILTERS, 1, start.empty() ? nullptr : start.c_str())) {
+        this->scene_dialog_kind = SceneDialog::NONE;
+    }
+}
+
+void App::new_scene_now() {
+    this->selection.clear();
+    this->engine.new_scene();
+    this->scene_dirty = false;
+    this->scene_saved_hash = this->scene_hash();
+    this->output.info("New scene");
+}
+
+void App::request_new_scene() {
+    this->pending = PendingAction::NEW;
+    if (this->scene_needs_save()) {
+        this->open_unsaved_popup = true;
+    } else {
+        this->perform_pending();
+    }
+}
+
+void App::request_open_scene(const std::filesystem::path& file) {
+    this->pending = file.empty() ? PendingAction::OPEN : PendingAction::OPEN_FILE;
+    this->pending_file = file;
+    if (this->scene_needs_save()) {
+        this->open_unsaved_popup = true;
+    } else {
+        this->perform_pending();
+    }
+}
+
+void App::request_quit() {
+    this->pending = PendingAction::QUIT;
+    if (this->scene_needs_save()) {
+        this->open_unsaved_popup = true;
+    } else {
+        this->perform_pending();
+    }
+}
+
+void App::perform_pending() {
+    const PendingAction action = this->pending;
+    this->pending = PendingAction::NONE;
+    switch (action) {
+    case PendingAction::NEW:
+        this->new_scene_now();
+        break;
+    case PendingAction::OPEN: {
+        const Project* project = this->engine.get_singleton<Project>();
+        std::string start;
+        if (project != nullptr && project->is_open()) {
+            start = project->root.string();
+        }
+        this->scene_dialog_kind = SceneDialog::OPEN;
+        if (!this->scene_dialog.open_files(this->window.window, SCENE_FILTERS, 1, start.empty() ? nullptr : start.c_str(), false)) {
+            this->scene_dialog_kind = SceneDialog::NONE;
+        }
+        break;
+    }
+    case PendingAction::OPEN_FILE:
+        this->open_scene(this->pending_file);
+        this->pending_file.clear();
+        break;
+    case PendingAction::QUIT:
+        this->running = false;
+        break;
+    case PendingAction::NONE:
+        break;
+    }
+}
+
+u64 App::scene_hash() {
+    DynamicArray<char> text;
+    this->engine.write_scene(text);
+    const u64 hash = HASH::fnv1a(text.data, text.count);
+    text.free();
+    return hash;
+}
+
+bool App::scene_needs_save() {
+    if (this->scene_dirty) {
+        return true;
+    }
+    // The safety net: a change the panels did not see (code, a script).
+    return this->scene_hash() != this->scene_saved_hash;
+}
+
+std::string App::scene_display_name() const {
+    const Scene* scene = this->engine.get_singleton<Scene>();
+    if (scene == nullptr || scene->current_path[0] == '\0') {
+        return "(unsaved scene)";
+    }
+    const Project* project = this->engine.get_singleton<Project>();
+    if (project != nullptr && project->is_open()) {
+        const std::filesystem::path relative = std::filesystem::path(scene->current_path).lexically_relative(project->root);
+        if (!relative.empty() && relative.native()[0] != '.') {
+            return relative.generic_string();
+        }
+    }
+    return scene->current_path;
+}
+
+void App::draw_unsaved_scene_popup() {
+    static const char* POPUP = "Unsaved Scene";
+    if (this->open_unsaved_popup) {
+        this->open_unsaved_popup = false;
+        ImGui::OpenPopup(POPUP);
+    }
+    const ImVec2 center = ImGui::GetMainViewport()->GetCenter();
+    ImGui::SetNextWindowPos(center, ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
+    if (!ImGui::BeginPopupModal(POPUP, nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+        return;
+    }
+    if (this->pending == PendingAction::NONE) {
+        ImGui::CloseCurrentPopup();
+        ImGui::EndPopup();
+        return;
+    }
+    const Scene* scene = this->engine.get_singleton<Scene>();
+    const bool has_file = scene != nullptr && scene->current_path[0] != '\0';
+    ImGui::Text("Save changes to %s?", this->scene_display_name().c_str());
+    ImGui::TextDisabled("%s", has_file ? "They are lost otherwise." : "The scene has not been saved to a file yet.");
+    ImGui::Separator();
+    if (ImGui::Button(has_file ? "Save" : "Save As...", ImVec2(100.0f, 0.0f))) {
+        ImGui::CloseCurrentPopup();
+        if (has_file) {
+            if (this->save_scene_to(scene->current_path)) {
+                this->perform_pending();
+            } else {
+                this->pending = PendingAction::NONE;
+            }
+        } else {
+            // The pending action runs once the dialog's save went through.
+            this->save_scene_as();
+        }
+    }
+    ImGui::SameLine();
+    if (ImGui::Button("Discard", ImVec2(100.0f, 0.0f))) {
+        ImGui::CloseCurrentPopup();
+        this->perform_pending();
+    }
+    ImGui::SameLine();
+    if (ImGui::Button("Cancel", ImVec2(100.0f, 0.0f)) || ImGui::IsKeyPressed(ImGuiKey_Escape)) {
+        ImGui::CloseCurrentPopup();
+        this->pending = PendingAction::NONE;
+        this->pending_file.clear();
+    }
+    ImGui::EndPopup();
+}
+
+void App::poll_scene_dialog() {
+    std::vector<std::filesystem::path> picked;
+    std::string error;
+    if (!this->scene_dialog.take(&picked, &error)) {
+        return;
+    }
+    const SceneDialog kind = this->scene_dialog_kind;
+    this->scene_dialog_kind = SceneDialog::NONE;
+    if (!error.empty()) {
+        this->output.error("Scene dialog: %s", error.c_str());
+        this->pending = PendingAction::NONE;
+        return;
+    }
+    if (picked.empty()) {
+        // Cancelled: whatever the save was guarding is off too.
+        this->pending = PendingAction::NONE;
+        this->pending_file.clear();
+        return;
+    }
+    std::filesystem::path path = picked.front();
+    switch (kind) {
+    case SceneDialog::OPEN:
+        if (TEXT_ASSET::type_of_path(path.string().c_str()) != ASSET_TYPE::SCENE) {
+            this->output.error("%s is not a .scene file", path.string().c_str());
+        } else {
+            this->open_scene(path);
+        }
+        break;
+    case SceneDialog::SAVE_AS:
+        if (TEXT_ASSET::type_of_path(path.string().c_str()) != ASSET_TYPE::SCENE) {
+            path += SCENE_ASSET::EXTENSION;
+        }
+        if (this->save_scene_to(path)) {
+            this->perform_pending();
+        } else {
+            this->pending = PendingAction::NONE;
+        }
+        break;
+    case SceneDialog::NONE:
+        break;
+    }
 }

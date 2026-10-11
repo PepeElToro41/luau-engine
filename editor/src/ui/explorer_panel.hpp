@@ -7,6 +7,8 @@
 
 #include <imgui.h>
 
+#include <string>
+
 struct Scene;
 struct World;
 
@@ -24,13 +26,21 @@ struct World;
 // child of that row (a Name plus an identity Transform, parented with
 // CHILD_OF), selects it and opens the parent so it is visible; right-clicking
 // the empty space of the tree does the same under the scene root. Editor
-// entities are not scene content, so they offer no menu.
+// entities are not scene content, so they offer no menu. Above the tree a
+// line names the scene file the content came from (`scene_title`, set by
+// the App), and `changed` reports to the App that the panel created an
+// entity during the last draw, which is what makes the scene dirty.
 struct ExplorerPanel {
     // Submits the window. `open` is the View-menu toggle. Without a world or
     // scene the panel says so instead of listing anything.
     void draw(bool* open, World* world, Scene* scene, Selection& selection);
 
     ImGuiTextFilter filter;
+    // What the line above the tree says: the scene's file (with a `*` when
+    // it has unsaved changes), or what the App wants shown for a new scene.
+    std::string scene_title;
+    // Set by draw() when the panel changed scene content (New Entity).
+    bool changed = false;
     // The editor's camera entity (see editor_camera.hpp), listed as its own
     // top-level node under the scene tree; 0 or dead lists nothing.
     EntityId editor_camera = 0;

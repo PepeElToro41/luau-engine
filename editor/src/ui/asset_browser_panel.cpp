@@ -3,6 +3,7 @@
 #include "engine/asset/asset_types/material_asset.hpp"
 #include "engine/asset/asset_view.hpp"
 #include "engine/asset/asset_writer.hpp"
+#include "engine/asset/text_asset.hpp"
 #include "ui/format.hpp"
 #include "ui/import/import_panel.hpp"
 #include "ui/panels.hpp"
@@ -127,6 +128,7 @@ const char* AssetBrowserPanel::create_extension(const CreateKind kind) {
     case CreateKind::SHADER: return ".slang";
     case CreateKind::LUAU: return ".luau";
     case CreateKind::CPP: return ".cpp";
+    case CreateKind::SCENE: return ".scene";
     }
     return "";
 }
@@ -137,6 +139,7 @@ const char* AssetBrowserPanel::create_label(const CreateKind kind) {
     case CreateKind::SHADER: return "shader";
     case CreateKind::LUAU: return "Luau script";
     case CreateKind::CPP: return "C++ source";
+    case CreateKind::SCENE: return "scene";
     }
     return "file";
 }
@@ -146,6 +149,10 @@ void AssetBrowserPanel::draw_create_items() {
     bool any = false;
     if (ImGui::MenuItem("Material")) {
         picked = CreateKind::MATERIAL;
+        any = true;
+    }
+    if (ImGui::MenuItem("Scene")) {
+        picked = CreateKind::SCENE;
         any = true;
     }
     if (ImGui::BeginMenu("Shader")) {
@@ -556,7 +563,7 @@ void AssetBrowserPanel::begin_create(const CreateKind kind) {
     // Default to "new_<kind>" (a shader: "new_<template>"), or the first
     // "new_<kind>_N" not taken in the current listing (with the extension;
     // shader and script names end up as identifiers, so no spaces).
-    static const char* stems[] = {"new_material", "new_shader", "new_script", "new_source"};
+    static const char* stems[] = {"new_material", "new_shader", "new_script", "new_source", "new_scene"};
     std::string stem = stems[static_cast<int>(kind)];
     if (kind == CreateKind::SHADER && this->create_template < this->shader_templates.size()) {
         stem = "new_" + this->shader_templates[this->create_template].name;
@@ -744,6 +751,13 @@ bool AssetBrowserPanel::create_file(const Project& project, const char* name, Ou
         const f64 color[4] = {1.0, 1.0, 1.0, 1.0};
         material.set_param("color", color, 4);
         ok = MATERIAL_ASSET::write_file(material, path.c_str());
+    } else if (this->create_kind == CreateKind::SCENE) {
+        // An empty scene: the guid line alone (SCENE_ASSET::write of a root
+        // without children), so File > Open Scene has something to open.
+        char guid[TEXT_ASSET::GUID_TEXT_CAPACITY];
+        TEXT_ASSET::format_guid(IMPORT::random_guid(), guid);
+        const std::string text = std::string("guid = ") + guid + "\n";
+        ok = ASSET_FILE::write_file(path.c_str(), text.data(), text.size());
     } else if (this->create_kind == CreateKind::SHADER) {
         // A byte-for-byte copy of the engine shader picked in the submenu
         // (an empty template makes an empty file).
