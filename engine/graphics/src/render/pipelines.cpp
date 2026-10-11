@@ -10,6 +10,32 @@ usz PipelineKeyHash::operator()(const PipelineKey& key) const {
     return static_cast<usz>(HASH::fnv1a(&key, sizeof(key)));
 }
 
+// The pragma's state words override the defaults picked above.
+static void apply_pass_state(const ShaderPassState& state, GpuPipelineDesc& desc) {
+    if (state.has(SHADER_PASS_STATE_BLEND)) {
+        switch (state.blend) {
+        case SHADER_PASS_BLEND_ALPHA:
+            desc.blend = GPU_BLEND_ALPHA;
+            break;
+        case SHADER_PASS_BLEND_ADDITIVE:
+            desc.blend = GPU_BLEND_ADDITIVE;
+            break;
+        default:
+            desc.blend = GPU_BLEND_OPAQUE;
+            break;
+        }
+    }
+    if (state.has(SHADER_PASS_STATE_DEPTH_TEST)) {
+        desc.depth.test = state.depth_test;
+    }
+    if (state.has(SHADER_PASS_STATE_DEPTH_WRITE)) {
+        desc.depth.write = state.depth_write;
+    }
+    if (state.has(SHADER_PASS_STATE_CULL)) {
+        desc.raster.cull = state.cull ? GPU_CULL_BACK : GPU_CULL_NONE;
+    }
+}
+
 GpuPipeline PIPELINES::get(Renderer& renderer, const EntityId shader_entity, const Shader& shader, const u64 tag, const GpuTargetFormats& formats, const GpuMeshLayout* mesh) {
     PipelineKey key;
     key.shader = shader_entity;
@@ -43,12 +69,15 @@ GpuPipeline PIPELINES::get(Renderer& renderer, const EntityId shader_entity, con
             return pipeline;
         }
     } else {
-        // A fullscreen pass covers the target whatever its winding and
-        // ignores whatever depth the target holds.
+        // No vertex input: a fullscreen pass covers the target whatever its
+        // winding and ignores whatever depth the target holds. A shader
+        // that generates other geometry from the vertex index says so with
+        // the state words below.
         desc.raster.cull = GPU_CULL_NONE;
         desc.depth.test = false;
         desc.depth.write = false;
     }
+    apply_pass_state(pass->state, desc);
 
     // Set 0 is the frame's, set 1 the pass's inputs, set 2 the material;
     // the backend fills gaps with the empty layout.

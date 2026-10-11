@@ -42,11 +42,16 @@
 // hash with a string compare on the hit, so a name is only ever its own.
 //
 // The two built-in resources are the FrameContext's target: `backbuffer` is
-// its color image and `backbuffer_depth` its depth image. Exactly one pass
-// writes the backbuffer, with one color attachment loaded CLEAR and stored,
-// and depth (if it has it) loaded CLEAR and not stored, because that pass
-// runs through the target's own render pass. The backbuffer is never read
-// and `backbuffer_depth` belongs to that pass alone.
+// its color image and `backbuffer_depth` its depth image. The passes that
+// write the backbuffer form a chain in the order: each has it as its only
+// color attachment and stores it, the first cannot LOAD it (the target
+// arrives undefined) and the later ones LOAD what the earlier drew, which
+// is how an overlay (the editor's grid, transparent objects) goes over a
+// finished frame. Their depth is any depth resource. `backbuffer_depth` is
+// a depth image of the target's size any raster pass may take, under the
+// same rule: its first user cannot load it (last frame's contents are
+// gone) and a later one may when the user before stored it. The
+// backbuffer is never read.
 
 namespace RENDER_GRAPH {
 

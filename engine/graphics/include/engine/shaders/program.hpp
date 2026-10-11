@@ -36,6 +36,8 @@ struct ShaderPassProgram {
     // Invalid for a vertex-only (depth) pass.
     CompiledShader fragment;
     ShaderReflection reflection;
+    // The fixed pipeline state the pass's pragma asked for.
+    ShaderPassState state;
 
     bool uses_material() const { return (this->reflection.set_mask() & 4u) != 0; }
     bool has_push_constants() const { return this->reflection.push_constant_size > 0; }

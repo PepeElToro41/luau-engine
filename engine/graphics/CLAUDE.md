@@ -34,7 +34,8 @@ validation layers in debug builds;
 messages through `GPU::set_log_sink`).
 `gpu/vulkan/vk_access.hpp` is the only public header with Vulkan in it, for the editor's ImGui glue.
 `shaders/` is the shader path, one header per step, Vulkan-free: `shader.hpp` (`ShaderStage`, `ShaderStageMask`, `ShaderLanguage`, `SHADER::stage_name`),
-`preprocessing.hpp` (`ShaderDefine`, the `#pragma pass <tag> [vertex] [fragment]` directives (`SHADER_PREPROCESSING::parse_directives` / `strip_directives`),
+`preprocessing.hpp` (`ShaderDefine`, the `#pragma pass <tag> [vertex] [fragment] [state words]` directives (`SHADER_PREPROCESSING::parse_directives` / `strip_directives`;
+the state words fill a `ShaderPassState` whose `set_mask` says which were given, copied to `ShaderPassProgram::state` and applied by `PIPELINES::get` over its defaults, so a shader with no words keeps the mesh or fullscreen state as before),
 the `STAGE_*` / `PASS_<TAG>` define names, Slang entry point names, `enable_includes` (GLSL) and `resolve_include`;
 its source is the one graphics file compiled into `engine_tests`),
 `compilation.hpp` (`ShaderSource` -> `SHADER_COMPILER::compile` / `compile_file` -> `CompiledShader`: allocator-owned bytes, `GpuShaderBytecode` kind, entry point and a `log`;

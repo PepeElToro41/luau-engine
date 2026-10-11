@@ -71,6 +71,33 @@ static bool read_word(const char*& cursor, const char* end, char* out, const usz
     return true;
 }
 
+// A fixed-state word of a pass pragma (see ShaderPassState). False if `word`
+// is not one.
+static bool parse_state_word(const char* word, ShaderPassState& state) {
+    if (strcmp(word, "opaque") == 0) {
+        state.blend = SHADER_PASS_BLEND_OPAQUE;
+        state.set_mask |= SHADER_PASS_STATE_BLEND;
+    } else if (strcmp(word, "blend") == 0) {
+        state.blend = SHADER_PASS_BLEND_ALPHA;
+        state.set_mask |= SHADER_PASS_STATE_BLEND;
+    } else if (strcmp(word, "additive") == 0) {
+        state.blend = SHADER_PASS_BLEND_ADDITIVE;
+        state.set_mask |= SHADER_PASS_STATE_BLEND;
+    } else if (strcmp(word, "depth_test") == 0 || strcmp(word, "no_depth_test") == 0) {
+        state.depth_test = word[0] != 'n';
+        state.set_mask |= SHADER_PASS_STATE_DEPTH_TEST;
+    } else if (strcmp(word, "depth_write") == 0 || strcmp(word, "no_depth_write") == 0) {
+        state.depth_write = word[0] != 'n';
+        state.set_mask |= SHADER_PASS_STATE_DEPTH_WRITE;
+    } else if (strcmp(word, "cull") == 0 || strcmp(word, "no_cull") == 0) {
+        state.cull = word[0] != 'n';
+        state.set_mask |= SHADER_PASS_STATE_CULL;
+    } else {
+        return false;
+    }
+    return true;
+}
+
 static bool set_error(ShaderDirectives& out, const u32 line, const char* message) {
     snprintf(out.error, sizeof(out.error), "line %u: %s", line, message);
     out.pass_count = 0;
@@ -125,11 +152,12 @@ bool SHADER_PREPROCESSING::parse_directives(const char* text, usz size, ShaderDi
             }
             pass.line = line_number;
             pass.stages = 0;
+            pass.state = ShaderPassState{};
 
             char word[16];
             for (;;) {
                 if (!read_word(args, line_end, word, sizeof(word))) {
-                    return set_error(out, line_number, "unknown stage");
+                    return set_error(out, line_number, "unknown stage or state word");
                 }
                 if (word[0] == '\0') {
                     break;
@@ -140,14 +168,14 @@ bool SHADER_PREPROCESSING::parse_directives(const char* text, usz size, ShaderDi
                     pass.stages |= SHADER_STAGE_MASK_FRAGMENT;
                 } else if (strcmp(word, "compute") == 0) {
                     pass.stages |= SHADER_STAGE_MASK_COMPUTE;
-                } else {
-                    return set_error(out, line_number, "unknown stage");
+                } else if (!parse_state_word(word, pass.state)) {
+                    return set_error(out, line_number, "unknown stage or state word");
                 }
             }
             args = skip_spaces(args, line_end);
             if (args < line_end) {
                 // Something that is not a word, e.g. punctuation.
-                return set_error(out, line_number, "unknown stage");
+                return set_error(out, line_number, "unknown stage or state word");
             }
             if (pass.stages == 0) {
                 pass.stages = SHADER_STAGE_MASK_VERTEX | SHADER_STAGE_MASK_FRAGMENT;

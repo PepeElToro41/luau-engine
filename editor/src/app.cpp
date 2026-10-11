@@ -41,6 +41,9 @@ bool App::init() {
         return false;
     }
     this->engine.get_singleton<Renderer>()->log_sink = RenderLogSink{&App::render_log, this};
+    if (!this->editor_grid.init(*this->engine.get_singleton<Renderer>())) {
+        fprintf(stderr, "[editor] the grid shader did not load; see the Output panel\n");
+    }
     INSPECTORS::register_all(*this->engine.get_singleton<World>());
     if (!this->editor_camera.init(*this->engine.get_singleton<World>())) {
         fprintf(stderr, "[editor] editor camera could not be created\n");
@@ -207,6 +210,9 @@ void App::shutdown() {
     }
     this->shutdown_viewport();
     this->shutdown_ui();
+    if (Renderer* renderer = this->engine.get_singleton<Renderer>()) {
+        this->editor_grid.shutdown(*renderer);
+    }
     this->engine.shutdown();
     if (this->gpu != nullptr) {
         GPU::shutdown(this->gpu);
@@ -363,6 +369,7 @@ void App::frame(const f32 dt) {
     this->frame_dt = dt;
     this->engine.update(dt);
     this->editor_camera.update(*this->engine.get_singleton<World>(), this->window.window, this->viewport_hovered, dt);
+    this->editor_grid.update(*this->engine.get_singleton<Renderer>());
     this->apply_viewport_resize();
 
     GpuFrame frame;
@@ -734,6 +741,10 @@ void App::draw_main_menu() {
             if (!RENDER_DEMO::set_shadow_enabled(this->engine, this->demo_shadow)) {
                 this->demo_shadow = false;
             }
+        }
+        ImGui::Separator();
+        if (ImGui::MenuItem("Grid", nullptr, &this->editor_grid.enabled)) {
+            this->editor_grid.set_enabled(*this->engine.get_singleton<Renderer>(), this->editor_grid.enabled);
         }
         ImGui::EndMenu();
     }

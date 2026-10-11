@@ -295,7 +295,6 @@ bool Compiler::collect_pass(const RenderPassHandle handle, const RenderPassDesc&
                     (desc.kind == RENDER_PASS_CUSTOM && (desc.color_count > 0 || desc.has_depth));
 
     // Attachments.
-    bool uses_backbuffer_depth = false;
     for (u32 i = 0; i < desc.color_count; ++i) {
         PlannedAttachment planned;
         if (!this->collect_attachment(out, handle, desc.color[i], RENDER_ASPECT_COLOR, planned, out.width, out.height)) {
@@ -312,7 +311,6 @@ bool Compiler::collect_pass(const RenderPassHandle handle, const RenderPassDesc&
         if (this->collect_attachment(out, handle, desc.depth, RENDER_ASPECT_DEPTH, planned, out.width, out.height)) {
             out.depth = planned;
             out.has_depth = true;
-            uses_backbuffer_depth = this->plan.resources[planned.resource].kind == RENDER_RESOURCE_BACKBUFFER_DEPTH;
         } else {
             ok = false;
         }
@@ -415,26 +413,35 @@ bool Compiler::collect_pass(const RenderPassHandle handle, const RenderPassDesc&
         break;
     }
 
-    // The backbuffer pass runs through the target's fixed render pass.
+    // The passes that draw the backbuffer form a chain (collect_passes checks
+    // the order-dependent part): each has it as its only color attachment
+    // and stores it. Their depth is any depth resource, backbuffer_depth
+    // or a transient.
     if (out.writes_backbuffer) {
-        if (out.color_count != 1 || out.color[0].load != RENDER_LOAD_CLEAR || out.color[0].store != RENDER_STORE_STORE) {
-            this->error(handle, this->graph.backbuffer, "the backbuffer pass must have the backbuffer as its only color attachment, cleared and stored");
+        if (out.color_count != 1) {
+            this->error(handle, this->graph.backbuffer, "the backbuffer must be the only color attachment of a pass that draws it");
+            ok = false;
+        } else if (out.color[0].store != RENDER_STORE_STORE) {
+            this->error(handle, this->graph.backbuffer, "the backbuffer must be stored by every pass that draws it");
             ok = false;
         }
-        if (out.has_depth && (!uses_backbuffer_depth || out.depth.load != RENDER_LOAD_CLEAR || out.depth.store != RENDER_STORE_DONT_CARE)) {
-            this->error(handle, this->graph.backbuffer_depth, "the backbuffer pass's depth must be backbuffer_depth, cleared and not stored");
-            ok = false;
-        }
-    } else if (uses_backbuffer_depth) {
-        this->error(handle, this->graph.backbuffer_depth, "backbuffer_depth belongs to the pass that draws the backbuffer");
-        ok = false;
     }
 
     return ok;
 }
 
 bool Compiler::collect_passes() {
+    // The chain of passes drawing the backbuffer, in order: the target
+    // arrives in an undefined state, so the first cannot load it, and the
+    // last is the one that hands it to the app (`backbuffer_pass`).
+    // backbuffer_depth, which any raster pass may take, has the same rule
+    // between frames: its first user cannot load it, a later one may if
+    // the user before stored it, and storing it after the last use is
+    // wasted.
     u32 writers = 0;
+    bool depth_seen = false;
+    bool depth_stored = false;
+    RenderPassHandle depth_pass;
     for (const RenderPassHandle handle : this->graph.order) {
         const RenderPassDesc* desc = this->graph.pass(handle);
         if (desc == nullptr || !desc->enabled) {
@@ -443,15 +450,31 @@ bool Compiler::collect_passes() {
         PlannedPass pass;
         const bool ok = this->collect_pass(handle, *desc, pass);
         if (ok && pass.writes_backbuffer) {
+            if (writers == 0 && pass.color[0].load == RENDER_LOAD_LOAD) {
+                this->error(handle, this->graph.backbuffer, "the first pass that draws the backbuffer cannot load it: the target arrives undefined");
+            } else if (writers > 0 && pass.color[0].load != RENDER_LOAD_LOAD) {
+                this->warning(handle, this->graph.backbuffer, "pass discards what the earlier backbuffer passes drew");
+            }
             this->plan.backbuffer_pass = static_cast<u32>(this->plan.passes.count);
             writers += 1;
+        }
+        if (ok && pass.has_depth && this->plan.resources[pass.depth.resource].kind == RENDER_RESOURCE_BACKBUFFER_DEPTH) {
+            if (!depth_seen && pass.depth.load == RENDER_LOAD_LOAD) {
+                this->error(handle, this->graph.backbuffer_depth, "the first pass that uses backbuffer_depth cannot load it");
+            } else if (depth_seen && pass.depth.load == RENDER_LOAD_LOAD && !depth_stored) {
+                this->error(handle, this->graph.backbuffer_depth, "pass loads backbuffer_depth, which the pass before it did not store");
+            }
+            depth_seen = true;
+            depth_stored = pass.depth.store == RENDER_STORE_STORE;
+            depth_pass = handle;
         }
         this->plan.passes.push(pass);
     }
     if (writers == 0) {
         this->error(RenderPassHandle{}, this->graph.backbuffer, "no enabled pass writes the backbuffer");
-    } else if (writers > 1) {
-        this->error(RenderPassHandle{}, this->graph.backbuffer, "more than one pass writes the backbuffer");
+    }
+    if (depth_seen && depth_stored) {
+        this->warning(depth_pass, this->graph.backbuffer_depth, "backbuffer_depth is stored after its last use");
     }
     return this->ok;
 }
@@ -500,7 +523,8 @@ void Compiler::choose_finals() {
         for (u32 i = 0; i < attachment_count; ++i) {
             PlannedAttachment& attachment = *attachments[i];
             const PlannedResource& resource = this->plan.resources[attachment.resource];
-            if (pass.writes_backbuffer && is_backbuffer_kind(resource.kind)) {
+            if (p - 1 == this->plan.backbuffer_pass && is_backbuffer_kind(resource.kind)) {
+                // The last backbuffer pass hands the target to the app.
                 attachment.final = RENDER_STATE_EXTERNAL;
             } else if (is_read_state(next[attachment.resource])) {
                 if (attachment.store == RENDER_STORE_DONT_CARE) {
@@ -604,11 +628,12 @@ void Compiler::walk(const bool record) {
 
 // Keys need the states the walks decided, so they come last.
 void Compiler::collect_keys() {
-    for (PlannedPass& pass : this->plan.passes) {
+    for (usz i = 0; i < this->plan.passes.count; ++i) {
+        PlannedPass& pass = this->plan.passes[i];
         if (!pass.is_raster) {
             continue;
         }
-        pass.compat_key = pass.writes_backbuffer ? RENDER_GRAPH::target_compat_key(this->backbuffer) : RENDER_GRAPH::pass_compat_key(pass);
+        pass.compat_key = i == this->plan.backbuffer_pass ? RENDER_GRAPH::target_compat_key(this->backbuffer) : RENDER_GRAPH::pass_compat_key(pass);
         bool known = false;
         for (const u64 key : this->plan.compat_keys) {
             known |= key == pass.compat_key;

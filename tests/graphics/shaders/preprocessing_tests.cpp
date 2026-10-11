@@ -46,6 +46,45 @@ TEST_CASE("shaders/preprocessing: pragmas list passes with their stages and line
     }
 }
 
+TEST_CASE("shaders/preprocessing: state words set the pass state and record which were given") {
+    ShaderDirectives directives;
+    REQUIRE(SHADER_PREPROCESSING::parse_directives("#pragma pass alpha vertex fragment blend depth_test no_depth_write no_cull\n#pragma pass forward\n", 0, directives));
+    REQUIRE(directives.pass_count == 2);
+
+    const ShaderPassDirective* alpha = directives.find("alpha");
+    REQUIRE(alpha != nullptr);
+    CHECK(alpha->stages == (SHADER_STAGE_MASK_VERTEX | SHADER_STAGE_MASK_FRAGMENT));
+    CHECK(alpha->state.blend == SHADER_PASS_BLEND_ALPHA);
+    CHECK(alpha->state.depth_test);
+    CHECK_FALSE(alpha->state.depth_write);
+    CHECK_FALSE(alpha->state.cull);
+    CHECK(alpha->state.set_mask == (SHADER_PASS_STATE_BLEND | SHADER_PASS_STATE_DEPTH_TEST | SHADER_PASS_STATE_DEPTH_WRITE | SHADER_PASS_STATE_CULL));
+
+    SUBCASE("a pass without state words keeps the defaults and an empty mask") {
+        const ShaderPassDirective* forward = directives.find("forward");
+        REQUIRE(forward != nullptr);
+        CHECK(forward->state.blend == SHADER_PASS_BLEND_OPAQUE);
+        CHECK(forward->state.depth_test);
+        CHECK(forward->state.depth_write);
+        CHECK(forward->state.cull);
+        CHECK(forward->state.set_mask == 0);
+    }
+    SUBCASE("state words may come before the stages, and additive / opaque are the other blend modes") {
+        ShaderDirectives other;
+        REQUIRE(SHADER_PREPROCESSING::parse_directives("#pragma pass glow additive vertex fragment\n#pragma pass solid opaque\n", 0, other));
+        CHECK(other.find("glow")->state.blend == SHADER_PASS_BLEND_ADDITIVE);
+        CHECK(other.find("glow")->stages == (SHADER_STAGE_MASK_VERTEX | SHADER_STAGE_MASK_FRAGMENT));
+        CHECK(other.find("solid")->state.blend == SHADER_PASS_BLEND_OPAQUE);
+        CHECK(other.find("solid")->state.set_mask == SHADER_PASS_STATE_BLEND);
+    }
+    SUBCASE("a word that is neither a stage nor a state is an error") {
+        ShaderDirectives bad;
+        CHECK_FALSE(SHADER_PREPROCESSING::parse_directives("#pragma pass alpha vertex fragment translucent\n", 0, bad));
+        CHECK(strstr(bad.error, "line 1") != nullptr);
+        CHECK(bad.pass_count == 0);
+    }
+}
+
 TEST_CASE("shaders/preprocessing: size limits the scan and a missing trailing newline is fine") {
     const char* text = "#pragma pass a\n#pragma pass b";
     ShaderDirectives directives;

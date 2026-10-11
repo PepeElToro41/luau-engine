@@ -132,7 +132,7 @@ TEST_CASE("render_graph/plan: the default forward graph compiles to one borrowed
     CHECK_ARENA_CLEAN();
 }
 
-TEST_CASE("render_graph/plan: the backbuffer must be written by exactly one pass") {
+TEST_CASE("render_graph/plan: the backbuffer is drawn by a chain of passes") {
     RenderGraph graph;
     graph.init();
     Compiled c;
@@ -150,44 +150,131 @@ TEST_CASE("render_graph/plan: the backbuffer must be written by exactly one pass
         c.run(graph);
         CHECK_FALSE(c.ok);
     }
-    SUBCASE("two") {
+    SUBCASE("a later pass loads the backbuffer and backbuffer_depth the first stored") {
+        const RenderPassHandle forward = add_backbuffer_pass(graph);
+        graph.set_depth_attachment(forward, graph.backbuffer_depth, RENDER_LOAD_CLEAR, RENDER_STORE_STORE);
+        const RenderPassHandle overlay = graph.add_pass("overlay", RENDER_PASS_CUSTOM);
+        graph.set_custom_callback(overlay, "overlay");
+        graph.set_color_attachment(overlay, 0, graph.backbuffer, RENDER_LOAD_LOAD, RENDER_STORE_STORE);
+        graph.set_depth_attachment(overlay, graph.backbuffer_depth, RENDER_LOAD_LOAD, RENDER_STORE_DONT_CARE);
+        c.run(graph);
+        REQUIRE(c.ok);
+        CHECK(c.warnings() == 0);
+        REQUIRE(c.plan.passes.count == 2);
+        CHECK(c.plan.backbuffer_pass == 1);
+        CHECK(c.plan.passes[0].writes_backbuffer);
+        CHECK(c.plan.passes[1].writes_backbuffer);
+        // Only the last pass hands the target over; the first leaves it an attachment.
+        CHECK(c.plan.passes[0].color[0].final == RENDER_STATE_COLOR_ATTACHMENT);
+        CHECK(c.plan.passes[0].depth.final == RENDER_STATE_DEPTH_ATTACHMENT);
+        CHECK(c.plan.passes[1].color[0].final == RENDER_STATE_EXTERNAL);
+        CHECK(c.plan.passes[1].color[0].initial == RENDER_STATE_COLOR_ATTACHMENT);
+        CHECK(c.plan.passes[1].depth.initial == RENDER_STATE_DEPTH_ATTACHMENT);
+        CHECK(c.plan.passes[1].compat_key == RENDER_GRAPH::target_compat_key(backbuffer_info()));
+        CHECK(c.plan.passes[0].compat_key != c.plan.passes[1].compat_key);
+        CHECK(c.plan.compat_keys.count == 2);
+    }
+    SUBCASE("a later pass that does not load the backbuffer discards the earlier work, with a warning") {
         add_backbuffer_pass(graph, "a");
         add_backbuffer_pass(graph, "b");
         c.run(graph);
-        CHECK_FALSE(c.ok);
-        CHECK(c.has_message("more than one pass writes the backbuffer"));
+        CHECK(c.ok);
+        CHECK(c.has_message("discards what the earlier backbuffer passes drew"));
+        CHECK(c.plan.backbuffer_pass == 1);
     }
-    SUBCASE("the backbuffer pass must clear and store a single color attachment") {
+    SUBCASE("the first writer cannot load the backbuffer") {
         const RenderPassHandle forward = add_backbuffer_pass(graph);
         graph.set_color_attachment(forward, 0, graph.backbuffer, RENDER_LOAD_LOAD, RENDER_STORE_STORE);
         c.run(graph);
         CHECK_FALSE(c.ok);
-        CHECK(c.has_message("cleared and stored"));
+        CHECK(c.has_message("cannot load it"));
     }
-    SUBCASE("the backbuffer pass cannot have a second color attachment") {
+    SUBCASE("every writer must store the backbuffer") {
+        const RenderPassHandle forward = add_backbuffer_pass(graph);
+        graph.set_color_attachment(forward, 0, graph.backbuffer, RENDER_LOAD_CLEAR, RENDER_STORE_DONT_CARE);
+        c.run(graph);
+        CHECK_FALSE(c.ok);
+        CHECK(c.has_message("must be stored"));
+    }
+    SUBCASE("a backbuffer pass cannot have a second color attachment") {
         const RenderPassHandle forward = add_backbuffer_pass(graph);
         graph.set_color_attachment(forward, 1, add_color(graph, "extra"), RENDER_LOAD_CLEAR, RENDER_STORE_STORE);
         c.run(graph);
         CHECK_FALSE(c.ok);
+        CHECK(c.has_message("only color attachment"));
     }
-    SUBCASE("the backbuffer pass's depth must be backbuffer_depth, cleared, not stored") {
+    SUBCASE("a backbuffer pass may take a transient depth") {
         const RenderPassHandle forward = add_backbuffer_pass(graph);
         graph.set_depth_attachment(forward, add_depth(graph, "own_depth"), RENDER_LOAD_CLEAR, RENDER_STORE_DONT_CARE);
         c.run(graph);
-        CHECK_FALSE(c.ok);
-        CHECK(c.has_message("backbuffer_depth, cleared and not stored"));
+        CHECK(c.ok);
+        CHECK(c.warnings() == 0);
+        CHECK(c.plan.passes[0].depth.final == RENDER_STATE_DEPTH_ATTACHMENT);
+    }
+    SUBCASE("an overlay after a post-process pass loads the backbuffer and the forward pass's transient depth") {
+        // The editor's grid with the demo's post pass on: forward draws
+        // scene_color + scene_depth, post composites into the backbuffer,
+        // the overlay draws over it testing against scene_depth.
+        const RenderPassHandle forward = add_backbuffer_pass(graph);
+        graph.set_color_attachment(forward, 0, add_color(graph, "scene_color"), RENDER_LOAD_CLEAR, RENDER_STORE_STORE);
+        const RenderResourceHandle scene_depth = add_depth(graph, "scene_depth");
+        graph.set_depth_attachment(forward, scene_depth, RENDER_LOAD_CLEAR, RENDER_STORE_STORE);
+        const RenderPassHandle post = graph.add_pass("post", RENDER_PASS_FULLSCREEN);
+        graph.set_fullscreen_shader(post, 7);
+        graph.add_input(post, graph.find_resource("scene_color"));
+        graph.set_color_attachment(post, 0, graph.backbuffer, RENDER_LOAD_CLEAR, RENDER_STORE_STORE);
+        const RenderPassHandle overlay = graph.add_pass("overlay", RENDER_PASS_CUSTOM);
+        graph.set_custom_callback(overlay, "overlay");
+        graph.set_color_attachment(overlay, 0, graph.backbuffer, RENDER_LOAD_LOAD, RENDER_STORE_STORE);
+        graph.set_depth_attachment(overlay, scene_depth, RENDER_LOAD_LOAD, RENDER_STORE_DONT_CARE);
+        c.run(graph);
+        REQUIRE(c.ok);
+        CHECK(c.warnings() == 0);
+        REQUIRE(c.plan.passes.count == 3);
+        CHECK(c.plan.backbuffer_pass == 2);
+        CHECK(c.plan.passes[1].color[0].final == RENDER_STATE_COLOR_ATTACHMENT);
+        CHECK(c.plan.passes[2].color[0].final == RENDER_STATE_EXTERNAL);
+        CHECK(c.plan.passes[2].depth.initial == RENDER_STATE_DEPTH_ATTACHMENT);
+    }
+    SUBCASE("storing backbuffer_depth after its last use only warns") {
+        const RenderPassHandle forward = add_backbuffer_pass(graph);
         graph.set_depth_attachment(forward, graph.backbuffer_depth, RENDER_LOAD_CLEAR, RENDER_STORE_STORE);
         c.run(graph);
-        CHECK_FALSE(c.ok);
+        CHECK(c.ok);
+        CHECK(c.has_message("stored after its last use"));
     }
-    SUBCASE("backbuffer_depth is reserved for the backbuffer pass") {
-        add_backbuffer_pass(graph);
-        const RenderPassHandle shadow = graph.add_pass("shadow", RENDER_PASS_DRAW_SCENE);
-        graph.set_draw_scene_tag(shadow, "shadow");
-        graph.set_depth_attachment(shadow, graph.backbuffer_depth, RENDER_LOAD_CLEAR, RENDER_STORE_STORE);
+    SUBCASE("the first user of backbuffer_depth cannot load it") {
+        const RenderPassHandle forward = add_backbuffer_pass(graph);
+        graph.set_depth_attachment(forward, graph.backbuffer_depth, RENDER_LOAD_LOAD, RENDER_STORE_DONT_CARE);
         c.run(graph);
         CHECK_FALSE(c.ok);
-        CHECK(c.has_message("belongs to the pass that draws the backbuffer"));
+        CHECK(c.has_message("first pass that uses backbuffer_depth"));
+    }
+    SUBCASE("loading backbuffer_depth the pass before did not store is an error") {
+        add_backbuffer_pass(graph);
+        const RenderPassHandle overlay = graph.add_pass("overlay", RENDER_PASS_CUSTOM);
+        graph.set_custom_callback(overlay, "overlay");
+        graph.set_color_attachment(overlay, 0, graph.backbuffer, RENDER_LOAD_LOAD, RENDER_STORE_STORE);
+        graph.set_depth_attachment(overlay, graph.backbuffer_depth, RENDER_LOAD_LOAD, RENDER_STORE_DONT_CARE);
+        c.run(graph);
+        CHECK_FALSE(c.ok);
+        CHECK(c.has_message("did not store"));
+    }
+    SUBCASE("any raster pass may take backbuffer_depth, under the same first-user rule") {
+        const RenderPassHandle forward = add_backbuffer_pass(graph);
+        const RenderPassHandle prepass = graph.add_pass("prepass", RENDER_PASS_DRAW_SCENE);
+        graph.set_draw_scene_tag(prepass, "depth");
+        graph.set_depth_attachment(prepass, graph.backbuffer_depth, RENDER_LOAD_CLEAR, RENDER_STORE_STORE);
+        graph.move_pass(prepass, forward);
+        graph.set_depth_attachment(forward, graph.backbuffer_depth, RENDER_LOAD_LOAD, RENDER_STORE_DONT_CARE);
+        c.run(graph);
+        CHECK(c.ok);
+        CHECK(c.warnings() == 0);
+        CHECK(c.plan.backbuffer_pass == 1);
+        graph.set_depth_attachment(prepass, graph.backbuffer_depth, RENDER_LOAD_LOAD, RENDER_STORE_STORE);
+        c.run(graph);
+        CHECK_FALSE(c.ok);
+        CHECK(c.has_message("first pass that uses backbuffer_depth"));
     }
     SUBCASE("the backbuffer cannot be read") {
         add_backbuffer_pass(graph);

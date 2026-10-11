@@ -20,7 +20,7 @@ Vendored third-party code is copied under `vendor/<lib>/` with a hand-written `C
 spirv-reflect: `spirv_reflect.c/.h` from the Vulkan SDK as `spirv_reflect::spirv_reflect`, linked only by graphics).
 
 Shaders live in the repo's `render/` directory (`ENGINE_RENDER_DIR`),
-written in Slang, one `.slang` file per shader: `#pragma pass <tag> [vertex] [fragment]` lines name the render passes it draws in, and the stages are the `[shader("vertex")] ... vertex(...)` and `[shader("fragment")] ... fragment(...)` functions of that same file, with uniforms declared once above them and the varyings as the struct passed from one to the other (`SV_Position` for the clip position).
+written in Slang, one `.slang` file per shader: `#pragma pass <tag> [vertex] [fragment] [state words]` lines name the render passes it draws in (the state words `opaque` / `blend` / `additive`, `depth_test` / `no_depth_test`, `depth_write` / `no_depth_write`, `cull` / `no_cull` fix that pass's pipeline state, a transparent pass being `blend no_depth_write`), and the stages are the `[shader("vertex")] ... vertex(...)` and `[shader("fragment")] ... fragment(...)` functions of that same file, with uniforms declared once above them and the varyings as the struct passed from one to the other (`SV_Position` for the clip position).
 Each pass compiles those functions with `PASS_<TAG>` and `STAGE_*` defined, so `#ifdef PASS_SHADOW` specializes code per pass and a vertex-only pass simply never asks for `fragment`.
 `render/engine/*.slang` is the include library: `frame.slang` (set 0: the `frame` block at binding 0 and the engine sampler table `sampler_linear` / `sampler_linear_clamp` / `sampler_nearest` / `sampler_nearest_clamp` at bindings 1..4;
 a shader's set 0 must be a subset of it),

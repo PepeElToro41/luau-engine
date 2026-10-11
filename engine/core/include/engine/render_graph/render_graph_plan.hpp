@@ -120,8 +120,8 @@ struct PlannedPass {
     RenderPassKind kind = RENDER_PASS_DRAW_SCENE;
     // Runs inside a render pass of its own (or the target's).
     bool is_raster = false;
-    // The one pass that draws the FrameContext target; it borrows the
-    // target's render pass instead of getting one.
+    // Draws the FrameContext target's color. The last such pass in the
+    // frame (RenderGraphPlan::backbuffer_pass) hands the target to the app.
     bool writes_backbuffer = false;
     // Framebuffer extent; every attachment has it.
     u32 width = 0;
@@ -143,9 +143,9 @@ struct PlannedPass {
     // with this key draw in this pass. Vulkan compatibility covers the
     // attachment formats and counts and the subpass dependencies, so the
     // key hashes the formats plus every attachment's `previous` and `final`
-    // state (what the backend builds the dependencies from); the backbuffer
-    // pass, which runs through the app's render pass, has its own key. 0
-    // for non-raster passes.
+    // state (what the backend builds the dependencies from); the last
+    // backbuffer pass, which hands the target to the app, has its own key.
+    // 0 for non-raster passes.
     u64 compat_key = 0;
 
     // CLEAR: the target. BLIT: source and destination. NO_RESOURCE otherwise.
@@ -186,7 +186,8 @@ struct RenderGraphPlan {
     // Every distinct compat_key of the raster passes.
     DynamicArray<u64> compat_keys;
     RenderBackbufferInfo backbuffer;
-    // Index in `passes` of the pass that writes the backbuffer.
+    // Index in `passes` of the last pass that writes the backbuffer: the one
+    // whose attachments end in RENDER_STATE_EXTERNAL.
     u32 backbuffer_pass = RENDER_GRAPH::NO_RESOURCE;
     // RenderGraph::version this plan was compiled from.
     u32 graph_version = 0;

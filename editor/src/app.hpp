@@ -6,6 +6,7 @@
 #include "engine/gpu/vulkan/vk_access.hpp"
 #include "engine/render/renderer.hpp"
 #include "editor_camera.hpp"
+#include "editor_grid.hpp"
 #include "file_dialog.hpp"
 #include "project.hpp"
 #include "selection.hpp"
@@ -148,6 +149,8 @@ private:
     bool scene_dirty = false;
     u64 scene_saved_hash = 0;
     EditorCameraController editor_camera;
+    // The Viewport's ground grid, its own last graph pass (editor_grid.hpp).
+    EditorGrid editor_grid;
     // Whether the mouse was over the Viewport image when the UI was last
     // drawn; where right-click starts fly mode.
     bool viewport_hovered = false;

@@ -75,7 +75,8 @@ each unit-sized and centered (cube edges 1, sphere radius 0.5, cylinder radius 0
 tested in `tests/core/geometry/`.
 `VERTEX_LAYOUT` in `mesh_asset.hpp` fixes the shader input location of every vertex semantic (position 0, normal 1, tangent 2, color 3, texcoord0..3 4..7, joints 8, weights 9) and hashes a mesh's vertex layout for pipeline caching.
 `render_graph/render_graph.hpp` is the live `RenderGraph`: transient resources (`add_resource`, format defaulting to the backbuffer's, size relative or absolute) and passes (`add_pass` of kind DRAW_SCENE / FULLSCREEN / CLEAR / BLIT / CUSTOM) with color/depth attachments, sampled inputs, order (`move_pass`) and `enabled`;
-the two built-in resources `backbuffer` / `backbuffer_depth` are the FrameContext target, written by exactly one pass.
+the two built-in resources `backbuffer` / `backbuffer_depth` are the FrameContext target, written by a chain of passes in order (each stores the backbuffer, the first never loads it, later ones load it to draw over the frame;
+`backbuffer_depth` is a target-sized depth any raster pass may take, never loaded by its first user and loadable later when the user before stored it), the last of them being `RenderGraphPlan::backbuffer_pass`.
 Structural edits set `dirty`, live ones (clear values, constants, draw tag, fullscreen shader, custom callback) do not.
 Handles carry generations, names are looked up by hash.
 `render_graph/render_graph_plan.hpp` is the pure compiler: `RENDER_GRAPH::compile(graph, backbuffer, plan, diagnostics)` validates and produces a `RenderGraphPlan` (resolved resources with usage and frame start/end states, passes with per-attachment load/store/initial/final/previous states, the states inputs must be put in before each pass, and a render-pass compatibility key per raster pass that covers formats plus the dependency-defining states).

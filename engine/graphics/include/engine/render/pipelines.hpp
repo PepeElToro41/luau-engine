@@ -39,9 +39,11 @@ struct PipelineCache {
 namespace PIPELINES {
 
 // The pipeline drawing `shader`'s pass `tag` into `formats` with `mesh`'s
-// vertex layout (nullptr: no vertex input, fullscreen state). Invalid when
-// the shader has no such pass, the mesh lacks an attribute, or creation
-// failed (logged once).
+// vertex layout (nullptr: no vertex input, fullscreen state: no culling,
+// depth off). The pass's `#pragma pass` state words (blend, depth test and
+// write, culling; see ShaderPassState) override those defaults either way.
+// Invalid when the shader has no such pass, the mesh lacks an attribute, or
+// creation failed (logged once).
 GpuPipeline get(Renderer& renderer, EntityId shader_entity, const Shader& shader, u64 tag, const GpuTargetFormats& formats, const GpuMeshLayout* mesh);
 // Releases (deferred) every pipeline of `shader`, any generation.
 void release_shader(Renderer& renderer, EntityId shader);

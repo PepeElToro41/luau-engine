@@ -202,6 +202,7 @@ bool SHADER_PROGRAM::load(const ShaderProgramLoadDesc& desc, BaseAllocator* allo
         pass = ShaderPassProgram{};
         strcpy(pass.tag_name, directive.name);
         pass.tag = HASH::fnv1a_str(directive.name);
+        pass.state = directive.state;
 
         if (directive.stages & SHADER_STAGE_MASK_COMPUTE) {
             append_logf(out, "%s: pass '%s': compute stages are not supported yet", desc.path, directive.name);
