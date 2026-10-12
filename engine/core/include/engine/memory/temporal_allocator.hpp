@@ -19,6 +19,12 @@ inline thread_local ArenaAllocator MAIN_ARENA(MAIN_ARENA_BUFFER, MAIN_ARENA_BYTE
 //     ...
 //     // scope ends: scratch's memory is reclaimed, no free() needed
 //
+// It is an arena, so a block cannot grow in place and free() is a no-op:
+// a container that pushes past its capacity allocates a bigger block and
+// leaves the old one dead in the arena until the rewind. Reserve the final
+// size (or an upper bound: a SparseList's alive_count, a query's result
+// count) before filling a container that lives here.
+//
 // This is the one type in the engine with a destructor: rewinding the arena
 // on scope exit is the whole point of it.
 struct TemporalAllocator : BaseAllocator {

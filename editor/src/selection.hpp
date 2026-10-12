@@ -13,7 +13,7 @@
 //
 // A file selection can also carry an entity: the one the file is loaded
 // as in the World (a .material is a Material entity once MATERIAL::load
-// has seen it; the App resolves that after the browser's click). The
+// has seen it; the Editor resolves that after the browser's click). The
 // Inspector then shows the file's facts under its name and the entity's
 // components below, so a material's values are edited where every other
 // component is, while Save and Reload keep the path to act on.

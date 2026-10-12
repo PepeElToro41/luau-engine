@@ -4,7 +4,7 @@
 #include "engine/asset/asset_types/texture_asset.hpp"
 #include "engine/defines.hpp"
 #include "import/importer.hpp"
-#include "project.hpp"
+#include "engine/project.hpp"
 #include "ui/output_panel.hpp"
 
 #include <filesystem>

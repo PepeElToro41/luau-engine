@@ -3,7 +3,7 @@
 #include "engine/defines.hpp"
 #include "engine/ecs/ecs_types.hpp"
 #include "engine/scene/scene.hpp"
-#include "project.hpp"
+#include "engine/project.hpp"
 #include "selection.hpp"
 #include "ui/inspectors/inspector_context.hpp"
 
@@ -27,7 +27,7 @@ struct World;
 // For a file: its name, folder, kind and size, and when the file is loaded
 // as an entity (a .material) the Save and Reload buttons followed by that
 // entity's component sections, the same way. The buttons only set
-// `file_action`; the App performs it after the draw and resets it. A draw
+// `file_action`; the Editor performs it after the draw and resets it. A draw
 // function that needs an asset loaded leaves an InspectorRequest in its
 // context, kept in `request` the same way.
 enum struct InspectorFileAction : u8 {

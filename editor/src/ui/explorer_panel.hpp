@@ -28,7 +28,7 @@ struct World;
 // the empty space of the tree does the same under the scene root. Editor
 // entities are not scene content, so they offer no menu. Above the tree a
 // line names the scene file the content came from (`scene_title`, set by
-// the App), and `changed` reports to the App that the panel created an
+// the Editor), and `changed` reports to the Editor that the panel created an
 // entity during the last draw, which is what makes the scene dirty.
 struct ExplorerPanel {
     // Submits the window. `open` is the View-menu toggle. Without a world or
@@ -37,7 +37,7 @@ struct ExplorerPanel {
 
     ImGuiTextFilter filter;
     // What the line above the tree says: the scene's file (with a `*` when
-    // it has unsaved changes), or what the App wants shown for a new scene.
+    // it has unsaved changes), or what the Editor wants shown for a new scene.
     std::string scene_title;
     // Set by draw() when the panel changed scene content (New Entity).
     bool changed = false;

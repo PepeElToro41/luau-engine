@@ -1,11 +1,12 @@
 # engine/core
 
-`engine/core` -> `LuauEngine::core`: `defines.hpp`, `memory/`, `templates/`, `utils/`, `math/`, `ecs/`, `scene/`, `asset/`, `geometry/`, `platform/`.
+`engine/core` -> `LuauEngine::core`: `defines.hpp`, `memory/`, `templates/`, `utils/`, `math/`, `ecs/`, `scene/`, `asset/`, `geometry/`, `platform/`, `scheduler/`.
 No external dependencies.
 Keep it that way: tests and benchmarks link only this.
 `memory/` is the allocators: `BaseAllocator` (the interface `DynamicArray` and the containers take), the heap, `ArenaAllocator` (bump, `reset` / `reset_to`, no `reallocate`),
 `TemporalAllocator` (scoped scratch on the thread's `MAIN_ARENA`, rewound when it goes out of scope;
-`Query::each` holds one while it runs, so a callback must not grow a container that lives on an outer one) and `FrameAllocator` (an arena for one frame, `reset` once per frame by its owner, the right home for anything a callback fills that the rest of the frame reads).
+`Query::each` holds one while it runs, so a callback must not grow a container that lives on an outer one;
+an arena cannot grow a block and its `free` is a no-op, so a container on a temporal allocator or any arena is `reserve`d to its final size or an upper bound such as a `SparseList`'s `alive_count` before it is filled, otherwise every growth leaves the old block dead until the rewind) and `FrameAllocator` (an arena for one frame, `reset` once per frame by its owner, the right home for anything a callback fills that the rest of the frame reads).
 `math/` is header-only (`math/math.hpp` includes it all): `Vector2` (scalar, 8 bytes),
 `Vector3` (SIMD, 16 bytes with a padding lane `w` that nothing reads;
 `load`/`store` move 12-byte vertex data),
@@ -67,6 +68,15 @@ the `AssetDirty` tag says an asset entity has edits its file lacks (added and cl
 `ASSET_ENTITY::find(world, guid)` is the scan for code that only has the World.
 Asset entities are unparented, so never scene content.
 `docs/asset_format.md` is the specification and the place to record layout decisions.
+`scheduler/scheduler.hpp` is the `Scheduler`, what runs when (`docs/plugins_and_scheduler_plan.md`): pipelines are the entry points an owner invokes at fixed moments (`add_pipeline(name, order)`, the Engine's startup / update / render / shutdown),
+each a list of phases (`add_phase`), each a list of systems (`add_system(phase, name, SystemFn, user_data)`, a function pointer receiving a `SystemContext` with the run's `host` and `argument`, `dt`, its `user_data` and its handles);
+`phase_after` / `phase_before` order phases of one pipeline, `system_after` / `system_before` systems of one phase, what is unconstrained keeps insertion order (or the reverse for a `PIPELINE_ORDER_REVERSE_INSERTION` pipeline, which teardown wants),
+`run(pipeline, host, argument, dt)` calls every enabled system in order from a copy of it, so a system may remove, add or disable systems or run another pipeline;
+handles carry generations (`SparseList` ids), names are unique per scope and looked up with `find_pipeline` / `find_phase` / `find_system` (how a plugin orders against another's step by name),
+structural edits set `dirty` and the next run recompiles every pipeline, a cycle being reported once through `log` and marking only its pipeline `broken` (its `run` returns false until an edit removes the cycle);
+`phase_order` / `system_order` report the resolved order;
+no World, no Engine, single-threaded;
+tested in `tests/core/scheduler/`.
 `utils/hash.hpp` is `HASH::fnv1a` / `fnv1a_str` (constexpr) / `fnv1a_append`, the one hash for names and cache keys.
 `geometry/primitives.hpp` is the built-in shapes: `PrimitiveShape` (`PRIMITIVE_CUBE` / `PRIMITIVE_SPHERE` / `PRIMITIVE_CYLINDER`, stored in components, never renumbered),
 each unit-sized and centered (cube edges 1, sphere radius 0.5, cylinder radius 0.5 and height 1 along Y) so a Transform's scale is its size and physics can later build a collider from shape + scale alone;

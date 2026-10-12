@@ -2,7 +2,7 @@
 
 #include "engine/defines.hpp"
 #include "import/importer.hpp"
-#include "project.hpp"
+#include "engine/project.hpp"
 #include "selection.hpp"
 #include "ui/output_panel.hpp"
 
@@ -19,17 +19,17 @@
 // every frame.
 //
 // Clicking an entry makes it the editor's Selection (selection.hpp) as a
-// file, relative to the project root; the Inspector shows it, and the App
+// file, relative to the project root; the Inspector shows it, and the Editor
 // resolves a `.material` to its Material entity. A selection made
 // elsewhere (the Explorer) drops the highlight here, and renaming or
 // deleting the selected entry follows it. Double-clicking a file reports
-// it in `activated`; the App opens source files (.obj, images) in the
+// it in `activated`; the Editor opens source files (.obj, images) in the
 // Import panel from there. Right-clicking an
 // entry opens a context menu: Import (importable files only) does the same
 // as a double-click; on a .lunaasset, Reimport and Save Original... act on
 // the original kept in its SRC chunk (probed with IMPORT::find_source when
 // the menu opens; both are disabled when nothing was kept): Reimport
-// reports it in `reimport_source` / `reimport_asset` for the App to queue
+// reports it in `reimport_source` / `reimport_asset` for the Editor to queue
 // in the Import panel, Save Original... asks for a path in a modal and
 // writes the bytes there; Delete removes the file (or the folder and its
 // contents) from disk after a confirmation modal; Rename... (or F2 on the
@@ -86,7 +86,7 @@ struct AssetBrowserPanel {
     ImGuiTextFilter filter;
     bool show_hidden = false; // entries whose name starts with '.'
     // Where Create > Shader takes its templates from: the engine's render/
-    // directory, set by the App. Its .slang files are listed again on every
+    // directory, set by the Editor. Its .slang files are listed again on every
     // refresh(), so File > Refresh Assets picks up a new one.
     std::filesystem::path shader_template_dir;
 

@@ -1,18 +1,43 @@
 # engine/runtime
 
-`engine/runtime` -> `LuauEngine::runtime`: the `Engine` object (simulation + renderer, later physics etc).
-It owns no window or swapchain: the app owns the `GpuContext` and its frames, calls `update(dt)` and `render(FrameContext&)` with the `GpuFrame` from `GPU::begin_frame` plus the target texture (the swapchain image or an editor viewport texture) and its state, and reads the state the target was left in from `target_state`.
+`engine/runtime` -> `LuauEngine::runtime`: the `Engine` object, its plugins and the project.
+Links core and graphics.
+`engine/engine.hpp` is the `Engine`: a list of plugins (`engine/plugin.hpp`) and a core `Scheduler` (`docs/plugins_and_scheduler_plan.md` is the design record);
+an application adds the plugins it wants with `add_plugin<T>(args...)` before `init()`, which creates the four pipelines and their phases, builds every plugin in dependency order and runs the `startup` pipeline, then `run()` hands over to the runner a plugin installed (`Engine::runner`, the window plugin's loop; without one it returns at once), `quit()` asks the runner to return after the current frame, and `shutdown()` runs the `shutdown` pipeline, then frees the plugins, the singletons and the scheduler.
+`update(dt)` resets the `FrameAllocator`, advances `time` / `last_dt` and runs the `update` pipeline;
+`render(FrameContext&)` runs the `render` pipeline with the context as the run's argument, so an application that owns its own window and loop sets `Engine::gpu` itself and calls both directly (the header shows both shapes).
+A `Plugin` has one virtual, `build(Engine&)`, called once from `init()`: it creates singletons, registers components, adds phases and systems (its teardown steps included) and requires the plugins it builds on;
+`engine.require<T>()` inside `build` returns T's plugin, building it first if it was added but not built yet (dependencies are declared where they are used, build order follows, a cycle fails `init`), `get_plugin<T>()` is the optional lookup that never builds, `is_plugin_added<T>()` the test;
+every plugin type carries `static constexpr const char* NAME` and is added at most once (keyed by `TypeId`, owned by `PluginRegistry` in its own allocation, destroyed as its concrete type);
+`add_plugin` after `init` is refused.
+There is no plugin shutdown method: teardown is systems in the `shutdown` pipeline, picked by phase so a plugin never names another to order it, which is what makes a use-after-free impossible by construction (Bevy relies on ownership for the same thing).
+The pipelines and phases (`engine.pipelines.*`, `engine.phases.*`, names in `ENGINE_PIPELINE::` / `ENGINE_PHASE::`): `startup` (`pre_startup`, `startup`, `post_startup`), `update` (`events`, `pre_update`, `update`, `post_update`), `render` (`pre_render`, `render`, `post_render`), `shutdown` (`pre_shutdown`: detach, take back what was handed to another plugin's state while everything is alive, a callback, a graph pass, entities whose hooks need a plugin;
+`shutdown`: release what the plugin owns itself;
+`post_shutdown`: the platform the rest sat on), the shutdown pipeline in reverse insertion order so the last built is torn down first within each phase;
+a plugin may add a phase against these (`scheduler.phase_before(mine, phases.pre_shutdown)`).
+`engine.add_system(phase, name, fn, user_data)` is the scheduler's, a system reads its Engine with `ENGINE::of(ctx)` and the render pipeline's `FrameContext` with `ENGINE::frame(ctx)`;
+`engine.log(level, format, ...)` goes to the renderer log when there is one (an editor's Output panel) and stderr otherwise.
 Engine-wide globals are singletons keyed by type (`engine.create_singleton<T>(...)` once, `engine.get_singleton<T>()` after, nullptr if missing);
 apps may register their own types too.
-`init(gpu)` creates the `AssetResourceProvider`, the ECS `World`, the `Scene` (its `scene_root`;
+The engine's own plugins live in `engine/plugins/`:
+`CorePlugin` (`core`, takes `require_cooked`) creates the `AssetResourceProvider`, the ECS `World`, the `Scene` (its `scene_root`;
 spawn scene entities with `scene->spawn(name, parent)`),
 the `AssetEntities` index (every asset `load_asset_file` registers gets, or updates, its unparented entity with `AssetUuid`, `(AssetType, tag)` and `Name`;
-`get_singleton<AssetEntities>()->find(guid)` is it;
-freed first in `shutdown`) and the `Renderer` (driven through `RENDERER::`, `SHADER_LIBRARY::` and `MATERIAL::`;
-its `Shader` / `Material` entities are named but unparented, so they never appear in the scene tree),
-the `FrameAllocator` (core `memory/frame_allocator.hpp`: one `ENGINE_FRAME_ARENA_BYTES` arena for whatever a frame builds and drops, `Renderer::frame_allocator`;
+`get_singleton<AssetEntities>()->find(guid)` is it) and the `FrameAllocator` (core `memory/frame_allocator.hpp`: one `ENGINE_FRAME_ARENA_BYTES` arena for whatever a frame builds and drops, `Renderer::frame_allocator`;
 `update` resets it, so it is one `update` per frame and nothing from it survives into the next;
-a full arena returns nullptr and logs once per frame, growing it is a TODO) and registers the render components;
+a full arena returns nullptr and logs once per frame, growing it is a TODO), and frees them in `shutdown` (index, World, provider, allocator);
+`RenderPlugin` (`render`, requires core and `Engine::gpu`) creates the `Renderer` (driven through `RENDERER::`, `SHADER_LIBRARY::` and `MATERIAL::`;
+its `Shader` / `Material` entities are named but unparented, so they never appear in the scene tree), registers the render components, draws the graph into the frame's target in `render` (clear color and clock from the renderer), deletes every `Shader` and `Material` entity in `pre_shutdown` so their removed hooks hand programs, pipelines and blocks back while the renderer is alive, and runs `RENDERER::shutdown` in `shutdown`;
+`WindowPlugin` (`window`, a `WindowDesc`: title, size, swapchain format) owns SDL, the `DisplayWindow` and `GPU::init` into `Engine::gpu`, installs the runner (per frame: SDL polled into its `events` array, `update(dt)`, a GPU frame with `render(ctx)` targeting the backbuffer, `end_frame`;
+returns with the GPU idle once `quit()` was called), turns quit / close into `quit()` in `events` while `quit_on_close` (an editor clears it) and a pixel-size change into `GPU::mark_resized`, adds a `gpu_idle` phase before `pre_shutdown` that waits for the GPU, and destroys the GPU, the window and SDL in `post_shutdown`;
+`ProjectPlugin` (`project`, a root directory) opens it in `build` and scans it in `pre_startup`;
+`ScenePlugin` (`scene`, a path relative to the project, `scenes/demo.scene` by default) loads it in `startup` through `load_asset_file` + `load_scene`, spawning `RENDER_DEMO::spawn` when missing or failing (`spawn_demo_when_missing`), and in `post_startup` tags the first scene camera `RenderCamera` when none is (`tag_render_camera`, off in the editor;
+`SCENE_PLUGIN::tag_scene_camera` is the function);
+`DemoPlugin` (`demo`, the `--post` / `--shadow` flags) applies the `RENDER_DEMO` toggles in `post_startup`, keeps them as `post` / `shadow` with `set_post` / `set_shadow` / `reload_shaders`, and handles F5 (reload every shader), F6 and F7 from the window plugin's events.
+`engine/project.hpp` is the open project: `Project` (root path + name, an engine singleton), `PROJECT::open(engine, root)` (creates the singleton, opens the directory, makes it the renderer's project render dir so the whole project is the shader include root and where a name falls back to without an asset entity) and `PROJECT::scan(engine)` (registers every `.lunaasset`, `.material` and `.scene` under it through `load_asset_file`, so GUID references resolve, and every `.slang` / `.glsl` directly in the engine's `render/` and then anywhere under the project as a shader asset entity: `AssetEntities::add` with `SHADER_LIBRARY::asset_guid(stem)`, type SHADER, the stem as `Name`, which is the name the library loads it by, and the file as `AssetPath`, which is where the library opens it;
+a project file with an engine file's name shares its GUID and so its entity, and its path replaces the engine's, which is the override;
+two project files of one stem keep the first met and warn;
+registering a file twice only refreshes it, so the scan is also the editor's Refresh Assets).
 `load_asset_file(path)` registers a `.lunaasset` or a text asset (`.material`, `.scene`) and returns its GUID.
 Scenes are files (core `asset/asset_types/scene_asset.hpp`): `load_scene(guid)` unloads the content under `scene_root` once the registered `.scene`'s text is in hand and instantiates the file there, setting `Scene::current` / `current_path`;
 `instantiate_scene(guid, parent)` instantiates it under any alive entity without unloading, which is a prefab;
@@ -20,8 +45,5 @@ Scenes are files (core `asset/asset_types/scene_asset.hpp`): `load_scene(guid)` 
 `write_scene(out)` is the text a save would write (the editor hashes it to know whether the scene changed);
 `new_scene()` unloads and forgets current;
 `serialize_context(ctx)` fills a `SerializeContext` with the Engine's resolver (a material GUID loads the material through `MATERIAL::load`, a shader GUID the shader through `SHADER_LIBRARY::load`, any other asset is its entity) and the renderer log as the warning sink, so line-level problems reach the editor's Output panel and only a structurally broken file fails.
-`shutdown` frees the World first (its removed hooks release shader programs, material blocks and pipelines),
-then the renderer, so the app must have waited for the GPU to go idle.
-Links core and graphics.
 `render/demo_scene.hpp` is the stand-in scene (`camera` plus `cube`, `sphere` and `cylinder` `PrimitiveRenderer` entities under `scene_root`, one unlit material) both apps fall back to when the project's `scenes/demo.scene` (the same content, drawn with `materials/demo.material`) is missing or does not load, with toggles for a post-process pass, a depth-only shadow pass, a textured material (`set_texture`) and a `.material` asset (`set_material(engine, guid)`) (editor: Render menu;
-standalone: F5 reload, F6 post, F7 shadow, `--post` / `--shadow`).
+standalone: F5 reload, F6 post, F7 shadow, `--post` / `--shadow`, all through `DemoPlugin`).
