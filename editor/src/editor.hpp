@@ -19,6 +19,7 @@
 struct DemoPlugin;
 struct EditorCameraPlugin;
 struct EditorGridPlugin;
+struct EditorHighlightPlugin;
 struct EditorViewportPlugin;
 
 // The editor's state and panels, owned by EditorUiPlugin and drawn once
@@ -64,6 +65,7 @@ private:
     SDL_Window* sdl_window() const;
     EditorCameraPlugin* camera() const;
     EditorGridPlugin* grid() const;
+    EditorHighlightPlugin* highlight() const;
     EditorViewportPlugin* viewport() const;
     DemoPlugin* demo() const;
 

@@ -14,20 +14,13 @@ usz PipelineKeyHash::operator()(const PipelineKey& key) const {
 // The pragma's state words override the defaults picked above.
 static void apply_pass_state(const ShaderPassState& state, GpuPipelineDesc& desc) {
     if (state.has(SHADER_PASS_STATE_BLEND)) {
-        switch (state.blend) {
-        case SHADER_PASS_BLEND_ALPHA:
-            desc.blend = GPU_BLEND_ALPHA;
-            break;
-        case SHADER_PASS_BLEND_ADDITIVE:
-            desc.blend = GPU_BLEND_ADDITIVE;
-            break;
-        default:
-            desc.blend = GPU_BLEND_OPAQUE;
-            break;
-        }
+        desc.blend = state.blend;
     }
     if (state.has(SHADER_PASS_STATE_DEPTH_TEST)) {
         desc.depth.test = state.depth_test;
+    }
+    if (state.has(SHADER_PASS_STATE_DEPTH_COMPARE)) {
+        desc.depth.compare = state.depth_compare;
     }
     if (state.has(SHADER_PASS_STATE_DEPTH_WRITE)) {
         desc.depth.write = state.depth_write;

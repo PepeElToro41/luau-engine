@@ -54,7 +54,7 @@ TEST_CASE("shaders/preprocessing: state words set the pass state and record whic
     const ShaderPassDirective* alpha = directives.find("alpha");
     REQUIRE(alpha != nullptr);
     CHECK(alpha->stages == (SHADER_STAGE_MASK_VERTEX | SHADER_STAGE_MASK_FRAGMENT));
-    CHECK(alpha->state.blend == SHADER_PASS_BLEND_ALPHA);
+    CHECK(alpha->state.blend == GPU_BLEND_ALPHA);
     CHECK(alpha->state.depth_test);
     CHECK_FALSE(alpha->state.depth_write);
     CHECK_FALSE(alpha->state.cull);
@@ -63,19 +63,47 @@ TEST_CASE("shaders/preprocessing: state words set the pass state and record whic
     SUBCASE("a pass without state words keeps the defaults and an empty mask") {
         const ShaderPassDirective* forward = directives.find("forward");
         REQUIRE(forward != nullptr);
-        CHECK(forward->state.blend == SHADER_PASS_BLEND_OPAQUE);
+        CHECK(forward->state.blend == GPU_BLEND_OPAQUE);
         CHECK(forward->state.depth_test);
+        CHECK(forward->state.depth_compare == GPU_COMPARE_LESS);
         CHECK(forward->state.depth_write);
         CHECK(forward->state.cull);
         CHECK(forward->state.set_mask == 0);
     }
+    SUBCASE("plain depth_test leaves the comparison alone") {
+        CHECK(alpha->state.depth_compare == GPU_COMPARE_LESS);
+        CHECK_FALSE(alpha->state.has(SHADER_PASS_STATE_DEPTH_COMPARE));
+    }
     SUBCASE("state words may come before the stages, and additive / opaque are the other blend modes") {
         ShaderDirectives other;
         REQUIRE(SHADER_PREPROCESSING::parse_directives("#pragma pass glow additive vertex fragment\n#pragma pass solid opaque\n", 0, other));
-        CHECK(other.find("glow")->state.blend == SHADER_PASS_BLEND_ADDITIVE);
+        CHECK(other.find("glow")->state.blend == GPU_BLEND_ADDITIVE);
         CHECK(other.find("glow")->stages == (SHADER_STAGE_MASK_VERTEX | SHADER_STAGE_MASK_FRAGMENT));
-        CHECK(other.find("solid")->state.blend == SHADER_PASS_BLEND_OPAQUE);
+        CHECK(other.find("solid")->state.blend == GPU_BLEND_OPAQUE);
         CHECK(other.find("solid")->state.set_mask == SHADER_PASS_STATE_BLEND);
+    }
+    SUBCASE("a depth comparison word names the op and turns the test on") {
+        ShaderDirectives other;
+        REQUIRE(SHADER_PREPROCESSING::parse_directives("#pragma pass a depth_gequal\n#pragma pass b depth_never\n#pragma pass c depth_lequal\n#pragma pass d depth_nequal\n#pragma pass e depth_always\n#pragma pass f depth_equal\n#pragma pass g depth_greater\n#pragma pass h depth_less\n", 0, other));
+        REQUIRE(other.pass_count == 8);
+        CHECK(other.find("a")->state.depth_compare == GPU_COMPARE_GREATER_EQUAL);
+        CHECK(other.find("b")->state.depth_compare == GPU_COMPARE_NEVER);
+        CHECK(other.find("c")->state.depth_compare == GPU_COMPARE_LESS_EQUAL);
+        CHECK(other.find("d")->state.depth_compare == GPU_COMPARE_NOT_EQUAL);
+        CHECK(other.find("e")->state.depth_compare == GPU_COMPARE_ALWAYS);
+        CHECK(other.find("f")->state.depth_compare == GPU_COMPARE_EQUAL);
+        CHECK(other.find("g")->state.depth_compare == GPU_COMPARE_GREATER);
+        CHECK(other.find("h")->state.depth_compare == GPU_COMPARE_LESS);
+        CHECK(other.find("a")->state.depth_test);
+        CHECK(other.find("a")->state.set_mask == (SHADER_PASS_STATE_DEPTH_TEST | SHADER_PASS_STATE_DEPTH_COMPARE));
+    }
+    SUBCASE("no_depth_test turns the test off and keeps the comparison") {
+        ShaderDirectives other;
+        REQUIRE(SHADER_PREPROCESSING::parse_directives("#pragma pass post fragment no_depth_test\n", 0, other));
+        const ShaderPassDirective* post = other.find("post");
+        REQUIRE(post != nullptr);
+        CHECK_FALSE(post->state.depth_test);
+        CHECK(post->state.set_mask == SHADER_PASS_STATE_DEPTH_TEST);
     }
     SUBCASE("a word that is neither a stage nor a state is an error") {
         ShaderDirectives bad;

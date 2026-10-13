@@ -82,6 +82,12 @@ a file material tracks unsaved edits: every setter and `set_shader` call `World:
 `sampler_desc` / `sampler_asset` convert between the file's `MaterialSamplerDesc` and `GpuSamplerDesc`),
 `pipelines.hpp` (`PIPELINES::get(renderer, shader, program, tag, formats, mesh layout)` cached by shader entity, generation, pass tag, vertex layout hash and target formats;
 `release_shader`),
+`outline.hpp` (`OUTLINE::init` / `update` / `shutdown` / `set_enabled` build and drive the jump-flood outline as a piece of graph: a mask pass into the first of two RGBA16_UINT seed buffers, `flood_count` FULLSCREEN passes ping-ponging between them with a halving step, and one or two FULLSCREEN resolve passes that draw the band over the backbuffer;
+the flood is pure bandwidth, so a seed texel is eight bytes (`render/engine/outline.slang`: the offset to the nearest silhouette pixel biased into two 16-bit lanes, since it never exceeds about twice the first step, and the surface's window depth as its exact float32 bits across the other two, since the visible / occluded comparison cannot take a half-float's ~5e-4 step near 1.0);
+the mask's clear must stay all zeros, the one value the graph's four floats and an integer attachment agree on, and what the encoding reads back as "no seed";
+the mask is a DRAW_SCENE pass over the `outline_mask` tag, or a CUSTOM pass when `OutlineDesc::mask` is a callback (`OUTLINE::draw_mask` draws one entity through it), which is the only part that differs between a game's outline and the editor's selection highlight;
+`OutlineDesc::behind` adds the second resolve pass, the fainter outline where the object is occluded, which the resolve shader gets for free from the pragma's depth comparison;
+`update` pushes the live color / width / softness into the passes' constants, points the resolve passes at the depth the forward pass leaves (kept stored) and keeps the chain contiguous before a given pass or last, every edit comparing first so a steady graph is never marked dirty),
 `vertex_input.hpp` (`GpuMeshLayout`, `VERTEX_INPUT::build` matches reflected inputs to mesh attributes under `VERTEX_LAYOUT`),
 `gpu_asset_cache.hpp` (`GPU_ASSETS::get_mesh` / `get_texture` upload on first use by GUID, `add_mesh` for procedural geometry, `get_primitive(shape)` builds and uploads a primitive on first use into `GpuAssetCache::primitives[shape]`, tessellated per `primitive_tessellation`),
 `graph_executor.hpp` (`GRAPH_EXECUTOR::realize` owns one texture per used transient including `backbuffer_depth`, reusing unchanged ones;

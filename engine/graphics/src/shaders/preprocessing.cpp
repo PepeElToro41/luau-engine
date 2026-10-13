@@ -1,5 +1,6 @@
 #include "engine/shaders/preprocessing.hpp"
 
+#include "engine/gpu/gpu_types.hpp"
 #include "engine/platform/file.hpp"
 
 #include <cstdio>
@@ -71,17 +72,44 @@ static bool read_word(const char*& cursor, const char* end, char* out, const usz
     return true;
 }
 
+// The depth comparison words, `depth_` plus a short op name. Each one also
+// turns the test on, so a pass names the comparison it wants and nothing
+// else.
+struct DepthCompareWord {
+    const char* word;
+    GpuCompare compare;
+};
+
+static constexpr DepthCompareWord DEPTH_COMPARE_WORDS[] = {
+    {"depth_never", GPU_COMPARE_NEVER},
+    {"depth_less", GPU_COMPARE_LESS},
+    {"depth_equal", GPU_COMPARE_EQUAL},
+    {"depth_lequal", GPU_COMPARE_LESS_EQUAL},
+    {"depth_greater", GPU_COMPARE_GREATER},
+    {"depth_nequal", GPU_COMPARE_NOT_EQUAL},
+    {"depth_gequal", GPU_COMPARE_GREATER_EQUAL},
+    {"depth_always", GPU_COMPARE_ALWAYS},
+};
+
 // A fixed-state word of a pass pragma (see ShaderPassState). False if `word`
 // is not one.
 static bool parse_state_word(const char* word, ShaderPassState& state) {
+    for (const DepthCompareWord& candidate : DEPTH_COMPARE_WORDS) {
+        if (strcmp(word, candidate.word) == 0) {
+            state.depth_test = true;
+            state.depth_compare = candidate.compare;
+            state.set_mask |= SHADER_PASS_STATE_DEPTH_TEST | SHADER_PASS_STATE_DEPTH_COMPARE;
+            return true;
+        }
+    }
     if (strcmp(word, "opaque") == 0) {
-        state.blend = SHADER_PASS_BLEND_OPAQUE;
+        state.blend = GPU_BLEND_OPAQUE;
         state.set_mask |= SHADER_PASS_STATE_BLEND;
     } else if (strcmp(word, "blend") == 0) {
-        state.blend = SHADER_PASS_BLEND_ALPHA;
+        state.blend = GPU_BLEND_ALPHA;
         state.set_mask |= SHADER_PASS_STATE_BLEND;
     } else if (strcmp(word, "additive") == 0) {
-        state.blend = SHADER_PASS_BLEND_ADDITIVE;
+        state.blend = GPU_BLEND_ADDITIVE;
         state.set_mask |= SHADER_PASS_STATE_BLEND;
     } else if (strcmp(word, "depth_test") == 0 || strcmp(word, "no_depth_test") == 0) {
         state.depth_test = word[0] != 'n';

@@ -1,6 +1,7 @@
 #pragma once
 
 #include "engine/defines.hpp"
+#include "engine/gpu/gpu_types.hpp"
 #include "engine/shaders/shader.hpp"
 
 // Everything the engine does to a shader's text before the compiler sees
@@ -26,10 +27,19 @@
 //
 //    The words are `opaque` / `blend` / `additive` (the blend mode),
 //    `depth_test` / `no_depth_test`, `depth_write` / `no_depth_write` and
-//    `cull` / `no_cull`. A word left out keeps the pipeline cache's default
-//    for the kind of draw (ShaderPassState::set_mask records which were
-//    given), so a mesh pass stays opaque, depth-tested and culled, and a
-//    fullscreen pass stays unculled with depth off.
+//    `cull` / `no_cull`. The depth comparison is a word of its own, and
+//    turns the test on with it:
+//
+//        #pragma pass alpha vertex fragment blend depth_gequal no_depth_write
+//
+//    `depth_less` (what plain `depth_test` means), `depth_lequal`,
+//    `depth_greater`, `depth_gequal`, `depth_equal`, `depth_nequal`,
+//    `depth_always` and `depth_never` are the eight.
+//
+//    A word left out keeps the pipeline cache's default for the kind of
+//    draw (ShaderPassState::set_mask records which were given), so a mesh
+//    pass stays opaque, depth-tested and culled, and a fullscreen pass
+//    stays unculled with depth off.
 //
 // 2. Defines and entry points: the program loader compiles the file once
 //    per (pass, stage) with STAGE_VERTEX / STAGE_FRAGMENT / STAGE_COMPUTE
@@ -60,25 +70,21 @@ constexpr u32 PASS_DEFINE_MAX = PASS_NAME_MAX + 8;
 
 } // namespace SHADER_PREPROCESSING
 
-enum ShaderPassBlend : u8 {
-    SHADER_PASS_BLEND_OPAQUE = 0,
-    SHADER_PASS_BLEND_ALPHA = 1,
-    SHADER_PASS_BLEND_ADDITIVE = 2,
-};
-
 // Which ShaderPassState fields a pragma set explicitly.
 enum ShaderPassStateBits : u32 {
     SHADER_PASS_STATE_BLEND = 1u << 0,
     SHADER_PASS_STATE_DEPTH_TEST = 1u << 1,
     SHADER_PASS_STATE_DEPTH_WRITE = 1u << 2,
     SHADER_PASS_STATE_CULL = 1u << 3,
+    SHADER_PASS_STATE_DEPTH_COMPARE = 1u << 4,
 };
 
 // The fixed pipeline state a pass asked for. Only the fields whose bit is in
 // `set_mask` were given; the rest hold the engine defaults and the pipeline
 // cache is free to replace them with its own for the draw at hand.
 struct ShaderPassState {
-    ShaderPassBlend blend = SHADER_PASS_BLEND_OPAQUE;
+    GpuBlend blend = GPU_BLEND_OPAQUE;
+    GpuCompare depth_compare = GPU_COMPARE_LESS;
     bool depth_test = true;
     bool depth_write = true;
     bool cull = true;

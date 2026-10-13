@@ -10,7 +10,6 @@
 
 static constexpr const char* GRID_PASS_NAME = "alpha";
 static constexpr const char* GRID_CALLBACK_NAME = "editor_grid";
-static constexpr const char* GRID_SHADER_NAME = "internal/grid_editor";
 // The shader's `#pragma pass` tag: the grid's own, not the graph pass name.
 static constexpr u64 GRID_PASS_TAG = HASH::fnv1a_str("grid_editor");
 
@@ -30,7 +29,7 @@ bool EditorGrid::init(Renderer& renderer) {
     RENDERER::register_custom_pass(renderer, GRID_CALLBACK_NAME, &EditorGrid::draw, this);
     this->update(renderer);
 
-    this->shader = SHADER_LIBRARY::load(renderer, GRID_SHADER_NAME);
+    this->shader = SHADER_LIBRARY::load(renderer, "editor/grid");
     return this->shader != 0;
 }
 

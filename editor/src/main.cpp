@@ -8,6 +8,7 @@
 #include "engine/utils/log.hpp"
 #include "plugins/editor_camera_plugin.hpp"
 #include "plugins/editor_grid_plugin.hpp"
+#include "plugins/editor_highlight_plugin.hpp"
 #include "plugins/editor_ui_plugin.hpp"
 #include "plugins/editor_viewport_plugin.hpp"
 
@@ -20,10 +21,11 @@
 // an ImGui Viewport panel (EditorViewportPlugin) and only the UI is drawn
 // into the swapchain (EditorUiPlugin); the Viewport is drawn from the
 // editor's fly camera (EditorCameraPlugin) over a ground grid
-// (EditorGridPlugin). The UI plugin is added before the project so its
-// Output panel is a log sink by the time the project reports what it
-// opened. There is no open-project page yet: the editor opens
-// EDITOR_TEST_PROJECT_DIR (editor/CMakeLists.txt) and its scenes/demo.scene.
+// (EditorGridPlugin), with the selection outlined (EditorHighlightPlugin).
+// The UI plugin is added before the project so its Output panel is a log
+// sink by the time the project reports what it opened. There is no
+// open-project page yet: the editor opens EDITOR_TEST_PROJECT_DIR
+// (editor/CMakeLists.txt) and its scenes/demo.scene.
 int main() {
     // The Output panel shows everything; the terminal keeps the problems,
     // so a run without the panel in view (or a crash before it is drawn)
@@ -40,6 +42,7 @@ int main() {
     engine.add_plugin<RenderPlugin>();
     engine.add_plugin<EditorCameraPlugin>();
     engine.add_plugin<EditorGridPlugin>();
+    engine.add_plugin<EditorHighlightPlugin>();
     engine.add_plugin<EditorUiPlugin>();
     engine.add_plugin<EditorViewportPlugin>();
     engine.add_plugin<ProjectPlugin>(EDITOR_TEST_PROJECT_DIR);

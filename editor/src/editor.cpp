@@ -15,6 +15,7 @@
 #include "engine/utils/log.hpp"
 #include "plugins/editor_camera_plugin.hpp"
 #include "plugins/editor_grid_plugin.hpp"
+#include "plugins/editor_highlight_plugin.hpp"
 #include "plugins/editor_viewport_plugin.hpp"
 
 #include "ui/dock_layout.hpp"
@@ -37,6 +38,10 @@ EditorCameraPlugin* Editor::camera() const {
 
 EditorGridPlugin* Editor::grid() const {
     return this->engine->get_plugin<EditorGridPlugin>();
+}
+
+EditorHighlightPlugin* Editor::highlight() const {
+    return this->engine->get_plugin<EditorHighlightPlugin>();
 }
 
 EditorViewportPlugin* Editor::viewport() const {
@@ -373,6 +378,7 @@ void Editor::draw_main_menu() {
     if (ImGui::BeginMenu("Render")) {
         DemoPlugin* demo = this->demo();
         EditorGridPlugin* grid = this->grid();
+        EditorHighlightPlugin* highlight = this->highlight();
         Renderer* renderer = this->engine->get_singleton<Renderer>();
         if (ImGui::MenuItem("Reload Shaders", "F5") && renderer != nullptr) {
             SHADER_LIBRARY::reload_all(*renderer);
@@ -392,6 +398,12 @@ void Editor::draw_main_menu() {
         bool grid_enabled = grid != nullptr && grid->grid.enabled;
         if (ImGui::MenuItem("Grid", nullptr, &grid_enabled) && grid != nullptr && renderer != nullptr) {
             grid->grid.set_enabled(*renderer, grid_enabled);
+        }
+        ImGui::EndDisabled();
+        ImGui::BeginDisabled(highlight == nullptr || renderer == nullptr);
+        bool outline_enabled = highlight != nullptr && highlight->highlight.enabled;
+        if (ImGui::MenuItem("Selection Outline", nullptr, &outline_enabled) && highlight != nullptr && renderer != nullptr) {
+            highlight->highlight.set_enabled(*renderer, outline_enabled);
         }
         ImGui::EndDisabled();
         ImGui::EndMenu();

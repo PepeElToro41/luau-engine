@@ -20,7 +20,7 @@ Vendored third-party code is copied under `vendor/<lib>/` with a hand-written `C
 spirv-reflect: `spirv_reflect.c/.h` from the Vulkan SDK as `spirv_reflect::spirv_reflect`, linked only by graphics).
 
 Shaders live in the repo's `render/` directory (`ENGINE_RENDER_DIR`),
-written in Slang, one `.slang` file per shader: `#pragma pass <tag> [vertex] [fragment] [state words]` lines name the render passes it draws in (the state words `opaque` / `blend` / `additive`, `depth_test` / `no_depth_test`, `depth_write` / `no_depth_write`, `cull` / `no_cull` fix that pass's pipeline state, a transparent pass being `blend no_depth_write`), and the stages are the `[shader("vertex")] ... vertex(...)` and `[shader("fragment")] ... fragment(...)` functions of that same file, with uniforms declared once above them and the varyings as the struct passed from one to the other (`SV_Position` for the clip position).
+written in Slang, one `.slang` file per shader: `#pragma pass <tag> [vertex] [fragment] [state words]` lines name the render passes it draws in (the state words `opaque` / `blend` / `additive`, `depth_test` / `no_depth_test`, `depth_write` / `no_depth_write`, `cull` / `no_cull` fix that pass's pipeline state, a transparent pass being `blend no_depth_write`, and one of `depth_less` / `depth_lequal` / `depth_greater` / `depth_gequal` / `depth_equal` / `depth_nequal` / `depth_always` / `depth_never` names the depth comparison and turns the test on with it), and the stages are the `[shader("vertex")] ... vertex(...)` and `[shader("fragment")] ... fragment(...)` functions of that same file, with uniforms declared once above them and the varyings as the struct passed from one to the other (`SV_Position` for the clip position).
 Each pass compiles those functions with `PASS_<TAG>` and `STAGE_*` defined, so `#ifdef PASS_SHADOW` specializes code per pass and a vertex-only pass simply never asks for `fragment`.
 `render/engine/*.slang` is the include library: `frame.slang` (set 0: the `frame` block at binding 0 and the engine sampler table `sampler_linear` / `sampler_linear_clamp` / `sampler_nearest` / `sampler_nearest_clamp` at bindings 1..4;
 a shader's set 0 must be a subset of it),
@@ -30,7 +30,9 @@ textures are `Texture2D`, sampled with a frame sampler or a material `SamplerSta
 `vertex.slang` (`VERTEX_POSITION` ...
 `VERTEX_WEIGHTS`: the `[[vk::location(N)]]` of each `VERTEX_LAYOUT` semantic, required because Slang numbers inputs in declaration order;
 declare only what the shader reads),
-`fullscreen.slang` (the fullscreen-triangle `vertex` function and its `FullscreenVertex`).
+`fullscreen.slang` (the fullscreen-triangle `vertex` function and its `FullscreenVertex`),
+`outline.slang` (every pass of the jump-flood outline, each under the `PASS_<TAG>` define of its own tag, so a shader that wants one writes its `#pragma pass` line and this include and nothing of the effect is written twice;
+`render/outline.slang` names the three screen-space passes and `render/editor/selection.slang` the editor's mask, `engine/render/outline.hpp` builds the graph chain that runs them).
 Matrices in blocks are column-major `Matrix4x4`;
 `mul(m, v)` is GLSL's `m * v`.
 A project's own `render/` directory overrides files by name.
