@@ -1,4 +1,5 @@
 #include "engine/plugins/render_plugin.hpp"
+#include "engine/utils/log.hpp"
 
 #include "engine/engine.hpp"
 #include "engine/plugins/core_plugin.hpp"
@@ -16,7 +17,7 @@ bool RenderPlugin::build(Engine& engine) {
         return false;
     }
     if (engine.gpu == nullptr) {
-        fprintf(stderr, "[render] Engine::gpu is not set; the render plugin needs a GPU context\n");
+        LOG::error(LOG_CATEGORY::RENDER, "Engine::gpu is not set; the render plugin needs a GPU context");
         return false;
     }
     World* world = engine.get_singleton<World>();

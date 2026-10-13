@@ -1,5 +1,6 @@
 #include "engine/memory/temporal_allocator.hpp"
 #include "engine/templates/dynamic_array.hpp"
+#include "engine/utils/log.hpp"
 #include "gpu/vulkan/vk_check.hpp"
 #include "gpu/vulkan/vk_context.hpp"
 
@@ -128,7 +129,7 @@ static bool create_swapchain(VulkanContext& vk) {
     vk.gpu->height = extent.height;
     vk.gpu->info.swapchain_format = VK_FORMATS::from_vk(surface_format.format);
     if (vk.gpu->info.swapchain_format == GPU_FORMAT_UNDEFINED) {
-        GPU::log(GPU::LOG_WARNING, "[vulkan] the swapchain format (VkFormat %d) has no GpuFormat; pipelines drawing into it cannot be described",
+        LOG::warning(LOG_CATEGORY::GPU, "[vulkan] the swapchain format (VkFormat %d) has no GpuFormat; pipelines drawing into it cannot be described",
             static_cast<int>(surface_format.format));
     }
     return true;
@@ -138,7 +139,7 @@ static bool fetch_images(VulkanContext& vk) {
     uint32_t count = 0;
     vkGetSwapchainImagesKHR(vk.device, vk.swapchain, &count, nullptr);
     if (count > VK_MAX_SWAPCHAIN_IMAGES) {
-        GPU::log(GPU::LOG_ERROR, "[vulkan] swapchain has %u images, more than the supported %u", count, VK_MAX_SWAPCHAIN_IMAGES);
+        LOG::error(LOG_CATEGORY::GPU, "[vulkan] swapchain has %u images, more than the supported %u", count, VK_MAX_SWAPCHAIN_IMAGES);
         return false;
     }
     if (!vk_check(vkGetSwapchainImagesKHR(vk.device, vk.swapchain, &count, vk.swapchain_images), "vkGetSwapchainImagesKHR")) {

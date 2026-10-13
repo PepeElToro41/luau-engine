@@ -1,11 +1,12 @@
 #include "engine/display_window.hpp"
+#include "engine/utils/log.hpp"
 
 #include <cstdio>
 
 namespace DISPLAY_WINDOW {
     bool sdl_initialize() {
         if (!SDL_Init(SDL_INIT_VIDEO)) {
-            fprintf(stderr, "[sdl] SDL_Init failed: %s\n", SDL_GetError());
+            LOG::error(LOG_CATEGORY::WINDOW, "SDL_Init failed: %s", SDL_GetError());
             return false;
         }
         return true;
@@ -22,7 +23,7 @@ bool DisplayWindow::initialize(const std::string& title, const int width, const 
     SDL_WindowFlags flags = SDL_WINDOW_VULKAN | SDL_WINDOW_RESIZABLE;
     this->window = SDL_CreateWindow(this->title.c_str(), width, height, flags);
     if (this->window == nullptr) {
-        fprintf(stderr, "[sdl] SDL_CreateWindow failed: %s\n", SDL_GetError());
+        LOG::error(LOG_CATEGORY::WINDOW, "SDL_CreateWindow failed: %s", SDL_GetError());
         return false;
     }
     return true;

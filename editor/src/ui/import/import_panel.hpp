@@ -60,7 +60,7 @@ struct ImportPanel {
 
     // Submits the window while something is queued. Returns true when a file
     // was written this frame, so the caller can refresh the Asset Browser.
-    bool draw(bool* open, const Project* project, OutputPanel& output);
+    bool draw(bool* open, const Project* project);
 
     bool has_items() const { return !this->queue.empty(); }
     void clear() { this->queue.clear(); }
@@ -83,10 +83,10 @@ private:
     // Whether importing would replace a file other than the asset being
     // re-imported in place.
     bool will_overwrite(const Project& project) const;
-    bool import_front(const Project& project, OutputPanel& output);
+    bool import_front(const Project& project);
     void draw_source(const Item& item);
     void draw_settings(const Item& item);
     void draw_keep_original(const Item& item, bool* keep_source);
     void draw_destination(const Project& project);
-    bool draw_overwrite_popup(const Project& project, OutputPanel& output);
+    bool draw_overwrite_popup(const Project& project);
 };

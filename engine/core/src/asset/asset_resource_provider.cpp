@@ -1,6 +1,7 @@
 #include "engine/asset/asset_resource_provider.hpp"
 
 #include "engine/memory/heap_allocator.hpp"
+#include "engine/utils/log.hpp"
 
 #include <new>
 
@@ -54,16 +55,16 @@ void print_guid(char* out, const usz out_size, const AssetGuid& guid) {
 
 AssetResource* AssetResourceProvider::add(const AssetView& view, const char* path) {
     if (!view.is_ok()) {
-        fprintf(stderr, "[asset] error: cannot add %s: the view is not valid (%s)\n", path != nullptr ? path : "(null)",
+        LOG::error(LOG_CATEGORY::ASSET, "cannot add %s: the view is not valid (%s)", path != nullptr ? path : "(null)",
                 ASSET_FILE::parse_error_name(view.parse_error));
         return nullptr;
     }
     if (path == nullptr) {
-        fprintf(stderr, "[asset] error: cannot add an asset without a path\n");
+        LOG::error(LOG_CATEGORY::ASSET, "cannot add an asset without a path");
         return nullptr;
     }
     if (this->require_cooked && !view.is_cooked()) {
-        fprintf(stderr, "[asset] error: %s is not cooked; the runtime only loads cooked assets\n", path);
+        LOG::error(LOG_CATEGORY::ASSET, "%s is not cooked; the runtime only loads cooked assets", path);
         return nullptr;
     }
 
@@ -171,7 +172,7 @@ AssetResource* AssetResourceProvider::get(const AssetGuid& guid) {
     if (resource == nullptr) {
         char text[40];
         print_guid(text, sizeof(text), guid);
-        fprintf(stderr, "[asset] error: no asset with guid %s was added to the provider\n", text);
+        LOG::error(LOG_CATEGORY::ASSET, "no asset with guid %s was added to the provider", text);
         return nullptr;
     }
     if (!resource->is_loaded() && !this->load(resource)) {
@@ -182,7 +183,7 @@ AssetResource* AssetResourceProvider::get(const AssetGuid& guid) {
 
 AssetResource* AssetResourceProvider::get(const AssetView& view) {
     if (!view.is_ok()) {
-        fprintf(stderr, "[asset] error: get on a view that is not valid\n");
+        LOG::error(LOG_CATEGORY::ASSET, "get on a view that is not valid");
         return nullptr;
     }
     return this->get(view.header->guid);
@@ -194,7 +195,7 @@ bool AssetResourceProvider::open(AssetResource* resource, OpenFile* file, bool* 
         // A text asset is small: read it whole, which is also the staleness
         // check (TEXT_ASSET::matches hashes the bytes).
         if (!TEXT_ASSET::read_file(resource->path, this->allocator, &file->text, &file->text_size)) {
-            fprintf(stderr, "[asset] error: cannot read %s\n", resource->path);
+            LOG::error(LOG_CATEGORY::ASSET, "cannot read %s", resource->path);
             return false;
         }
         if (TEXT_ASSET::matches(resource->view, file->text, file->text_size)) {
@@ -208,7 +209,7 @@ bool AssetResourceProvider::open(AssetResource* resource, OpenFile* file, bool* 
         if (fresh.header->guid != resource->guid) {
             char text[40];
             print_guid(text, sizeof(text), resource->guid);
-            fprintf(stderr, "[asset] error: %s no longer holds asset %s\n", resource->path, text);
+            LOG::error(LOG_CATEGORY::ASSET, "%s no longer holds asset %s", resource->path, text);
             ASSET_FILE::free_prelude(&fresh, this->allocator);
             this->close(file);
             return false;
@@ -230,7 +231,7 @@ bool AssetResourceProvider::open(AssetResource* resource, OpenFile* file, bool* 
     if (reader->header.guid != resource->guid) {
         char text[40];
         print_guid(text, sizeof(text), resource->guid);
-        fprintf(stderr, "[asset] error: %s no longer holds asset %s\n", resource->path, text);
+        LOG::error(LOG_CATEGORY::ASSET, "%s no longer holds asset %s", resource->path, text);
         reader->close();
         return false;
     }
@@ -241,12 +242,12 @@ bool AssetResourceProvider::open(AssetResource* resource, OpenFile* file, bool* 
     // than copy.
     AssetView fresh = reader->read_prelude(this->allocator);
     if (!fresh.is_ok()) {
-        fprintf(stderr, "[asset] error: %s: %s\n", resource->path, ASSET_FILE::parse_error_name(fresh.parse_error));
+        LOG::error(LOG_CATEGORY::ASSET, "%s: %s", resource->path, ASSET_FILE::parse_error_name(fresh.parse_error));
         reader->close();
         return false;
     }
     if (this->require_cooked && !fresh.is_cooked()) {
-        fprintf(stderr, "[asset] error: %s is no longer cooked; the runtime only loads cooked assets\n", resource->path);
+        LOG::error(LOG_CATEGORY::ASSET, "%s is no longer cooked; the runtime only loads cooked assets", resource->path);
         ASSET_FILE::free_prelude(&fresh, this->allocator);
         reader->close();
         return false;
@@ -276,7 +277,7 @@ bool AssetResourceProvider::read_chunk(AssetResource* resource, OpenFile& file, 
         // alignment already, so the resource adopts it. The view was built
         // from these very bytes, so the size agrees unless open() lied.
         if (file.text == nullptr || entry.size != file.text_size) {
-            fprintf(stderr, "[asset] error: %s: text does not match its prelude\n", resource->path);
+            LOG::error(LOG_CATEGORY::ASSET, "%s: text does not match its prelude", resource->path);
             return false;
         }
         resource->payloads[chunk] = file.text;
@@ -288,7 +289,7 @@ bool AssetResourceProvider::read_chunk(AssetResource* resource, OpenFile& file, 
     }
     u8* buffer = static_cast<u8*>(this->allocator->allocate(entry.size, ASSET_FILE::PAYLOAD_ALIGNMENT));
     if (buffer == nullptr) {
-        fprintf(stderr, "[asset] error: out of memory loading a chunk of %s (%llu bytes)\n", resource->path,
+        LOG::error(LOG_CATEGORY::ASSET, "out of memory loading a chunk of %s (%llu bytes)", resource->path,
                 static_cast<unsigned long long>(entry.size));
         return false;
     }
@@ -336,7 +337,7 @@ const u8* AssetResourceProvider::get_chunk_at(AssetResource* resource, const usz
     }
     const u8* result = nullptr;
     if (refreshed) {
-        fprintf(stderr, "[asset] error: %s changed on disk; chunk %llu of the old table is gone, look it up again\n", resource->path,
+        LOG::error(LOG_CATEGORY::ASSET, "%s changed on disk; chunk %llu of the old table is gone, look it up again", resource->path,
                 static_cast<unsigned long long>(chunk));
     } else if (this->read_chunk(resource, file, chunk)) {
         result = resource->payloads[chunk];

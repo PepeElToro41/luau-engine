@@ -8,6 +8,7 @@
 #include "engine/ecs/world.hpp"
 #include "engine/memory/temporal_allocator.hpp"
 #include "engine/templates/dynamic_array.hpp"
+#include "engine/utils/log.hpp"
 
 #include <cstdio>
 
@@ -144,7 +145,7 @@ bool clear_archetype(World* world, const ArchetypeId archetype_id, const Id patt
         for (const EntityId entity : entities) {
             const EntityRecord* record = world->entity_index.get_record_alive(entity);
             if (record != nullptr && record->archetype == archetype) {
-                fprintf(stderr, "[ecs] error: on_delete could not clear %llx from entity %llx (re-added by a hook?)\n",
+                LOG::error(LOG_CATEGORY::ECS, "on_delete could not clear %llx from entity %llx (re-added by a hook?)",
                     pattern, entity);
                 cleared = false;
                 break;
@@ -238,7 +239,7 @@ bool record_in_use(const World* world, const ComponentRecord* record) {
 
 bool can_delete(World* world, const EntityId entity) {
     if (has_policy(world, ECS::ON_DELETE, ECS::PANIC, entity)) {
-        fprintf(stderr, "[ecs] error: cannot delete entity %llx: it has (ON_DELETE, PANIC)\n", entity);
+        LOG::error(LOG_CATEGORY::ECS, "cannot delete entity %llx: it has (ON_DELETE, PANIC)", entity);
         return false;
     }
 
@@ -255,7 +256,7 @@ bool can_delete(World* world, const EntityId entity) {
         }
         const EntityId relation = world->pair_first(pair->id);
         if (relation != 0 && has_policy(world, ECS::ON_DELETE_TARGET, ECS::PANIC, relation)) {
-            fprintf(stderr, "[ecs] error: cannot delete entity %llx: it is the target of (%llx, %llx) and the relation has (ON_DELETE_TARGET, PANIC)\n",
+            LOG::error(LOG_CATEGORY::ECS, "cannot delete entity %llx: it is the target of (%llx, %llx) and the relation has (ON_DELETE_TARGET, PANIC)",
                 entity, relation, entity);
             return false;
         }

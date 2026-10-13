@@ -1,4 +1,5 @@
 #include "engine/render/gpu_asset_cache.hpp"
+#include "engine/utils/log.hpp"
 
 #include "engine/asset/asset_types/texture_asset.hpp"
 #include "engine/memory/heap_allocator.hpp"
@@ -95,7 +96,7 @@ static GpuMesh* load_mesh(GpuAssetCache& cache, const AssetGuid& guid) {
 
     AssetResource* resource = cache.provider != nullptr ? cache.provider->get(guid) : nullptr;
     if (resource == nullptr) {
-        fprintf(stderr, "[assets] mesh %016llx%016llx is not registered or could not be loaded\n", static_cast<unsigned long long>(guid.hi),
+        LOG::error(LOG_CATEGORY::ASSET, "mesh %016llx%016llx is not registered or could not be loaded", static_cast<unsigned long long>(guid.hi),
             static_cast<unsigned long long>(guid.lo));
         return mesh;
     }
@@ -104,7 +105,7 @@ static GpuMesh* load_mesh(GpuAssetCache& cache, const AssetGuid& guid) {
     MeshAssetView view;
     const MeshParseError parsed = desc_payload != nullptr ? view.parse(resource->view, desc_payload, desc_entry->size) : MESH_PARSE_MISSING_CHUNK;
     if (parsed != MESH_PARSE_OK) {
-        fprintf(stderr, "[assets] %s: %s\n", resource->path, MESH_ASSET::parse_error_name(parsed));
+        LOG::error(LOG_CATEGORY::ASSET, "%s: %s", resource->path, MESH_ASSET::parse_error_name(parsed));
         cache.provider->unload(resource);
         return mesh;
     }
@@ -121,14 +122,14 @@ static GpuMesh* load_mesh(GpuAssetCache& cache, const AssetGuid& guid) {
         memcpy(&bounds, bounds_data, sizeof(bounds));
     }
     if (!ok || index_data == nullptr) {
-        fprintf(stderr, "[assets] %s: geometry chunks are not resident\n", resource->path);
+        LOG::error(LOG_CATEGORY::ASSET, "%s: geometry chunks are not resident", resource->path);
         cache.provider->unload(resource);
         return mesh;
     }
     mesh->failed = !upload_mesh(cache, *mesh, view.streams, view.desc->stream_count, stream_data, view.attributes, view.desc->attribute_count, view.submeshes,
         view.desc->submesh_count, view.desc->vertex_count, index_data, view.desc->index_count, view.desc->index_format, bounds);
     if (mesh->failed) {
-        fprintf(stderr, "[assets] %s: upload failed\n", resource->path);
+        LOG::error(LOG_CATEGORY::ASSET, "%s: upload failed", resource->path);
     }
     // The GPU has its copy.
     cache.provider->unload(resource);
@@ -181,14 +182,14 @@ const GpuMesh* GPU_ASSETS::get_primitive(GpuAssetCache& cache, const PrimitiveSh
         MeshAssetWriter built;
         const MeshWriteError error = PRIMITIVES::build(shape, built, cache.primitive_tessellation);
         if (error != MESH_WRITE_OK) {
-            fprintf(stderr, "[assets] primitive %s could not be built: %s\n", PRIMITIVES::name(shape), MESH_ASSET::write_error_name(error));
+            LOG::error(LOG_CATEGORY::ASSET, "primitive %s could not be built: %s", PRIMITIVES::name(shape), MESH_ASSET::write_error_name(error));
             slot = MEMORY::heap_allocator()->allocate_array<GpuMesh>(1);
             new (slot) GpuMesh();
             slot->failed = true;
         } else {
             slot = upload_built(cache, built);
             if (slot->failed) {
-                fprintf(stderr, "[assets] primitive %s: upload failed\n", PRIMITIVES::name(shape));
+                LOG::error(LOG_CATEGORY::ASSET, "primitive %s: upload failed", PRIMITIVES::name(shape));
             }
         }
         built.free();
@@ -201,7 +202,7 @@ const GpuMesh* GPU_ASSETS::get_primitive(GpuAssetCache& cache, const PrimitiveSh
 static bool load_texture(GpuAssetCache& cache, const AssetGuid& guid, GpuTextureEntry& out) {
     AssetResource* resource = cache.provider != nullptr ? cache.provider->get(guid) : nullptr;
     if (resource == nullptr) {
-        fprintf(stderr, "[assets] texture %016llx%016llx is not registered or could not be loaded\n", static_cast<unsigned long long>(guid.hi),
+        LOG::error(LOG_CATEGORY::ASSET, "texture %016llx%016llx is not registered or could not be loaded", static_cast<unsigned long long>(guid.hi),
             static_cast<unsigned long long>(guid.lo));
         return false;
     }
@@ -210,14 +211,14 @@ static bool load_texture(GpuAssetCache& cache, const AssetGuid& guid, GpuTexture
     TextureAssetView view;
     const TextureParseError parsed = desc_payload != nullptr ? view.parse(resource->view, desc_payload, desc_entry->size) : TEXTURE_PARSE_BAD_DESC;
     if (parsed != TEXTURE_PARSE_OK) {
-        fprintf(stderr, "[assets] %s: texture payload is invalid (%d)\n", resource->path, static_cast<int>(parsed));
+        LOG::error(LOG_CATEGORY::ASSET, "%s: texture payload is invalid (%d)", resource->path, static_cast<int>(parsed));
         cache.provider->unload(resource);
         return false;
     }
     const GpuFormat format = GPU_FORMAT::from_texture(view.desc->format);
     const u8* pixels = resource->payload(static_cast<usz>(view.pixels_chunk - resource->view.chunks));
     if (format == GPU_FORMAT_UNDEFINED || pixels == nullptr || view.desc->dimension != TEXTURE_DIMENSION_2D || view.desc->layers != 1) {
-        fprintf(stderr, "[assets] %s: only 2D single-layer textures in known formats are uploaded\n", resource->path);
+        LOG::error(LOG_CATEGORY::ASSET, "%s: only 2D single-layer textures in known formats are uploaded", resource->path);
         cache.provider->unload(resource);
         return false;
     }
@@ -245,7 +246,7 @@ static bool load_texture(GpuAssetCache& cache, const AssetGuid& guid, GpuTexture
     }
     cache.provider->unload(resource);
     if (!ok) {
-        fprintf(stderr, "[assets] %s: upload failed\n", resource->path);
+        LOG::error(LOG_CATEGORY::ASSET, "%s: upload failed", resource->path);
         return false;
     }
     out.texture = texture;

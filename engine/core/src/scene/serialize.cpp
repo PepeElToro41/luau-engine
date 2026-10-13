@@ -3,6 +3,7 @@
 #include "engine/asset/asset_entity.hpp"
 #include "engine/asset/text_asset.hpp"
 #include "engine/ecs/ecs.hpp"
+#include "engine/utils/log.hpp"
 
 #include <cstdarg>
 #include <cstdio>
@@ -100,7 +101,7 @@ void SERIALIZE::warn(SerializeContext& ctx, const char* format, ...) {
     if (ctx.warn != nullptr) {
         ctx.warn(text, ctx.user_data);
     } else {
-        fprintf(stderr, "[scene] warning: %s\n", text);
+        LOG::write_at(LOG_WARNING, LOG_CATEGORY::SCENE, ctx.path, ctx.line, "%s", message);
     }
 }
 

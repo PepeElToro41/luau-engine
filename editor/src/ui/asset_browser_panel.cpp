@@ -4,6 +4,7 @@
 #include "engine/asset/asset_view.hpp"
 #include "engine/asset/asset_writer.hpp"
 #include "engine/asset/text_asset.hpp"
+#include "engine/utils/log.hpp"
 #include "ui/format.hpp"
 #include "ui/import/import_panel.hpp"
 #include "ui/panels.hpp"
@@ -185,7 +186,7 @@ void AssetBrowserPanel::draw_create_items() {
     }
 }
 
-void AssetBrowserPanel::draw(bool* open, const Project* project_or_null, OutputPanel& output, Selection& selection) {
+void AssetBrowserPanel::draw(bool* open, const Project* project_or_null, Selection& selection) {
     if (!ImGui::Begin(PANELS::ASSET_BROWSER, open)) {
         ImGui::End();
         return;
@@ -221,9 +222,9 @@ void AssetBrowserPanel::draw(bool* open, const Project* project_or_null, OutputP
     this->draw_breadcrumbs(project);
     ImGui::Separator();
     this->draw_entries(project, selection);
-    this->draw_delete_popup(project, output, selection);
-    this->draw_name_popup(project, output, selection);
-    this->draw_save_original_popup(project, output);
+    this->draw_delete_popup(project, selection);
+    this->draw_name_popup(project, selection);
+    this->draw_save_original_popup(project);
 
     ImGui::End();
 }
@@ -466,7 +467,7 @@ void AssetBrowserPanel::begin_save_original(const Project& project, const Entry&
     std::snprintf(this->save_path, sizeof(this->save_path), "%s", suggested.c_str());
 }
 
-void AssetBrowserPanel::draw_save_original_popup(const Project& project, OutputPanel& output) {
+void AssetBrowserPanel::draw_save_original_popup(const Project& project) {
     const ImVec2 center = ImGui::GetMainViewport()->GetCenter();
     ImGui::SetNextWindowPos(center, ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
     if (!ImGui::BeginPopupModal(SAVE_ORIGINAL_POPUP, nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
@@ -510,7 +511,7 @@ void AssetBrowserPanel::draw_save_original_popup(const Project& project, OutputP
     confirmed = ImGui::Button("Save", ImVec2(100.0f, 0.0f)) || confirmed;
     ImGui::EndDisabled();
     if (confirmed && problem == nullptr) {
-        if (this->save_original(project, this->save_path, output)) {
+        if (this->save_original(project, this->save_path)) {
             ImGui::CloseCurrentPopup();
         }
     }
@@ -521,7 +522,7 @@ void AssetBrowserPanel::draw_save_original_popup(const Project& project, OutputP
     ImGui::EndPopup();
 }
 
-bool AssetBrowserPanel::save_original(const Project& project, const char* path, OutputPanel& output) {
+bool AssetBrowserPanel::save_original(const Project& project, const char* path) {
     std::filesystem::path target(path);
     if (target.is_relative()) {
         target = project.root / target;
@@ -530,15 +531,15 @@ bool AssetBrowserPanel::save_original(const Project& project, const char* path, 
     std::error_code fs_error;
     std::filesystem::create_directories(target.parent_path(), fs_error);
     if (fs_error) {
-        output.error("Save Original: cannot create %s: %s", target.parent_path().string().c_str(), fs_error.message().c_str());
+        LOG::error(LOG_CATEGORY::EDITOR, "Save Original: cannot create %s: %s", target.parent_path().string().c_str(), fs_error.message().c_str());
         return false;
     }
     std::string error;
     if (!IMPORT::save_source(this->saving, target, &error)) {
-        output.error("Save Original of %s failed: %s", this->saving_asset.c_str(), error.c_str());
+        LOG::error(LOG_CATEGORY::EDITOR, "Save Original of %s failed: %s", this->saving_asset.c_str(), error.c_str());
         return false;
     }
-    output.info("Saved the original of %s (%s) to %s", this->saving_asset.c_str(), this->saving.name.c_str(), target.string().c_str());
+    LOG::info(LOG_CATEGORY::EDITOR, "Saved the original of %s (%s) to %s", this->saving_asset.c_str(), this->saving.name.c_str(), target.string().c_str());
     this->refresh(); // it may have landed in the folder shown
     return true;
 }
@@ -610,7 +611,7 @@ const char* AssetBrowserPanel::name_problem(const char* name, const std::string&
     return nullptr;
 }
 
-void AssetBrowserPanel::draw_name_popup(const Project& project, OutputPanel& output, Selection& selection) {
+void AssetBrowserPanel::draw_name_popup(const Project& project, Selection& selection) {
     const ImVec2 center = ImGui::GetMainViewport()->GetCenter();
     ImGui::SetNextWindowPos(center, ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
     if (!ImGui::BeginPopupModal(NAME_POPUP, nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
@@ -666,11 +667,11 @@ void AssetBrowserPanel::draw_name_popup(const Project& project, OutputPanel& out
         if (unchanged) {
             // nothing to do
         } else if (rename) {
-            done = this->rename_entry(project, this->renaming, this->name_buffer, output, selection);
+            done = this->rename_entry(project, this->renaming, this->name_buffer, selection);
         } else if (new_file) {
-            done = this->create_file(project, file_name.c_str(), output, selection);
+            done = this->create_file(project, file_name.c_str(), selection);
         } else {
-            done = this->create_folder(project, this->name_buffer, output, selection);
+            done = this->create_folder(project, this->name_buffer, selection);
         }
         if (done) {
             ImGui::CloseCurrentPopup();
@@ -683,7 +684,7 @@ void AssetBrowserPanel::draw_name_popup(const Project& project, OutputPanel& out
     ImGui::EndPopup();
 }
 
-bool AssetBrowserPanel::rename_entry(const Project& project, const Entry& entry, const char* name, OutputPanel& output, Selection& selection) {
+bool AssetBrowserPanel::rename_entry(const Project& project, const Entry& entry, const char* name, Selection& selection) {
     const std::filesystem::path from = (project.root / this->current / entry.name).lexically_normal();
     const std::filesystem::path to = (project.root / this->current / name).lexically_normal();
     const std::string shown_from = (this->current / entry.name).generic_string();
@@ -692,37 +693,37 @@ bool AssetBrowserPanel::rename_entry(const Project& project, const Entry& entry,
     // rename() would silently replace an existing file; refuse instead, the
     // listing may be stale.
     if (std::filesystem::exists(to, error)) {
-        output.error("Rename %s failed: %s already exists", shown_from.c_str(), shown_to.c_str());
+        LOG::error(LOG_CATEGORY::EDITOR, "Rename %s failed: %s already exists", shown_from.c_str(), shown_to.c_str());
         this->refresh();
         return false;
     }
     std::filesystem::rename(from, to, error);
     if (error) {
-        output.error("Rename %s failed: %s", shown_from.c_str(), error.message().c_str());
+        LOG::error(LOG_CATEGORY::EDITOR, "Rename %s failed: %s", shown_from.c_str(), error.message().c_str());
         this->refresh();
         return false;
     }
-    output.info("Renamed %s to %s", shown_from.c_str(), shown_to.c_str());
+    LOG::info(LOG_CATEGORY::EDITOR, "Renamed %s to %s", shown_from.c_str(), shown_to.c_str());
     this->selected = name;
     selection.select_file(this->current / name);
     this->refresh();
     return true;
 }
 
-bool AssetBrowserPanel::create_folder(const Project& project, const char* name, OutputPanel& output, Selection& selection) {
+bool AssetBrowserPanel::create_folder(const Project& project, const char* name, Selection& selection) {
     const std::filesystem::path target = (project.root / this->current / name).lexically_normal();
     const std::string shown = (this->current / name).generic_string();
     std::error_code error;
     const bool created = std::filesystem::create_directory(target, error);
     if (error) {
-        output.error("Create folder %s failed: %s", shown.c_str(), error.message().c_str());
+        LOG::error(LOG_CATEGORY::EDITOR, "Create folder %s failed: %s", shown.c_str(), error.message().c_str());
         return false;
     }
     if (!created) {
         // Exists on disk but not in the listing: it appeared since the scan.
-        output.warning("Folder %s already exists", shown.c_str());
+        LOG::warning(LOG_CATEGORY::EDITOR, "Folder %s already exists", shown.c_str());
     } else {
-        output.info("Created folder %s", shown.c_str());
+        LOG::info(LOG_CATEGORY::EDITOR, "Created folder %s", shown.c_str());
     }
     this->selected = name;
     selection.select_file(this->current / name);
@@ -730,7 +731,7 @@ bool AssetBrowserPanel::create_folder(const Project& project, const char* name, 
     return true;
 }
 
-bool AssetBrowserPanel::create_file(const Project& project, const char* name, OutputPanel& output, Selection& selection) {
+bool AssetBrowserPanel::create_file(const Project& project, const char* name, Selection& selection) {
     const std::filesystem::path target = (project.root / this->current / name).lexically_normal();
     const std::string shown = (this->current / name).generic_string();
     const char* label = AssetBrowserPanel::create_label(this->create_kind);
@@ -738,7 +739,7 @@ bool AssetBrowserPanel::create_file(const Project& project, const char* name, Ou
     // The writers replace an existing file; refuse instead, the listing
     // may be stale.
     if (std::filesystem::exists(target, error)) {
-        output.error("Create %s %s failed: it already exists", label, shown.c_str());
+        LOG::error(LOG_CATEGORY::EDITOR, "Create %s %s failed: it already exists", label, shown.c_str());
         this->refresh();
         return false;
     }
@@ -762,14 +763,14 @@ bool AssetBrowserPanel::create_file(const Project& project, const char* name, Ou
         // A byte-for-byte copy of the engine shader picked in the submenu
         // (an empty template makes an empty file).
         if (this->create_template >= this->shader_templates.size()) {
-            output.error("Create %s %s failed: no template picked", label, shown.c_str());
+            LOG::error(LOG_CATEGORY::EDITOR, "Create %s %s failed: no template picked", label, shown.c_str());
             this->refresh();
             return false;
         }
         const ShaderTemplate& shader_template = this->shader_templates[this->create_template];
         ok = std::filesystem::copy_file(shader_template.path, target, std::filesystem::copy_options::none, error);
         if (!ok) {
-            output.error("Create %s %s failed: cannot copy %s: %s", label, shown.c_str(), shader_template.path.string().c_str(), error.message().c_str());
+            LOG::error(LOG_CATEGORY::EDITOR, "Create %s %s failed: cannot copy %s: %s", label, shown.c_str(), shader_template.path.string().c_str(), error.message().c_str());
             this->refresh();
             return false;
         }
@@ -778,18 +779,18 @@ bool AssetBrowserPanel::create_file(const Project& project, const char* name, Ou
         ok = ASSET_FILE::write_file(path.c_str(), text, std::strlen(text));
     }
     if (!ok) {
-        output.error("Create %s %s failed: cannot write the file", label, shown.c_str());
+        LOG::error(LOG_CATEGORY::EDITOR, "Create %s %s failed: cannot write the file", label, shown.c_str());
         this->refresh();
         return false;
     }
-    output.info("Created %s %s", label, shown.c_str());
+    LOG::info(LOG_CATEGORY::EDITOR, "Created %s %s", label, shown.c_str());
     this->selected = name;
     selection.select_file(this->current / name);
     this->refresh();
     return true;
 }
 
-void AssetBrowserPanel::draw_delete_popup(const Project& project, OutputPanel& output, Selection& selection) {
+void AssetBrowserPanel::draw_delete_popup(const Project& project, Selection& selection) {
     const ImVec2 center = ImGui::GetMainViewport()->GetCenter();
     ImGui::SetNextWindowPos(center, ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
     if (!ImGui::BeginPopupModal(DELETE_POPUP, nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
@@ -811,7 +812,7 @@ void AssetBrowserPanel::draw_delete_popup(const Project& project, OutputPanel& o
     ImGui::Separator();
 
     if (ImGui::Button("Delete", ImVec2(100.0f, 0.0f))) {
-        this->delete_entry(project, this->deleting, output, selection);
+        this->delete_entry(project, this->deleting, selection);
         this->deleting = {};
         ImGui::CloseCurrentPopup();
     }
@@ -823,7 +824,7 @@ void AssetBrowserPanel::draw_delete_popup(const Project& project, OutputPanel& o
     ImGui::EndPopup();
 }
 
-void AssetBrowserPanel::delete_entry(const Project& project, const Entry& entry, OutputPanel& output, Selection& selection) {
+void AssetBrowserPanel::delete_entry(const Project& project, const Entry& entry, Selection& selection) {
     const std::filesystem::path target = (project.root / this->current / entry.name).lexically_normal();
     std::error_code error;
     if (entry.is_directory) {
@@ -833,9 +834,9 @@ void AssetBrowserPanel::delete_entry(const Project& project, const Entry& entry,
     }
     const std::string shown = (this->current / entry.name).generic_string();
     if (error) {
-        output.error("Delete %s failed: %s", shown.c_str(), error.message().c_str());
+        LOG::error(LOG_CATEGORY::EDITOR, "Delete %s failed: %s", shown.c_str(), error.message().c_str());
     } else {
-        output.info("Deleted %s", shown.c_str());
+        LOG::info(LOG_CATEGORY::EDITOR, "Deleted %s", shown.c_str());
         if (this->selected == entry.name) {
             this->selected.clear();
             selection.clear();

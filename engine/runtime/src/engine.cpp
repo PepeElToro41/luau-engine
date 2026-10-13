@@ -1,4 +1,5 @@
 #include "engine/engine.hpp"
+#include "engine/utils/log.hpp"
 
 
 #include "engine/asset/asset_entity.hpp"
@@ -55,7 +56,7 @@ void Engine::create_pipelines() {
 
 bool Engine::init() {
     if (this->initialized) {
-        fprintf(stderr, "[engine] init called twice\n");
+        LOG::error(LOG_CATEGORY::ENGINE, "init called twice");
         return false;
     }
     this->time = 0.0;
@@ -124,13 +125,13 @@ AssetGuid Engine::load_asset_file(const char* path) {
     }
     AssetView view = ASSET_FILE::read_prelude_any(path, MEMORY::heap_allocator());
     if (!view.is_ok()) {
-        fprintf(stderr, "[assets] %s: %s\n", path, ASSET_FILE::parse_error_name(view.parse_error));
+        LOG::error(LOG_CATEGORY::ASSET, "%s: %s", path, ASSET_FILE::parse_error_name(view.parse_error));
         ASSET_FILE::free_prelude(&view, MEMORY::heap_allocator());
         return AssetGuid{};
     }
     const AssetGuid guid = view.header->guid;
     if (assets->add(view, path) == nullptr) {
-        fprintf(stderr, "[assets] %s: could not register (cooked-only provider, or duplicate GUID)\n", path);
+        LOG::error(LOG_CATEGORY::ASSET, "%s: could not register (cooked-only provider, or duplicate GUID)", path);
         ASSET_FILE::free_prelude(&view, MEMORY::heap_allocator());
         return AssetGuid{};
     }
@@ -173,33 +174,10 @@ EntityId Engine::resolve_asset(const AssetGuid& guid, void* user_data) {
     }
 }
 
-void Engine::scene_warning(const char* text, void* user_data) {
-    Engine* engine = static_cast<Engine*>(user_data);
-    if (Renderer* renderer = engine->get_singleton<Renderer>()) {
-        RENDERER::log(*renderer, RENDER_LOG_WARNING, "%s", text);
-    } else {
-        fprintf(stderr, "[scene] warning: %s\n", text);
-    }
-}
-
 void Engine::serialize_context(SerializeContext& ctx) {
     ctx.world = this->get_singleton<World>();
     ctx.resolve_asset = &Engine::resolve_asset;
-    ctx.warn = &Engine::scene_warning;
     ctx.user_data = this;
-}
-
-void Engine::log(const RenderLogLevel level, const char* format, ...) {
-    char text[1024];
-    va_list args;
-    va_start(args, format);
-    vsnprintf(text, sizeof(text), format, args);
-    va_end(args);
-    if (Renderer* renderer = this->get_singleton<Renderer>()) {
-        RENDERER::log(*renderer, level, "%s", text);
-    } else {
-        fprintf(stderr, "[engine] %s\n", text);
-    }
 }
 
 const char* Engine::scene_text(const AssetGuid& guid, usz* out_size, const char** out_path) {
@@ -209,16 +187,16 @@ const char* Engine::scene_text(const AssetGuid& guid, usz* out_size, const char*
     char text_guid[TEXT_ASSET::GUID_TEXT_CAPACITY];
     TEXT_ASSET::format_guid(guid, text_guid);
     if (assets == nullptr) {
-        this->log(RENDER_LOG_ERROR, "scene %s: no asset provider", text_guid);
+        LOG::error(LOG_CATEGORY::SCENE, "scene %s: no asset provider", text_guid);
         return nullptr;
     }
     AssetResource* resource = assets->get(guid);
     if (resource == nullptr) {
-        this->log(RENDER_LOG_ERROR, "scene %s: not registered with the asset provider, or its file could not be read", text_guid);
+        LOG::error(LOG_CATEGORY::SCENE, "scene %s: not registered with the asset provider, or its file could not be read", text_guid);
         return nullptr;
     }
     if (resource->view.header->type != ASSET_TYPE::SCENE || !resource->is_text()) {
-        this->log(RENDER_LOG_ERROR, "%s: not a .scene asset", resource->path);
+        LOG::error(LOG_CATEGORY::SCENE, "%s: not a .scene asset", resource->path);
         return nullptr;
     }
     const ChunkEntry* entry = nullptr;
@@ -255,16 +233,12 @@ bool Engine::load_scene(const AssetGuid& guid) {
     const SCENE_ASSET::SceneReadResult result = SCENE_ASSET::read(*world, text, size, scene->root, ctx);
     assets->unload(guid);
     if (!result.ok) {
-        if (result.line != 0) {
-            this->log(RENDER_LOG_ERROR, "%s:%u: %s", path_copy, result.line, result.error);
-        } else {
-            this->log(RENDER_LOG_ERROR, "%s: %s", path_copy, result.error);
-        }
+        LOG::write_at(LOG_ERROR, LOG_CATEGORY::SCENE, path_copy, result.line, "%s", result.error);
         scene->set_current(AssetGuid{}, nullptr);
         return false;
     }
     scene->set_current(guid, path_copy);
-    this->log(RENDER_LOG_INFO, "Loaded scene %s: %llu entities%s", path_copy, static_cast<unsigned long long>(result.entities),
+    LOG::info(LOG_CATEGORY::SCENE, "Loaded scene %s: %llu entities%s", path_copy, static_cast<unsigned long long>(result.entities),
         result.warnings > 0 ? " (with warnings)" : "");
     return true;
 }
@@ -289,11 +263,7 @@ bool Engine::instantiate_scene(const AssetGuid& guid, const EntityId parent) {
     const SCENE_ASSET::SceneReadResult result = SCENE_ASSET::read(*world, text, size, parent, ctx);
     assets->unload(guid);
     if (!result.ok) {
-        if (result.line != 0) {
-            this->log(RENDER_LOG_ERROR, "%s:%u: %s", path_copy, result.line, result.error);
-        } else {
-            this->log(RENDER_LOG_ERROR, "%s: %s", path_copy, result.error);
-        }
+        LOG::write_at(LOG_ERROR, LOG_CATEGORY::SCENE, path_copy, result.line, "%s", result.error);
         return false;
     }
     return true;
@@ -321,13 +291,13 @@ bool Engine::save_scene(const char* path) {
     this->serialize_context(ctx);
     ctx.path = path;
     if (!SCENE_ASSET::write_file(*world, scene->root, guid, ctx, path)) {
-        this->log(RENDER_LOG_ERROR, "Could not write scene %s", path);
+        LOG::error(LOG_CATEGORY::SCENE, "Could not write scene %s", path);
         return false;
     }
     // Registered (or refreshed) like any other asset, so the file is an
     // asset entity and a later load_scene finds it.
     if (this->load_asset_file(path).is_null()) {
-        this->log(RENDER_LOG_WARNING, "Scene %s was written but could not be registered", path);
+        LOG::warning(LOG_CATEGORY::SCENE, "Scene %s was written but could not be registered", path);
     }
     scene->set_current(guid, path);
     return true;

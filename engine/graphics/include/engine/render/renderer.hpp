@@ -59,22 +59,6 @@ enum RendererSampler : u32 {
     RENDERER_SAMPLER_COUNT = 4,
 };
 
-// Where the renderer's messages go (shader logs, graph diagnostics,
-// material mistakes). The default prints to stderr; the editor routes them
-// to its Output panel.
-enum RenderLogLevel : u32 {
-    RENDER_LOG_INFO = 0,
-    RENDER_LOG_WARNING = 1,
-    RENDER_LOG_ERROR = 2,
-};
-
-using RenderLogFn = void (*)(RenderLogLevel level, const char* text, void* user_data);
-
-struct RenderLogSink {
-    RenderLogFn fn = nullptr;
-    void* user_data = nullptr;
-};
-
 // What the app hands the engine for one frame: the GPU frame to record
 // into and the texture the graph's backbuffer resource stands for.
 // `target_state` is the state the target is in on entry (UNDEFINED for a
@@ -157,7 +141,6 @@ struct Renderer {
     // Written by the Engine before render().
     f32 time = 0.0f;
     f32 delta_time = 0.0f;
-    RenderLogSink log_sink;
     // The entity the frame is drawn from when it is alive and holds a
     // Transform and a Camera, whatever the RenderCamera tag says: how the
     // editor keeps its own fly camera while the scene's camera carries the
@@ -194,8 +177,5 @@ void build_default_graph(Renderer& renderer);
 // Replaces an existing registration of the same name.
 bool register_custom_pass(Renderer& renderer, const char* name, CustomPassFn fn, void* user_data);
 bool unregister_custom_pass(Renderer& renderer, const char* name);
-
-// Formats and sends a message to the log sink (stderr when unset).
-void log(const Renderer& renderer, RenderLogLevel level, const char* format, ...);
 
 } // namespace RENDERER

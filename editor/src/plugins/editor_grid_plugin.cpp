@@ -3,6 +3,7 @@
 #include "engine/engine.hpp"
 #include "engine/plugins/render_plugin.hpp"
 #include "engine/render/renderer.hpp"
+#include "engine/utils/log.hpp"
 
 bool EditorGridPlugin::build(Engine& engine) {
     if (engine.require<RenderPlugin>() == nullptr) {
@@ -10,7 +11,7 @@ bool EditorGridPlugin::build(Engine& engine) {
     }
     Renderer* renderer = engine.get_singleton<Renderer>();
     if (!this->grid.init(*renderer)) {
-        engine.log(RENDER_LOG_WARNING, "The grid shader did not load; see the messages above");
+        LOG::warning(LOG_CATEGORY::EDITOR, "The grid shader did not load; see the messages above");
     }
     engine.add_system(engine.phases.post_update, EditorGridPlugin::NAME, &EditorGridPlugin::update, this);
     engine.add_system(engine.phases.pre_shutdown, EditorGridPlugin::NAME, &EditorGridPlugin::detach, this);

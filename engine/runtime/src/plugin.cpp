@@ -1,4 +1,5 @@
 #include "engine/plugin.hpp"
+#include "engine/utils/log.hpp"
 
 #include "engine/memory/heap_allocator.hpp"
 
@@ -29,7 +30,7 @@ bool PluginRegistry::build_entry(Engine& engine, const usz index) {
     case PLUGIN_FAILED:
         return false;
     case PLUGIN_BUILDING:
-        fprintf(stderr, "[plugins] plugin '%s' requires itself through a cycle\n", this->entries[index].name);
+        LOG::error(LOG_CATEGORY::ENGINE, "plugin '%s' requires itself through a cycle", this->entries[index].name);
         return false;
     case PLUGIN_ADDED:
         break;
@@ -42,7 +43,7 @@ bool PluginRegistry::build_entry(Engine& engine, const usz index) {
     if (built) {
         this->build_order.push(index);
     } else {
-        fprintf(stderr, "[plugins] plugin '%s' failed to build\n", this->entries[index].name);
+        LOG::error(LOG_CATEGORY::ENGINE, "plugin '%s' failed to build", this->entries[index].name);
     }
     return built;
 }

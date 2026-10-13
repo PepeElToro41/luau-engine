@@ -3,6 +3,7 @@
 // is compilation_slang.cpp.
 
 #include "engine/shaders/compilation.hpp"
+#include "engine/utils/log.hpp"
 
 #include "shaders/compilation_backends.hpp"
 
@@ -223,19 +224,19 @@ CompiledShader CompiledShader::from_bytecode(const ShaderStage stage, const GpuS
     shader.allocator = allocator != nullptr ? allocator : MEMORY::heap_allocator();
 
     if (bytes == nullptr || size == 0) {
-        fprintf(stderr, "[shader] from_bytecode: empty\n");
+        LOG::error(LOG_CATEGORY::SHADER, "from_bytecode: empty");
         return shader;
     }
     if (kind == GPU_BYTECODE_SPIRV) {
         u32 magic = 0;
         memcpy(&magic, bytes, sizeof(magic));
         if ((size % sizeof(u32)) != 0 || size < sizeof(u32) || magic != SPIRV_MAGIC) {
-            fprintf(stderr, "[shader] from_bytecode: not SPIR-V (bad magic or size)\n");
+            LOG::error(LOG_CATEGORY::SHADER, "from_bytecode: not SPIR-V (bad magic or size)");
             return shader;
         }
     }
     if (entry_point == nullptr || strlen(entry_point) >= sizeof(shader.entry_point)) {
-        fprintf(stderr, "[shader] from_bytecode: entry point name missing or longer than %zu\n", sizeof(shader.entry_point) - 1);
+        LOG::error(LOG_CATEGORY::SHADER, "from_bytecode: entry point name missing or longer than %zu", sizeof(shader.entry_point) - 1);
         return shader;
     }
     strcpy(shader.entry_point, entry_point);

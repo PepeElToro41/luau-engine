@@ -1,10 +1,12 @@
 #include "engine/asset/asset_reader.hpp"
 
+#include "engine/utils/log.hpp"
+
 namespace {
 
 bool check_open(const AssetReader& reader, const char* what) {
     if (!reader.is_open()) {
-        fprintf(stderr, "[asset] error: %s on a closed reader\n", what);
+        LOG::error(LOG_CATEGORY::ASSET, "%s on a closed reader", what);
         return false;
     }
     return true;
@@ -17,29 +19,29 @@ bool AssetReader::open(const char* path) {
 
     File file;
     if (!PLATFORM::file_open(&file, path, FILE_ACCESS_READ)) {
-        fprintf(stderr, "[asset] error: cannot open %s\n", path);
+        LOG::error(LOG_CATEGORY::ASSET, "cannot open %s", path);
         return false;
     }
 
     AssetHeader header;
     if (!PLATFORM::file_read(file, 0, &header, sizeof(AssetHeader))) {
-        fprintf(stderr, "[asset] error: %s is shorter than an asset header\n", path);
+        LOG::error(LOG_CATEGORY::ASSET, "%s is shorter than an asset header", path);
         PLATFORM::file_close(&file);
         return false;
     }
     if (const AssetParseError error = AssetView::parse_header(header); error != ASSET_PARSE_OK) {
-        fprintf(stderr, "[asset] error: %s does not start with a valid asset header (%s)\n", path, ASSET_FILE::parse_error_name(error));
+        LOG::error(LOG_CATEGORY::ASSET, "%s does not start with a valid asset header (%s)", path, ASSET_FILE::parse_error_name(error));
         PLATFORM::file_close(&file);
         return false;
     }
     u64 on_disk = 0;
     if (!PLATFORM::file_size(file, &on_disk)) {
-        fprintf(stderr, "[asset] error: cannot read %s\n", path);
+        LOG::error(LOG_CATEGORY::ASSET, "cannot read %s", path);
         PLATFORM::file_close(&file);
         return false;
     }
     if (on_disk != header.file_size) {
-        fprintf(stderr, "[asset] error: %s is %llu bytes but its header says %llu\n", path, static_cast<unsigned long long>(on_disk),
+        LOG::error(LOG_CATEGORY::ASSET, "%s is %llu bytes but its header says %llu", path, static_cast<unsigned long long>(on_disk),
                 static_cast<unsigned long long>(header.file_size));
         PLATFORM::file_close(&file);
         return false;
@@ -75,11 +77,11 @@ AssetView AssetReader::read_prelude(BaseAllocator* allocator) {
     }
     u8* buffer = static_cast<u8*>(allocator->allocate(size, ASSET_FILE::PAYLOAD_ALIGNMENT));
     if (buffer == nullptr) {
-        fprintf(stderr, "[asset] error: out of memory reading a prelude (%llu bytes)\n", static_cast<unsigned long long>(size));
+        LOG::error(LOG_CATEGORY::ASSET, "out of memory reading a prelude (%llu bytes)", static_cast<unsigned long long>(size));
         return AssetView{ASSET_FILE_ERROR};
     }
     if (!PLATFORM::file_read(this->file, 0, buffer, size)) {
-        fprintf(stderr, "[asset] error: short read on a prelude\n");
+        LOG::error(LOG_CATEGORY::ASSET, "short read on a prelude");
         allocator->free(buffer);
         return AssetView{ASSET_FILE_ERROR};
     }
@@ -96,7 +98,7 @@ bool AssetReader::read_chunk(const ChunkEntry& chunk, void* out) {
     }
     if (chunk.offset % ASSET_FILE::PAYLOAD_ALIGNMENT != 0 || chunk.offset > this->header.file_size ||
         chunk.size > this->header.file_size - chunk.offset) {
-        fprintf(stderr, "[asset] error: chunk at %llu (+%llu) lies outside the %llu-byte file\n", static_cast<unsigned long long>(chunk.offset),
+        LOG::error(LOG_CATEGORY::ASSET, "chunk at %llu (+%llu) lies outside the %llu-byte file", static_cast<unsigned long long>(chunk.offset),
                 static_cast<unsigned long long>(chunk.size), static_cast<unsigned long long>(this->header.file_size));
         return false;
     }
@@ -104,7 +106,7 @@ bool AssetReader::read_chunk(const ChunkEntry& chunk, void* out) {
         return true;
     }
     if (!PLATFORM::file_read(this->file, chunk.offset, out, chunk.size)) {
-        fprintf(stderr, "[asset] error: short read on chunk at %llu (+%llu)\n", static_cast<unsigned long long>(chunk.offset),
+        LOG::error(LOG_CATEGORY::ASSET, "short read on chunk at %llu (+%llu)", static_cast<unsigned long long>(chunk.offset),
                 static_cast<unsigned long long>(chunk.size));
         return false;
     }
@@ -117,12 +119,12 @@ bool AssetReader::read_bytes(const ChunkEntry& chunk, const u64 offset, void* ou
     }
     if (chunk.offset % ASSET_FILE::PAYLOAD_ALIGNMENT != 0 || chunk.offset > this->header.file_size ||
         chunk.size > this->header.file_size - chunk.offset) {
-        fprintf(stderr, "[asset] error: chunk at %llu (+%llu) lies outside the %llu-byte file\n", static_cast<unsigned long long>(chunk.offset),
+        LOG::error(LOG_CATEGORY::ASSET, "chunk at %llu (+%llu) lies outside the %llu-byte file", static_cast<unsigned long long>(chunk.offset),
                 static_cast<unsigned long long>(chunk.size), static_cast<unsigned long long>(this->header.file_size));
         return false;
     }
     if (offset > chunk.size || size > chunk.size - offset) {
-        fprintf(stderr, "[asset] error: range %llu (+%llu) lies outside the %llu-byte chunk\n", static_cast<unsigned long long>(offset),
+        LOG::error(LOG_CATEGORY::ASSET, "range %llu (+%llu) lies outside the %llu-byte chunk", static_cast<unsigned long long>(offset),
                 static_cast<unsigned long long>(size), static_cast<unsigned long long>(chunk.size));
         return false;
     }
@@ -130,7 +132,7 @@ bool AssetReader::read_bytes(const ChunkEntry& chunk, const u64 offset, void* ou
         return true;
     }
     if (!PLATFORM::file_read(this->file, chunk.offset + offset, out, size)) {
-        fprintf(stderr, "[asset] error: short read on chunk at %llu (range %llu +%llu)\n", static_cast<unsigned long long>(chunk.offset),
+        LOG::error(LOG_CATEGORY::ASSET, "short read on chunk at %llu (range %llu +%llu)", static_cast<unsigned long long>(chunk.offset),
                 static_cast<unsigned long long>(offset), static_cast<unsigned long long>(size));
         return false;
     }
@@ -145,7 +147,7 @@ void* AssetReader::read_chunk(const ChunkEntry& chunk, BaseAllocator* allocator)
     }
     void* buffer = allocator->allocate(chunk.size, ASSET_FILE::PAYLOAD_ALIGNMENT);
     if (buffer == nullptr) {
-        fprintf(stderr, "[asset] error: out of memory reading a chunk (%llu bytes)\n", static_cast<unsigned long long>(chunk.size));
+        LOG::error(LOG_CATEGORY::ASSET, "out of memory reading a chunk (%llu bytes)", static_cast<unsigned long long>(chunk.size));
         return nullptr;
     }
     if (!this->read_chunk(chunk, buffer)) {
@@ -160,7 +162,7 @@ ReadChunk AssetReader::read_chunk(const AssetView& view, const u32 tag, BaseAllo
         return ReadChunk{ASSET_READ_INVALID};
     }
     if (!this->matches(view)) {
-        fprintf(stderr, "[asset] error: the view does not describe the open file; re-read its prelude\n");
+        LOG::error(LOG_CATEGORY::ASSET, "the view does not describe the open file; re-read its prelude");
         return ReadChunk{ASSET_READ_STALE_VIEW};
     }
     const ChunkEntry* chunk = view.find_chunk(tag);

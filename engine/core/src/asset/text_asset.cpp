@@ -3,6 +3,7 @@
 #include "engine/asset/asset_reader.hpp"
 #include "engine/platform/file.hpp"
 #include "engine/utils/hash.hpp"
+#include "engine/utils/log.hpp"
 
 #include <cstdio>
 #include <cstdlib>
@@ -353,16 +354,16 @@ AssetView TEXT_ASSET::build_prelude(const u32 type, const AssetGuid& guid, const
 AssetView TEXT_ASSET::build_prelude(const char* path, const void* text, const usz size, BaseAllocator* allocator) {
     const u32 type = type_of_path(path);
     if (type == 0) {
-        fprintf(stderr, "[asset] error: %s is not a text asset (unknown extension)\n", path != nullptr ? path : "(null)");
+        LOG::error(LOG_CATEGORY::ASSET, "%s is not a text asset (unknown extension)", path != nullptr ? path : "(null)");
         return AssetView(ASSET_PARSE_BAD_HEADER);
     }
     AssetGuid guid;
     u32 line = 0;
     if (!find_guid(static_cast<const char*>(text), size, &guid, &line)) {
         if (line != 0) {
-            fprintf(stderr, "[asset] error: %s:%u: malformed guid (32 hex digits expected)\n", path, line);
+            LOG::error(LOG_CATEGORY::ASSET, "%s:%u: malformed guid (32 hex digits expected)", path, line);
         } else {
-            fprintf(stderr, "[asset] error: %s: no top-level `guid = ...` line\n", path);
+            LOG::error(LOG_CATEGORY::ASSET, "%s: no top-level `guid = ...` line", path);
         }
         return AssetView(ASSET_PARSE_BAD_HEADER);
     }

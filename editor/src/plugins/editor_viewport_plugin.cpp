@@ -4,6 +4,7 @@
 #include "engine/gpu/gpu.hpp"
 #include "engine/plugins/render_plugin.hpp"
 #include "engine/plugins/window_plugin.hpp"
+#include "engine/utils/log.hpp"
 #include "plugins/editor_ui_plugin.hpp"
 
 #include <imgui_impl_vulkan.h>
@@ -42,7 +43,7 @@ bool EditorViewportPlugin::create_textures(Engine& engine, const u32 width, cons
         desc.usage = GPU_TEXTURE_USAGE_COLOR_ATTACHMENT | GPU_TEXTURE_USAGE_SAMPLED;
         this->viewport[i] = GPU::create_texture(gpu, desc);
         if (!this->viewport[i].is_valid()) {
-            engine.log(RENDER_LOG_ERROR, "Viewport texture %ux%u could not be created", width, height);
+            LOG::error(LOG_CATEGORY::EDITOR, "Viewport texture %ux%u could not be created", width, height);
             return false;
         }
         this->viewport_state[i] = GPU_STATE_UNDEFINED;
@@ -89,7 +90,7 @@ void EditorViewportPlugin::resize(SystemContext& ctx) {
     self->remove_ui_textures();
     self->destroy_textures(engine);
     if (!self->create_textures(engine, wanted_width, wanted_height)) {
-        engine.log(RENDER_LOG_ERROR, "Viewport resize to %ux%u failed", wanted_width, wanted_height);
+        LOG::error(LOG_CATEGORY::EDITOR, "Viewport resize to %ux%u failed", wanted_width, wanted_height);
     }
 }
 

@@ -1,4 +1,6 @@
 #include "gpu/vulkan/vk_check.hpp"
+
+#include "engine/utils/log.hpp"
 #include "gpu/vulkan/vk_context.hpp"
 
 // --- Deferred destruction -------------------------------------------------------
@@ -154,7 +156,7 @@ static bool vk_begin_frame(GpuContext* gpu, GpuFrame& out) {
     VulkanContext& vk = VK_CONTEXT::of(gpu);
     out = GpuFrame{};
     if (vk.frame_open) {
-        GPU::log(GPU::LOG_ERROR, "[vulkan] begin_frame: the previous frame was not ended");
+        LOG::error(LOG_CATEGORY::GPU, "[vulkan] begin_frame: the previous frame was not ended");
         return false;
     }
     if (vk.resize_pending) {
@@ -219,7 +221,7 @@ static bool vk_begin_frame(GpuContext* gpu, GpuFrame& out) {
 static bool vk_end_frame(GpuContext* gpu, GpuFrame& frame) {
     VulkanContext& vk = VK_CONTEXT::of(gpu);
     if (!vk.frame_open) {
-        GPU::log(GPU::LOG_ERROR, "[vulkan] end_frame without begin_frame");
+        LOG::error(LOG_CATEGORY::GPU, "[vulkan] end_frame without begin_frame");
         return false;
     }
     vk.frame_open = false;

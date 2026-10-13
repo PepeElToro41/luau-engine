@@ -3,6 +3,7 @@
 #include "engine/asset/asset_entity.hpp"
 #include "engine/asset/asset_types/scene_asset.hpp"
 #include "engine/asset/text_asset.hpp"
+#include "engine/gpu/vulkan/vk_access.hpp"
 #include "engine/plugins/demo_plugin.hpp"
 #include "engine/plugins/window_plugin.hpp"
 #include "engine/project.hpp"
@@ -10,8 +11,8 @@
 #include "engine/render/materials.hpp"
 #include "engine/render/renderer.hpp"
 #include "engine/render/shader_library.hpp"
-#include "engine/gpu/vulkan/vk_access.hpp"
 #include "engine/utils/hash.hpp"
+#include "engine/utils/log.hpp"
 #include "plugins/editor_camera_plugin.hpp"
 #include "plugins/editor_grid_plugin.hpp"
 #include "plugins/editor_viewport_plugin.hpp"
@@ -105,7 +106,7 @@ void Editor::draw() {
         camera->viewport_hovered = false;
     }
     if (this->show_asset_browser) {
-        this->asset_browser.draw(&this->show_asset_browser, this->engine->get_singleton<Project>(), this->output, this->selection);
+        this->asset_browser.draw(&this->show_asset_browser, this->engine->get_singleton<Project>(), this->selection);
         if (!this->asset_browser.activated.empty()) {
             const std::filesystem::path& file = this->asset_browser.activated;
             const Project* project = this->engine->get_singleton<Project>();
@@ -120,7 +121,7 @@ void Editor::draw() {
         }
     }
     if (this->show_import) {
-        if (this->import_panel.draw(&this->show_import, this->engine->get_singleton<Project>(), this->output)) {
+        if (this->import_panel.draw(&this->show_import, this->engine->get_singleton<Project>())) {
             this->asset_browser.refresh();
         }
     }
@@ -159,7 +160,7 @@ void Editor::resolve_selection() {
     // Material entity, or finds the one loaded before.
     const AssetGuid guid = this->engine->load_asset_file(absolute.string().c_str());
     if (guid.is_null()) {
-        this->output.error("Material %s could not be registered", this->selection.file.generic_string().c_str());
+        LOG::error(LOG_CATEGORY::EDITOR, "Material %s could not be registered", this->selection.file.generic_string().c_str());
         return;
     }
     this->selection.entity = MATERIAL::load(*this->engine->get_singleton<Renderer>(), guid);
@@ -176,13 +177,13 @@ void Editor::apply_file_action(const InspectorFileAction action) {
     switch (action) {
     case InspectorFileAction::SAVE:
         if (MATERIAL::save(*renderer, this->selection.entity, absolute.c_str())) {
-            this->output.info("Saved %s", shown.c_str());
+            LOG::info(LOG_CATEGORY::EDITOR, "Saved %s", shown.c_str());
             this->asset_browser.refresh();
         }
         break;
     case InspectorFileAction::RELOAD:
         if (MATERIAL::reload(*renderer, this->selection.entity)) {
-            this->output.info("Reloaded %s", shown.c_str());
+            LOG::info(LOG_CATEGORY::EDITOR, "Reloaded %s", shown.c_str());
         }
         break;
     case InspectorFileAction::NONE:
@@ -203,7 +204,7 @@ void Editor::save_all() {
     world->query<Material>().with<AssetDirty>().each([&](const EntityId entity, Material&) { dirty.push_back(entity); });
     const bool scene_pending = this->scene_needs_save();
     if (dirty.empty() && !scene_pending) {
-        this->output.info("Nothing to save");
+        LOG::info(LOG_CATEGORY::EDITOR, "Nothing to save");
         return;
     }
     u32 saved = 0;
@@ -218,10 +219,10 @@ void Editor::save_all() {
             }
         }
         if (MATERIAL::save(*renderer, entity)) {
-            this->output.info("Saved %s", shown.c_str());
+            LOG::info(LOG_CATEGORY::EDITOR, "Saved %s", shown.c_str());
             saved += 1;
         } else {
-            this->output.error("Could not save %s", shown.c_str());
+            LOG::error(LOG_CATEGORY::EDITOR, "Could not save %s", shown.c_str());
         }
     }
     if (saved > 0) {
@@ -248,11 +249,11 @@ void Editor::apply_inspector_request(const InspectorRequest& request) {
     case InspectorRequestKind::LOAD_MATERIAL: {
         const AssetUuid* asset = world->get<AssetUuid>(request.asset);
         if (asset == nullptr) {
-            this->output.error("%s is not an asset entity", asset_name);
+            LOG::error(LOG_CATEGORY::EDITOR, "%s is not an asset entity", asset_name);
         } else if (MATERIAL::load(*renderer, asset->guid) == 0) {
-            this->output.error("Material %s did not load", asset_name);
+            LOG::error(LOG_CATEGORY::EDITOR, "Material %s did not load", asset_name);
         } else {
-            this->output.info("Loaded material %s", asset_name);
+            LOG::info(LOG_CATEGORY::EDITOR, "Loaded material %s", asset_name);
         }
         break;
     }
@@ -261,9 +262,9 @@ void Editor::apply_inspector_request(const InspectorRequest& request) {
         // the library loads it by; loading an already compiled one is a lookup.
         const EntityId shader = SHADER_LIBRARY::load(*renderer, asset_name);
         if (shader == 0) {
-            this->output.error("Shader %s did not load", asset_name);
+            LOG::error(LOG_CATEGORY::EDITOR, "Shader %s did not load", asset_name);
         } else if (MATERIAL::set_shader(*renderer, request.target, shader)) {
-            this->output.info("Material now uses shader %s", asset_name);
+            LOG::info(LOG_CATEGORY::EDITOR, "Material now uses shader %s", asset_name);
         }
         break;
     }
@@ -299,7 +300,7 @@ void Editor::poll_import_dialog() {
         return;
     }
     if (!error.empty()) {
-        this->output.error("Import dialog: %s", error.c_str());
+        LOG::error(LOG_CATEGORY::EDITOR, "Import dialog: %s", error.c_str());
         return;
     }
     for (const std::filesystem::path& path : picked) {
@@ -415,26 +416,6 @@ void Editor::draw_main_menu() {
     ImGui::EndMainMenuBar();
 }
 
-void Editor::render_log(const RenderLogLevel level, const char* text, void* user_data) {
-    Editor* app = static_cast<Editor*>(user_data);
-    // Problems also go to the terminal, so a run without the panel in view
-    // (or a crash before it is drawn) still shows them.
-    if (level != RENDER_LOG_INFO) {
-        fprintf(stderr, "[editor][%s] %s\n", level == RENDER_LOG_ERROR ? "error" : "warning", text);
-    }
-    switch (level) {
-    case RENDER_LOG_ERROR:
-        app->output.error("%s", text);
-        break;
-    case RENDER_LOG_WARNING:
-        app->output.warning("%s", text);
-        break;
-    default:
-        app->output.info("%s", text);
-        break;
-    }
-}
-
 void Editor::draw_viewport() {
     EditorViewportPlugin* viewport = this->viewport();
     EditorCameraPlugin* camera = this->camera();
@@ -493,14 +474,14 @@ bool Editor::open_scene(const std::filesystem::path& absolute) {
     const std::string path = absolute.string();
     const AssetGuid guid = this->engine->load_asset_file(path.c_str());
     if (guid.is_null()) {
-        this->output.error("Scene %s could not be registered", path.c_str());
+        LOG::error(LOG_CATEGORY::EDITOR, "Scene %s could not be registered", path.c_str());
         return false;
     }
     // Whatever was selected is about to be deleted with the old content.
     this->selection.clear();
     const bool ok = this->engine->load_scene(guid);
     if (!ok) {
-        this->output.error("Scene %s did not load", path.c_str());
+        LOG::error(LOG_CATEGORY::EDITOR, "Scene %s did not load", path.c_str());
     }
     this->mark_scene_saved();
     return ok;
@@ -509,11 +490,11 @@ bool Editor::open_scene(const std::filesystem::path& absolute) {
 bool Editor::save_scene_to(const std::filesystem::path& absolute) {
     const std::string path = absolute.string();
     if (!this->engine->save_scene(path.c_str())) {
-        this->output.error("Could not save scene %s", path.c_str());
+        LOG::error(LOG_CATEGORY::EDITOR, "Could not save scene %s", path.c_str());
         return false;
     }
     this->mark_scene_saved();
-    this->output.info("Saved %s", this->scene_display_name().c_str());
+    LOG::info(LOG_CATEGORY::EDITOR, "Saved %s", this->scene_display_name().c_str());
     this->asset_browser.refresh();
     return true;
 }
@@ -545,7 +526,7 @@ void Editor::new_scene_now() {
     this->selection.clear();
     this->engine->new_scene();
     this->mark_scene_saved();
-    this->output.info("New scene");
+    LOG::info(LOG_CATEGORY::EDITOR, "New scene");
 }
 
 void Editor::request_new_scene() {
@@ -695,7 +676,7 @@ void Editor::poll_scene_dialog() {
     const SceneDialog kind = this->scene_dialog_kind;
     this->scene_dialog_kind = SceneDialog::NONE;
     if (!error.empty()) {
-        this->output.error("Scene dialog: %s", error.c_str());
+        LOG::error(LOG_CATEGORY::EDITOR, "Scene dialog: %s", error.c_str());
         this->pending = PendingAction::NONE;
         return;
     }
@@ -709,7 +690,7 @@ void Editor::poll_scene_dialog() {
     switch (kind) {
     case SceneDialog::OPEN:
         if (TEXT_ASSET::type_of_path(path.string().c_str()) != ASSET_TYPE::SCENE) {
-            this->output.error("%s is not a .scene file", path.string().c_str());
+            LOG::error(LOG_CATEGORY::EDITOR, "%s is not a .scene file", path.string().c_str());
         } else {
             this->open_scene(path);
         }

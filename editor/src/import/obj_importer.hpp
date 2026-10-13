@@ -4,6 +4,7 @@
 #include "engine/asset/asset_view.hpp"
 #include "engine/defines.hpp"
 #include "engine/templates/dynamic_array.hpp"
+#include "engine/utils/log.hpp"
 #include "import/importer.hpp"
 
 #include <filesystem>
@@ -18,7 +19,7 @@
 //
 //     std::string error;
 //     if (!OBJ::import(ImportSource::file("rock.obj"), "rock.lunaasset", MeshImportOptions{}, IMPORT::random_guid(), &error)) {
-//         output.error("%s", error.c_str());
+//         LOG::error(LOG_CATEGORY::EDITOR, "%s", error.c_str());
 //     }
 //
 // What is read: `v` (x y z; w ignored), `vt` (u v; w ignored), `vn`, `f` with

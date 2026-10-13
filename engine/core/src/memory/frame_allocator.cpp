@@ -1,5 +1,7 @@
 #include "engine/memory/frame_allocator.hpp"
 
+#include "engine/utils/log.hpp"
+
 #include <cstdio>
 
 FrameAllocator::FrameAllocator(const usz bytes)
@@ -28,7 +30,7 @@ void* FrameAllocator::allocate(const size_t size, const size_t alignment) {
     void* block = this->arena.allocate(size, alignment);
     if (block == nullptr && !this->exhausted) {
         // The arena already printed the sizes; say whose arena it was, once.
-        fprintf(stderr, "[memory] frame allocator exhausted at %llu of %llu bytes; the rest of this frame's scratch allocations fail\n",
+        LOG::error(LOG_CATEGORY::MEMORY, "frame allocator exhausted at %llu of %llu bytes; the rest of this frame's scratch allocations fail",
             static_cast<unsigned long long>(before), static_cast<unsigned long long>(this->arena.arena_size));
         this->exhausted = true;
     }

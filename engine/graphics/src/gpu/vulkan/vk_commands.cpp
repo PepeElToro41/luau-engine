@@ -1,4 +1,6 @@
 #include "gpu/vulkan/vk_check.hpp"
+
+#include "engine/utils/log.hpp"
 #include "gpu/vulkan/vk_context.hpp"
 
 // --- Barriers ---------------------------------------------------------------------
@@ -27,11 +29,11 @@ static void vk_cmd_barrier(const GpuCommandList cmd, const GpuTexture texture, c
     VulkanContext& vk = VK_CONTEXT::of_command_list(cmd, &list);
     VkTextureEntry* entry = VK_CONTEXT::texture(vk, texture.id);
     if (list == nullptr || entry == nullptr) {
-        GPU::log(GPU::LOG_ERROR, "[vulkan] barrier: invalid command list or texture");
+        LOG::error(LOG_CATEGORY::GPU, "[vulkan] barrier: invalid command list or texture");
         return;
     }
     if (to == GPU_STATE_UNDEFINED) {
-        GPU::log(GPU::LOG_ERROR, "[vulkan] barrier: cannot transition into UNDEFINED");
+        LOG::error(LOG_CATEGORY::GPU, "[vulkan] barrier: cannot transition into UNDEFINED");
         return;
     }
     VK_COMMANDS::barrier(list->cmd, *entry, from, to);
@@ -44,7 +46,7 @@ static void vk_cmd_bind_pipeline(const GpuCommandList cmd, const GpuPipeline pip
     VulkanContext& vk = VK_CONTEXT::of_command_list(cmd, &list);
     const VkPipelineEntry* entry = VK_CONTEXT::pipeline(vk, pipeline.id);
     if (list == nullptr || entry == nullptr) {
-        GPU::log(GPU::LOG_ERROR, "[vulkan] bind_pipeline: invalid command list or pipeline");
+        LOG::error(LOG_CATEGORY::GPU, "[vulkan] bind_pipeline: invalid command list or pipeline");
         return;
     }
     vkCmdBindPipeline(list->cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, entry->pipeline);
@@ -57,11 +59,11 @@ static void vk_cmd_bind_group(const GpuCommandList cmd, const u32 index, const G
     VulkanContext& vk = VK_CONTEXT::of_command_list(cmd, &list);
     const VkBindGroupEntry* entry = VK_CONTEXT::bind_group(vk, group.id);
     if (list == nullptr || entry == nullptr) {
-        GPU::log(GPU::LOG_ERROR, "[vulkan] bind_group: invalid command list or group");
+        LOG::error(LOG_CATEGORY::GPU, "[vulkan] bind_group: invalid command list or group");
         return;
     }
     if (list->bound_layout == VK_NULL_HANDLE) {
-        GPU::log(GPU::LOG_ERROR, "[vulkan] bind_group: no pipeline is bound");
+        LOG::error(LOG_CATEGORY::GPU, "[vulkan] bind_group: no pipeline is bound");
         return;
     }
     vkCmdBindDescriptorSets(list->cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, list->bound_layout, index, 1, &entry->set, 0, nullptr);
@@ -74,11 +76,11 @@ static void vk_cmd_push_constants(const GpuCommandList cmd, const void* data, co
         return;
     }
     if (list->bound_layout == VK_NULL_HANDLE) {
-        GPU::log(GPU::LOG_ERROR, "[vulkan] push_constants: no pipeline is bound");
+        LOG::error(LOG_CATEGORY::GPU, "[vulkan] push_constants: no pipeline is bound");
         return;
     }
     if (size > list->bound_push_size) {
-        GPU::log(GPU::LOG_ERROR, "[vulkan] push_constants: %u bytes but the pipeline declares %u", size, list->bound_push_size);
+        LOG::error(LOG_CATEGORY::GPU, "[vulkan] push_constants: %u bytes but the pipeline declares %u", size, list->bound_push_size);
         return;
     }
     vkCmdPushConstants(list->cmd, list->bound_layout, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0, size, data);
@@ -89,7 +91,7 @@ static void vk_cmd_bind_vertex_buffer(const GpuCommandList cmd, const u32 bindin
     VulkanContext& vk = VK_CONTEXT::of_command_list(cmd, &list);
     const VkBufferEntry* entry = VK_CONTEXT::buffer(vk, buffer.id);
     if (list == nullptr || entry == nullptr) {
-        GPU::log(GPU::LOG_ERROR, "[vulkan] bind_vertex_buffer: invalid command list or buffer");
+        LOG::error(LOG_CATEGORY::GPU, "[vulkan] bind_vertex_buffer: invalid command list or buffer");
         return;
     }
     const VkDeviceSize vk_offset = offset;
@@ -101,7 +103,7 @@ static void vk_cmd_bind_index_buffer(const GpuCommandList cmd, const GpuBuffer b
     VulkanContext& vk = VK_CONTEXT::of_command_list(cmd, &list);
     const VkBufferEntry* entry = VK_CONTEXT::buffer(vk, buffer.id);
     if (list == nullptr || entry == nullptr) {
-        GPU::log(GPU::LOG_ERROR, "[vulkan] bind_index_buffer: invalid command list or buffer");
+        LOG::error(LOG_CATEGORY::GPU, "[vulkan] bind_index_buffer: invalid command list or buffer");
         return;
     }
     vkCmdBindIndexBuffer(list->cmd, entry->buffer, offset, type == GPU_INDEX_U32 ? VK_INDEX_TYPE_UINT32 : VK_INDEX_TYPE_UINT16);
@@ -148,7 +150,7 @@ static void vk_cmd_clear_color(const GpuCommandList cmd, const GpuTexture textur
     VulkanContext& vk = VK_CONTEXT::of_command_list(cmd, &list);
     const VkTextureEntry* entry = VK_CONTEXT::texture(vk, texture.id);
     if (list == nullptr || entry == nullptr) {
-        GPU::log(GPU::LOG_ERROR, "[vulkan] clear_color: invalid command list or texture");
+        LOG::error(LOG_CATEGORY::GPU, "[vulkan] clear_color: invalid command list or texture");
         return;
     }
     VkImageSubresourceRange range{};
@@ -167,7 +169,7 @@ static void vk_cmd_clear_depth(const GpuCommandList cmd, const GpuTexture textur
     VulkanContext& vk = VK_CONTEXT::of_command_list(cmd, &list);
     const VkTextureEntry* entry = VK_CONTEXT::texture(vk, texture.id);
     if (list == nullptr || entry == nullptr) {
-        GPU::log(GPU::LOG_ERROR, "[vulkan] clear_depth: invalid command list or texture");
+        LOG::error(LOG_CATEGORY::GPU, "[vulkan] clear_depth: invalid command list or texture");
         return;
     }
     VkImageSubresourceRange range{};
@@ -186,7 +188,7 @@ static void vk_cmd_blit(const GpuCommandList cmd, const GpuTexture src, const Gp
     const VkTextureEntry* source = VK_CONTEXT::texture(vk, src.id);
     const VkTextureEntry* target = VK_CONTEXT::texture(vk, dst.id);
     if (list == nullptr || source == nullptr || target == nullptr) {
-        GPU::log(GPU::LOG_ERROR, "[vulkan] blit: invalid command list or texture");
+        LOG::error(LOG_CATEGORY::GPU, "[vulkan] blit: invalid command list or texture");
         return;
     }
     VkImageBlit region{};

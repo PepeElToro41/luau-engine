@@ -1,5 +1,7 @@
 #include "ui/import/import_panel.hpp"
 
+#include "engine/utils/log.hpp"
+
 #include "import/image_importer.hpp"
 #include "import/importer.hpp"
 #include "import/obj_importer.hpp"
@@ -119,7 +121,7 @@ std::filesystem::path ImportPanel::reimport_target(const Project& project) const
     return (project.root / item.asset).lexically_normal();
 }
 
-bool ImportPanel::import_front(const Project& project, OutputPanel& output) {
+bool ImportPanel::import_front(const Project& project) {
     const Item& item = this->queue.front();
     const std::filesystem::path target = this->destination(project);
     // Writing the asset back over itself keeps its GUID, so everything
@@ -131,7 +133,7 @@ bool ImportPanel::import_front(const Project& project, OutputPanel& output) {
     std::error_code fs_error;
     std::filesystem::create_directories(target.parent_path(), fs_error);
     if (fs_error) {
-        output.error("Import: cannot create %s: %s", target.parent_path().string().c_str(), fs_error.message().c_str());
+        LOG::error(LOG_CATEGORY::EDITOR, "Import: cannot create %s: %s", target.parent_path().string().c_str(), fs_error.message().c_str());
         return false;
     }
 
@@ -150,14 +152,14 @@ bool ImportPanel::import_front(const Project& project, OutputPanel& output) {
     }
     const std::string shown = item.source.describe();
     if (!ok) {
-        output.error("%s %s failed: %s", item.is_reimport() ? "Reimport" : "Import", shown.c_str(), error.c_str());
+        LOG::error(LOG_CATEGORY::EDITOR, "%s %s failed: %s", item.is_reimport() ? "Reimport" : "Import", shown.c_str(), error.c_str());
         return false;
     }
     const std::string relative = std::filesystem::relative(target, project.root, fs_error).generic_string();
     if (in_place) {
-        output.info("Reimported %s from its original %s", relative.c_str(), item.source.name.c_str());
+        LOG::info(LOG_CATEGORY::EDITOR, "Reimported %s from its original %s", relative.c_str(), item.source.name.c_str());
     } else {
-        output.info("Imported %s -> %s", shown.c_str(), relative.c_str());
+        LOG::info(LOG_CATEGORY::EDITOR, "Imported %s -> %s", shown.c_str(), relative.c_str());
     }
     return true;
 }
@@ -173,7 +175,7 @@ bool ImportPanel::will_overwrite(const Project& project) const {
 
 static const char* OVERWRITE_POPUP = "Replace existing file?";
 
-bool ImportPanel::draw(bool* open, const Project* project_or_null, OutputPanel& output) {
+bool ImportPanel::draw(bool* open, const Project* project_or_null) {
     if (this->queue.empty()) {
         *open = false;
         return false;
@@ -218,14 +220,14 @@ bool ImportPanel::draw(bool* open, const Project* project_or_null, OutputPanel& 
         if (this->will_overwrite(*project_or_null)) {
             ImGui::OpenPopup(OVERWRITE_POPUP);
         } else {
-            written = this->import_front(*project_or_null, output);
+            written = this->import_front(*project_or_null);
             if (written) {
                 this->pop_front();
             }
         }
     }
     ImGui::EndDisabled();
-    if (has_project && this->draw_overwrite_popup(*project_or_null, output)) {
+    if (has_project && this->draw_overwrite_popup(*project_or_null)) {
         written = true;
     }
     ImGui::SameLine();
@@ -248,7 +250,7 @@ bool ImportPanel::draw(bool* open, const Project* project_or_null, OutputPanel& 
 // The modal asking before an import replaces an existing .lunaasset. Opened by
 // the Import button; Overwrite imports the front file, Cancel (or Escape)
 // returns to the panel. Returns true when a file was written.
-bool ImportPanel::draw_overwrite_popup(const Project& project, OutputPanel& output) {
+bool ImportPanel::draw_overwrite_popup(const Project& project) {
     const ImVec2 center = ImGui::GetMainViewport()->GetCenter();
     ImGui::SetNextWindowPos(center, ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
     if (!ImGui::BeginPopupModal(OVERWRITE_POPUP, nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
@@ -263,7 +265,7 @@ bool ImportPanel::draw_overwrite_popup(const Project& project, OutputPanel& outp
 
     bool written = false;
     if (ImGui::Button("Overwrite", ImVec2(100.0f, 0.0f))) {
-        written = this->import_front(project, output);
+        written = this->import_front(project);
         if (written) {
             this->pop_front();
         }

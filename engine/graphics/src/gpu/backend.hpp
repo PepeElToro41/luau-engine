@@ -61,8 +61,3 @@ struct GpuBackend {
 namespace VULKAN_BACKEND {
 const GpuBackend* table();
 } // namespace VULKAN_BACKEND
-
-namespace GPU {
-// Formats and sends a message to the log sink (stderr when unset).
-void log(LogLevel level, const char* format, ...);
-} // namespace GPU

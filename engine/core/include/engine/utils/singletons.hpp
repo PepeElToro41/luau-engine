@@ -3,6 +3,7 @@
 #include "engine/defines.hpp"
 #include "engine/memory/base_allocator.hpp"
 #include "engine/templates/hash_map.hpp"
+#include "engine/utils/log.hpp"
 #include "engine/utils/type_id.hpp"
 
 #include <cstdio>
@@ -86,7 +87,7 @@ T* Singletons::create(Args&&... args) {
 
     const TypeId type_id = TYPE_ID::get<T>();
     if (this->entries.contains(type_id)) {
-        fprintf(stderr, "[singletons] error: singleton for type id %llu already exists; remove it before creating it again\n", type_id);
+        LOG::error(LOG_CATEGORY::ENGINE, "singleton for type id %llu already exists; remove it before creating it again", type_id);
         return nullptr;
     }
 

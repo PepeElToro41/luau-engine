@@ -8,6 +8,7 @@
 #include "engine/render/renderer.hpp"
 #include "engine/scene/scene.hpp"
 #include "engine/templates/dynamic_array.hpp"
+#include "engine/utils/log.hpp"
 
 #include <cstdio>
 #include <cstring>
@@ -138,7 +139,7 @@ void MATERIAL::migrate(Material& material, const ShaderProgram& old_program, con
 static bool attach(Renderer& renderer, const EntityId entity, const EntityId shader_entity) {
     const Shader* shader = renderer.world != nullptr ? renderer.world->get<Shader>(shader_entity) : nullptr;
     if (shader == nullptr) {
-        RENDERER::log(renderer, RENDER_LOG_ERROR, "create_material: entity %llu is not a shader", static_cast<unsigned long long>(shader_entity));
+        LOG::error(LOG_CATEGORY::RENDER, "create_material: entity %llu is not a shader", static_cast<unsigned long long>(shader_entity));
         return false;
     }
     Material material;
@@ -152,7 +153,7 @@ static bool attach(Renderer& renderer, const EntityId entity, const EntityId sha
 EntityId MATERIAL::create(Renderer& renderer, const EntityId shader_entity) {
     const Shader* shader = renderer.world != nullptr ? renderer.world->get<Shader>(shader_entity) : nullptr;
     if (shader == nullptr) {
-        RENDERER::log(renderer, RENDER_LOG_ERROR, "create_material: entity %llu is not a shader", static_cast<unsigned long long>(shader_entity));
+        LOG::error(LOG_CATEGORY::RENDER, "create_material: entity %llu is not a shader", static_cast<unsigned long long>(shader_entity));
         return 0;
     }
     char name[ENTITY_NAME_CAPACITY];
@@ -168,7 +169,7 @@ bool MATERIAL::set_shader(Renderer& renderer, const EntityId entity, const Entit
     Material* material = renderer.world != nullptr ? renderer.world->get<Material>(entity) : nullptr;
     const Shader* shader = renderer.world != nullptr ? renderer.world->get<Shader>(shader_entity) : nullptr;
     if (material == nullptr || shader == nullptr) {
-        RENDERER::log(renderer, RENDER_LOG_ERROR, "set_shader: entity %llu is not a material or %llu not a shader", static_cast<unsigned long long>(entity),
+        LOG::error(LOG_CATEGORY::RENDER, "set_shader: entity %llu is not a material or %llu not a shader", static_cast<unsigned long long>(entity),
             static_cast<unsigned long long>(shader_entity));
         return false;
     }
@@ -188,7 +189,7 @@ static bool resolve(Renderer& renderer, const EntityId entity, const char* what,
     *material = renderer.world != nullptr ? renderer.world->get<Material>(entity) : nullptr;
     *shader = *material != nullptr ? renderer.world->get<Shader>((*material)->shader) : nullptr;
     if (*material == nullptr || *shader == nullptr) {
-        RENDERER::log(renderer, RENDER_LOG_ERROR, "%s '%s': not a material entity", what, name != nullptr ? name : "");
+        LOG::error(LOG_CATEGORY::RENDER, "%s '%s': not a material entity", what, name != nullptr ? name : "");
         return false;
     }
     MATERIAL::sync(**material, **shader);
@@ -205,11 +206,11 @@ static bool set_param(Renderer& renderer, const EntityId entity, const char* nam
     const ReflectedBinding* block = program.has_material_block() ? program.material_interface.find_binding(2, program.material_block_binding) : nullptr;
     const ReflectedMember* member = block != nullptr ? program.material_interface.find_member(*block, name) : nullptr;
     if (member == nullptr) {
-        RENDERER::log(renderer, RENDER_LOG_ERROR, "material of %s has no block member '%s'", shader->name, name != nullptr ? name : "");
+        LOG::error(LOG_CATEGORY::RENDER, "material of %s has no block member '%s'", shader->name, name != nullptr ? name : "");
         return false;
     }
     if (member->scalar != scalar || member->columns != columns || member->rows != rows || member->size < size) {
-        RENDERER::log(renderer, RENDER_LOG_ERROR, "material of %s: member '%s' is a %ux%u %s, not what set_* was given", shader->name, name, member->columns, member->rows,
+        LOG::error(LOG_CATEGORY::RENDER, "material of %s: member '%s' is a %ux%u %s, not what set_* was given", shader->name, name, member->columns, member->rows,
             SHADER_REFLECT::scalar_name(member->scalar));
         return false;
     }
@@ -258,7 +259,7 @@ bool MATERIAL::set_texture(Renderer& renderer, const EntityId entity, const char
     }
     const ReflectedBinding* binding = shader->program.material_interface.find_binding(2, name);
     if (binding == nullptr || binding->type != GPU_BINDING_TEXTURE) {
-        RENDERER::log(renderer, RENDER_LOG_ERROR, "material of %s has no texture '%s' in its material set", shader->name, name != nullptr ? name : "");
+        LOG::error(LOG_CATEGORY::RENDER, "material of %s has no texture '%s' in its material set", shader->name, name != nullptr ? name : "");
         return false;
     }
     for (u32 i = 0; i < material->texture_count; ++i) {
@@ -279,7 +280,7 @@ bool MATERIAL::set_sampler(Renderer& renderer, const EntityId entity, const char
     }
     const ReflectedBinding* binding = shader->program.material_interface.find_binding(2, name);
     if (binding == nullptr || binding->type != GPU_BINDING_SAMPLER) {
-        RENDERER::log(renderer, RENDER_LOG_ERROR, "material of %s has no sampler '%s' in its material set", shader->name, name != nullptr ? name : "");
+        LOG::error(LOG_CATEGORY::RENDER, "material of %s has no sampler '%s' in its material set", shader->name, name != nullptr ? name : "");
         return false;
     }
     for (u32 i = 0; i < material->sampler_count; ++i) {
@@ -349,12 +350,12 @@ static bool apply_param(Renderer& renderer, Material& material, const Shader& sh
     const ReflectedBinding* block = program.has_material_block() ? program.material_interface.find_binding(2, program.material_block_binding) : nullptr;
     const ReflectedMember* member = block != nullptr ? program.material_interface.find_member(*block, param.name) : nullptr;
     if (member == nullptr) {
-        RENDERER::log(renderer, RENDER_LOG_WARNING, "material %s: shader %s has no block member '%s'", label, shader.name, param.name);
+        LOG::warning(LOG_CATEGORY::RENDER, "material %s: shader %s has no block member '%s'", label, shader.name, param.name);
         return false;
     }
     const u32 components = static_cast<u32>(member->columns) * member->rows;
     if (param.count != components) {
-        RENDERER::log(renderer, RENDER_LOG_WARNING, "material %s: '%s' is a %ux%u %s and takes %u numbers, the file gives %u", label, param.name, member->columns,
+        LOG::warning(LOG_CATEGORY::RENDER, "material %s: '%s' is a %ux%u %s and takes %u numbers, the file gives %u", label, param.name, member->columns,
             member->rows, SHADER_REFLECT::scalar_name(member->scalar), components, param.count);
         return false;
     }
@@ -421,16 +422,16 @@ static bool read_asset(Renderer& renderer, const AssetGuid& guid, MaterialAsset&
     char text_guid[TEXT_ASSET::GUID_TEXT_CAPACITY];
     TEXT_ASSET::format_guid(guid, text_guid);
     if (renderer.provider == nullptr) {
-        RENDERER::log(renderer, RENDER_LOG_ERROR, "material %s: the renderer has no asset provider", text_guid);
+        LOG::error(LOG_CATEGORY::RENDER, "material %s: the renderer has no asset provider", text_guid);
         return false;
     }
     AssetResource* resource = renderer.provider->get(guid);
     if (resource == nullptr) {
-        RENDERER::log(renderer, RENDER_LOG_ERROR, "material %s: not registered with the asset provider, or its file could not be read", text_guid);
+        LOG::error(LOG_CATEGORY::RENDER, "material %s: not registered with the asset provider, or its file could not be read", text_guid);
         return false;
     }
     if (resource->view.header->type != ASSET_TYPE::MATERIAL || !resource->is_text()) {
-        RENDERER::log(renderer, RENDER_LOG_ERROR, "%s: not a .material asset", resource->path);
+        LOG::error(LOG_CATEGORY::RENDER, "%s: not a .material asset", resource->path);
         return false;
     }
     const ChunkEntry* entry = nullptr;
@@ -440,9 +441,9 @@ static bool read_asset(Renderer& renderer, const AssetGuid& guid, MaterialAsset&
     renderer.provider->unload(resource);
     if (error != MATERIAL_PARSE_OK) {
         if (line != 0) {
-            RENDERER::log(renderer, RENDER_LOG_ERROR, "%s:%u: %s", resource->path, line, MATERIAL_ASSET::parse_error_name(error));
+            LOG::error(LOG_CATEGORY::RENDER, "%s:%u: %s", resource->path, line, MATERIAL_ASSET::parse_error_name(error));
         } else {
-            RENDERER::log(renderer, RENDER_LOG_ERROR, "%s: %s", resource->path, MATERIAL_ASSET::parse_error_name(error));
+            LOG::error(LOG_CATEGORY::RENDER, "%s: %s", resource->path, MATERIAL_ASSET::parse_error_name(error));
         }
         return false;
     }
@@ -461,7 +462,7 @@ EntityId MATERIAL::load(Renderer& renderer, const AssetGuid& asset) {
     }
     const EntityId shader = SHADER_LIBRARY::load(renderer, parsed.shader);
     if (shader == 0) {
-        RENDERER::log(renderer, RENDER_LOG_ERROR, "%s: shader '%s' did not load", path, parsed.shader);
+        LOG::error(LOG_CATEGORY::RENDER, "%s: shader '%s' did not load", path, parsed.shader);
         return 0;
     }
     // The material lives on the asset's own entity when the file was
@@ -494,7 +495,7 @@ EntityId MATERIAL::load(Renderer& renderer, const AssetGuid& asset) {
 bool MATERIAL::reload(Renderer& renderer, const EntityId entity) {
     Material* material = renderer.world != nullptr ? renderer.world->get<Material>(entity) : nullptr;
     if (material == nullptr || material->asset.is_null()) {
-        RENDERER::log(renderer, RENDER_LOG_ERROR, "reload: entity %llu is not a material loaded from a file", static_cast<unsigned long long>(entity));
+        LOG::error(LOG_CATEGORY::RENDER, "reload: entity %llu is not a material loaded from a file", static_cast<unsigned long long>(entity));
         return false;
     }
     MaterialAsset parsed;
@@ -504,7 +505,7 @@ bool MATERIAL::reload(Renderer& renderer, const EntityId entity) {
     }
     const EntityId shader_entity = SHADER_LIBRARY::load(renderer, parsed.shader);
     if (shader_entity == 0) {
-        RENDERER::log(renderer, RENDER_LOG_ERROR, "%s: shader '%s' did not load", path, parsed.shader);
+        LOG::error(LOG_CATEGORY::RENDER, "%s: shader '%s' did not load", path, parsed.shader);
         return false;
     }
     // Loading may have spawned a Shader entity: take the pointers again.
@@ -608,11 +609,11 @@ bool MATERIAL::save(Renderer& renderer, const EntityId entity, const char* path)
         return false;
     }
     if (asset.guid.is_null()) {
-        RENDERER::log(renderer, RENDER_LOG_ERROR, "save %s: the material has no asset guid; assign Material::asset first", path != nullptr ? path : "");
+        LOG::error(LOG_CATEGORY::RENDER, "save %s: the material has no asset guid; assign Material::asset first", path != nullptr ? path : "");
         return false;
     }
     if (!MATERIAL_ASSET::write_file(asset, path)) {
-        RENDERER::log(renderer, RENDER_LOG_ERROR, "save %s: could not write the file", path != nullptr ? path : "");
+        LOG::error(LOG_CATEGORY::RENDER, "save %s: could not write the file", path != nullptr ? path : "");
         return false;
     }
     renderer.world->remove<AssetDirty>(entity);
@@ -622,7 +623,7 @@ bool MATERIAL::save(Renderer& renderer, const EntityId entity, const char* path)
 bool MATERIAL::save(Renderer& renderer, const EntityId entity) {
     const Material* material = renderer.world != nullptr ? renderer.world->get<Material>(entity) : nullptr;
     if (material == nullptr) {
-        RENDERER::log(renderer, RENDER_LOG_ERROR, "save: entity %llu is not a material", static_cast<unsigned long long>(entity));
+        LOG::error(LOG_CATEGORY::RENDER, "save: entity %llu is not a material", static_cast<unsigned long long>(entity));
         return false;
     }
     // The asset entity's own path first (what the editor registered the
@@ -634,7 +635,7 @@ bool MATERIAL::save(Renderer& renderer, const EntityId entity) {
     }
     const AssetResource* resource = !material->asset.is_null() && renderer.provider != nullptr ? renderer.provider->find(material->asset) : nullptr;
     if (resource == nullptr || resource->path == nullptr) {
-        RENDERER::log(renderer, RENDER_LOG_ERROR, "save: material %llu has no file; save it to a path first", static_cast<unsigned long long>(entity));
+        LOG::error(LOG_CATEGORY::RENDER, "save: material %llu has no file; save it to a path first", static_cast<unsigned long long>(entity));
         return false;
     }
     return save(renderer, entity, resource->path);

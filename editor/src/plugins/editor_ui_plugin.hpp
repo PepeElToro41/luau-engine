@@ -3,6 +3,7 @@
 #include "editor.hpp"
 #include "engine/plugin.hpp"
 #include "engine/scheduler/scheduler.hpp"
+#include "engine/utils/log.hpp"
 
 // ImGui and the editor's panels as a plugin. build creates the ImGui
 // context and its SDL3 / Vulkan backends on the window plugin's window and
@@ -27,6 +28,8 @@ struct EditorUiPlugin : Plugin {
 
     Editor editor;
     PhaseHandle ui_phase;
+    // The Output panel as a log sink, from build to pre_shutdown.
+    LogSinkHandle log_sink;
 
 private:
     bool init_imgui(Engine& engine);

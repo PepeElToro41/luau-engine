@@ -47,8 +47,6 @@ struct Editor {
     void request_new_scene();
     void request_open_scene(const std::filesystem::path& file = {});
     void request_quit();
-    // Renderer messages land in the Output panel.
-    static void render_log(RenderLogLevel level, const char* text, void* user_data);
 
     Engine* engine = nullptr;
     OutputPanel output;

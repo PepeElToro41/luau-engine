@@ -4,6 +4,7 @@
 #include "engine/ecs/ecs.hpp"
 #include "engine/ecs/world.hpp"
 #include "engine/memory/temporal_allocator.hpp"
+#include "engine/utils/log.hpp"
 #include "engine/utils/math.hpp"
 
 #include <cstddef>
@@ -383,12 +384,12 @@ void Archetype::destroy() {
     // The slot must still be alive and carry the generation in archetype_id,
     // or this object is stale and nothing here can be trusted.
     if (world->archetypes.get_element_alive(this->archetype_id) != this) {
-        fprintf(stderr, "[ecs] error: destroying archetype %llu whose slot is dead or recycled\n",
+        LOG::error(LOG_CATEGORY::ECS, "destroying archetype %llu whose slot is dead or recycled",
             this->archetype_id);
         return;
     }
     if (this->data.entity_count != 0) {
-        fprintf(stderr, "[ecs] error: destroying archetype %llu that still holds %llu entities\n",
+        LOG::error(LOG_CATEGORY::ECS, "destroying archetype %llu that still holds %llu entities",
             this->archetype_id, this->data.entity_count);
         return;
     }

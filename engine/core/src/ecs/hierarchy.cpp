@@ -5,6 +5,7 @@
 #include "engine/ecs/entity_index.hpp"
 #include "engine/ecs/world.hpp"
 #include "engine/memory/temporal_allocator.hpp"
+#include "engine/utils/log.hpp"
 
 #include <cstdio>
 #include <new>
@@ -177,7 +178,7 @@ u32 depth(World* world, ComponentRecord* record) {
     if (node->computing) {
         // Reached this pair again while walking up from it: its target is
         // its own ancestor. No depth is right; 0 closes the loop.
-        fprintf(stderr, "[ecs] error: cycle in relation %llx through pair %llx; hierarchy depth is undefined\n",
+        LOG::error(LOG_CATEGORY::ECS, "cycle in relation %llx through pair %llx; hierarchy depth is undefined",
             ECS::PAIR_FIRST(record->id), record->id);
         return 0;
     }
@@ -260,7 +261,7 @@ const ReachableSet* reachable(World* world, ComponentRecord* record) {
         return nullptr;
     }
     if (node->reachable_computing) {
-        fprintf(stderr, "[ecs] error: cycle in relation %llx through pair %llx; what its holders reach is undefined\n",
+        LOG::error(LOG_CATEGORY::ECS, "cycle in relation %llx through pair %llx; what its holders reach is undefined",
             static_cast<unsigned long long>(ECS::PAIR_FIRST(record->id)), static_cast<unsigned long long>(record->id));
         return nullptr;
     }

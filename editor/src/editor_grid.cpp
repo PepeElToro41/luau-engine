@@ -6,6 +6,7 @@
 #include "engine/render/pipelines.hpp"
 #include "engine/render/shader_library.hpp"
 #include "engine/utils/hash.hpp"
+#include "engine/utils/log.hpp"
 
 static constexpr const char* GRID_PASS_NAME = "alpha";
 static constexpr const char* GRID_CALLBACK_NAME = "editor_grid";
@@ -19,7 +20,7 @@ bool EditorGrid::init(Renderer& renderer) {
 
     this->pass = graph.add_pass(GRID_PASS_NAME, RENDER_PASS_CUSTOM);
     if (!this->pass.is_valid()) {
-        RENDERER::log(renderer, RENDER_LOG_ERROR, "editor grid: a pass named '%s' already exists", GRID_PASS_NAME);
+        LOG::error(LOG_CATEGORY::EDITOR, "editor grid: a pass named '%s' already exists", GRID_PASS_NAME);
         return false;
     }
     graph.set_color_attachment(this->pass, 0, graph.backbuffer, RENDER_LOAD_LOAD, RENDER_STORE_STORE);

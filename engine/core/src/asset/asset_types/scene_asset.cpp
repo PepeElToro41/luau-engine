@@ -9,6 +9,7 @@
 #include "engine/memory/temporal_allocator.hpp"
 #include "engine/scene/scene.hpp"
 #include "engine/templates/hash_map.hpp"
+#include "engine/utils/log.hpp"
 
 #include <algorithm>
 #include <cstdio>
@@ -168,14 +169,14 @@ void SCENE_ASSET::write(World& world, const EntityId root, const AssetGuid& guid
 
 bool SCENE_ASSET::write_file(World& world, const EntityId root, const AssetGuid& guid, SerializeContext& ctx, const char* path) {
     if (guid.is_null()) {
-        fprintf(stderr, "[scene] error: cannot write %s: the scene has no guid\n", path != nullptr ? path : "(null)");
+        LOG::error(LOG_CATEGORY::SCENE, "cannot write %s: the scene has no guid", path != nullptr ? path : "(null)");
         return false;
     }
     DynamicArray<char> text;
     write(world, root, guid, ctx, text);
     const bool ok = ASSET_FILE::write_file(path, text.data, text.count);
     if (!ok) {
-        fprintf(stderr, "[scene] error: cannot write %s\n", path != nullptr ? path : "(null)");
+        LOG::error(LOG_CATEGORY::SCENE, "cannot write %s", path != nullptr ? path : "(null)");
     }
     text.free();
     return ok;

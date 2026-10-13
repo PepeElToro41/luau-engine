@@ -3,6 +3,7 @@
 #include "engine/render/components.hpp"
 #include "engine/render/renderer.hpp"
 #include "engine/utils/hash.hpp"
+#include "engine/utils/log.hpp"
 
 #include <cstdio>
 
@@ -64,7 +65,7 @@ GpuPipeline PIPELINES::get(Renderer& renderer, const EntityId shader_entity, con
     char error[256];
     if (mesh != nullptr) {
         if (!VERTEX_INPUT::build(pass->reflection, *mesh, desc.vertex_input, error, sizeof(error))) {
-            RENDERER::log(renderer, RENDER_LOG_ERROR, "shader %s, pass %s: %s", shader.name, pass->tag_name, error);
+            LOG::error(LOG_CATEGORY::SHADER, "shader %s, pass %s: %s", shader.name, pass->tag_name, error);
             renderer.pipelines.pipelines.insert(key, pipeline);
             return pipeline;
         }
@@ -98,7 +99,7 @@ GpuPipeline PIPELINES::get(Renderer& renderer, const EntityId shader_entity, con
 
     pipeline = GPU::create_pipeline(renderer.gpu, desc);
     if (!pipeline.is_valid()) {
-        RENDERER::log(renderer, RENDER_LOG_ERROR, "shader %s, pass %s: pipeline creation failed", shader.name, pass->tag_name);
+        LOG::error(LOG_CATEGORY::SHADER, "shader %s, pass %s: pipeline creation failed", shader.name, pass->tag_name);
     }
     renderer.pipelines.pipelines.insert(key, pipeline);
     return pipeline;

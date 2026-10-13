@@ -8,6 +8,7 @@
 #include "engine/ecs/hierarchy.hpp"
 #include "engine/ecs/world.hpp"
 #include "engine/memory/temporal_allocator.hpp"
+#include "engine/utils/log.hpp"
 
 #include <cstdio>
 
@@ -844,7 +845,7 @@ QueryIter start(World* world, const QueryProgram* program, QueryScanCache* cache
     }
     const bool cascades = program->cascade_term != QUERY_OP_NONE;
     if (cache != nullptr && (!cache->ok || cache->term_count != program->this_term_count || (cache->cascade_relation != 0) != cascades)) {
-        fprintf(stderr, "[ecs] error: query VM given a cache that was not built from its program; ignoring it\n");
+        LOG::error(LOG_CATEGORY::ECS, "query VM given a cache that was not built from its program; ignoring it");
         cache = nullptr;
     }
 

@@ -3,6 +3,7 @@
 #include "engine/ecs/archetype/archetype.hpp"
 #include "engine/ecs/entity_index.hpp"
 #include "engine/ecs/world.hpp"
+#include "engine/utils/log.hpp"
 
 #include <algorithm>
 #include <cstdio>
@@ -52,7 +53,7 @@ void SCENE::set_parent(World& world, const EntityId entity, const EntityId paren
         return;
     }
     if (parent == entity || SCENE::is_descendant_of(world, parent, entity)) {
-        fprintf(stderr, "[scene] warning: cannot parent entity %llx under %llx, it would close a cycle\n",
+        LOG::warning(LOG_CATEGORY::SCENE, "cannot parent entity %llx under %llx, it would close a cycle",
             static_cast<unsigned long long>(entity), static_cast<unsigned long long>(parent));
         return;
     }

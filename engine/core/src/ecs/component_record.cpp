@@ -1,12 +1,13 @@
 #include "engine/ecs/component_record.hpp"
 
 #include "engine/ecs/archetype/archetype.hpp"
-
-#include "engine/ecs/hierarchy.hpp"
-
 #include "engine/ecs/ecs.hpp"
 #include "engine/ecs/entity.hpp"
+#include "engine/ecs/hierarchy.hpp"
 #include "engine/ecs/world.hpp"
+#include "engine/utils/log.hpp"
+
+
 
 #include <cstdio>
 
@@ -227,13 +228,13 @@ ComponentRecord* ComponentRecord::component_record_find(World* world, const Id i
 
 bool ComponentRecord::component_record_delete(World* world, ComponentRecord* record) {
     if (record->archetype_count() != 0) {
-        fprintf(stderr, "[ecs] error: deleting component record %llx still held by %llu archetypes\n",
+        LOG::error(LOG_CATEGORY::ECS, "deleting component record %llx still held by %llu archetypes",
             static_cast<unsigned long long>(record->id), static_cast<unsigned long long>(record->archetype_count()));
         return false;
     }
     const PairRecord* pairs = record->pair_record;
     if (pairs != nullptr && (!pairs->first_records.is_empty() || !pairs->second_records.is_empty())) {
-        fprintf(stderr, "[ecs] error: deleting wildcard record %llx that still covers %llu pairs\n",
+        LOG::error(LOG_CATEGORY::ECS, "deleting wildcard record %llx that still covers %llu pairs",
             record->id, static_cast<u64>(pairs->first_records.count + pairs->second_records.count));
         return false;
     }

@@ -2,32 +2,10 @@
 
 #include "engine/ecs/world.hpp"
 #include "engine/utils/hash.hpp"
+#include "engine/utils/log.hpp"
 
-#include <cstdarg>
-#include <cstdio>
 #include <cstring>
 #include <utility>
-
-// --- Log ---------------------------------------------------------------------------
-
-void RENDERER::log(const Renderer& renderer, const RenderLogLevel level, const char* format, ...) {
-    char text[2048];
-    va_list args;
-    va_start(args, format);
-    vsnprintf(text, sizeof(text), format, args);
-    va_end(args);
-    if (renderer.log_sink.fn != nullptr) {
-        renderer.log_sink.fn(level, text, renderer.log_sink.user_data);
-        return;
-    }
-    static const char* const prefixes[] = {"", "warning: ", "error: "};
-    fprintf(stderr, "[render] %s%s\n", prefixes[level], text);
-}
-
-static void gpu_log(const GPU::LogLevel level, const char* text, void* user_data) {
-    const Renderer* renderer = static_cast<const Renderer*>(user_data);
-    RENDERER::log(*renderer, static_cast<RenderLogLevel>(level), "%s", text);
-}
 
 // --- Lifetime ----------------------------------------------------------------------
 
@@ -106,7 +84,6 @@ bool RENDERER::init(Renderer& renderer, GpuContext* gpu, World* world, AssetReso
     if (engine_render_dir != nullptr) {
         strncpy(renderer.engine_render_dir, engine_render_dir, RENDERER_PATH_MAX - 1);
     }
-    GPU::set_log_sink(gpu_log, &renderer);
     renderer.graph.init();
     renderer.plan.init();
     renderer.next_plan.init();
@@ -137,7 +114,6 @@ void RENDERER::shutdown(Renderer& renderer) {
     renderer.diagnostics.free();
     renderer.custom_passes.free();
     renderer.plan_valid = false;
-    GPU::set_log_sink(nullptr, nullptr);
     renderer.gpu = nullptr;
     renderer.world = nullptr;
     renderer.provider = nullptr;
@@ -185,7 +161,7 @@ static void report_diagnostics(Renderer& renderer) {
     for (const RenderDiagnostic& diagnostic : renderer.diagnostics) {
         const RenderPassDesc* pass = renderer.graph.pass(diagnostic.pass);
         const RenderResourceDesc* resource = renderer.graph.resource(diagnostic.resource);
-        RENDERER::log(renderer, diagnostic.severity == RENDER_DIAG_ERROR ? RENDER_LOG_ERROR : RENDER_LOG_WARNING, "render graph: %s%s%s%s%s%s%s",
+        LOG::write(diagnostic.severity == RENDER_DIAG_ERROR ? LOG_ERROR : LOG_WARNING, LOG_CATEGORY::RENDER, "render graph: %s%s%s%s%s%s%s",
             pass != nullptr ? "pass '" : "", pass != nullptr ? pass->name : "", pass != nullptr ? "': " : "", diagnostic.message, resource != nullptr ? " (resource '" : "",
             resource != nullptr ? resource->name : "", resource != nullptr ? "')" : "");
     }
@@ -199,7 +175,7 @@ static bool recompile(Renderer& renderer, const RenderBackbufferInfo& info) {
         return false;
     }
     if (!GRAPH_EXECUTOR::realize(renderer, renderer.next_plan)) {
-        RENDERER::log(renderer, RENDER_LOG_ERROR, "render graph: could not realize the plan; keeping the previous one");
+        LOG::error(LOG_CATEGORY::RENDER, "render graph: could not realize the plan; keeping the previous one");
         return false;
     }
     std::swap(renderer.plan, renderer.next_plan);

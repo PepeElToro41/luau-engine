@@ -3,6 +3,7 @@
 #include "engine/ecs/ecs.hpp"
 #include "engine/ecs/entity.hpp"
 #include "engine/ecs/world.hpp"
+#include "engine/utils/log.hpp"
 
 #include <cstdio>
 
@@ -30,7 +31,7 @@ bool is_plain_this(const QueryTerm& term, const bool in_or) {
 }
 
 void report(const u32 term, const char* message) {
-    fprintf(stderr, "[ecs] error: query term %u: %s\n", term, message);
+    LOG::error(LOG_CATEGORY::ECS, "query term %u: %s", term, message);
 }
 
 bool validate_var(const QueryVar var, const usz var_count, const u32 term, const char* side) {
@@ -38,7 +39,7 @@ bool validate_var(const QueryVar var, const usz var_count, const u32 term, const
         return true;
     }
     if (var.index >= var_count) {
-        fprintf(stderr, "[ecs] error: query term %u: %s refers to variable %u, but the query has %llu\n",
+        LOG::error(LOG_CATEGORY::ECS, "query term %u: %s refers to variable %u, but the query has %llu",
             term, side, var.index, static_cast<unsigned long long>(var_count));
         return false;
     }
@@ -48,7 +49,7 @@ bool validate_var(const QueryVar var, const usz var_count, const u32 term, const
 // Checks what can be checked term by term. False with an error printed.
 bool validate(World* world, const QueryTerm* terms, const usz term_count, const usz var_count) {
     if (var_count == 0 || var_count > QUERY_MAX_VARS) {
-        fprintf(stderr, "[ecs] error: query has %llu variables; between 1 (THIS) and %llu are supported\n",
+        LOG::error(LOG_CATEGORY::ECS, "query has %llu variables; between 1 (THIS) and %llu are supported",
             static_cast<unsigned long long>(var_count), static_cast<unsigned long long>(QUERY_MAX_VARS));
         return false;
     }
@@ -86,7 +87,7 @@ bool validate(World* world, const QueryTerm* terms, const usz term_count, const 
         }
         if (term.traverses()) {
             if (!ENTITY::has(world, term.traverse, ECS::TRAVERSABLE)) {
-                fprintf(stderr, "[ecs] error: query term %u: up(%llx) walks a relation that is not TRAVERSABLE\n",
+                LOG::error(LOG_CATEGORY::ECS, "query term %u: up(%llx) walks a relation that is not TRAVERSABLE",
                     index, static_cast<unsigned long long>(term.traverse));
                 return false;
             }

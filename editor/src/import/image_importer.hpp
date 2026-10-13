@@ -3,6 +3,7 @@
 #include "engine/asset/asset_types/texture_asset.hpp"
 #include "engine/asset/asset_view.hpp"
 #include "engine/defines.hpp"
+#include "engine/utils/log.hpp"
 #include "import/importer.hpp"
 
 #include <filesystem>
@@ -19,7 +20,7 @@
 //     options.srgb = true; // color data
 //     std::string error;
 //     if (!IMAGE::import(ImportSource::file("wall.png"), "wall.lunaasset", options, IMPORT::random_guid(), &error)) {
-//         output.error("%s", error.c_str());
+//         LOG::error(LOG_CATEGORY::EDITOR, "%s", error.c_str());
 //     }
 //
 // Channel mapping: 1 channel -> R8 / R16, 2 -> RG8 / RG16, 3 and 4 -> RGBA8 /

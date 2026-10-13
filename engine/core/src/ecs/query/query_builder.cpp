@@ -1,5 +1,7 @@
 #include "engine/ecs/query/query_builder.hpp"
 
+#include "engine/utils/log.hpp"
+
 #include <cstdio>
 #include <cstring>
 
@@ -74,7 +76,7 @@ QueryBuilder& QueryBuilder::without(const QueryVar first, const Id second) {
 
 QueryTerm* QueryBuilder::last(const char* modifier) {
     if (this->terms.count == 0) {
-        fprintf(stderr, "[ecs] error: query_build().%s() called before any term was added; nothing to modify\n", modifier);
+        LOG::error(LOG_CATEGORY::ECS, "query_build().%s() called before any term was added; nothing to modify", modifier);
         return nullptr;
     }
     return &this->terms.last();

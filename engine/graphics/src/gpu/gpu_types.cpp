@@ -3,6 +3,7 @@
 #include "engine/asset/asset_types/mesh_asset.hpp"
 #include "engine/asset/asset_types/texture_asset.hpp"
 #include "engine/utils/hash.hpp"
+#include "engine/utils/log.hpp"
 #include "gpu/backend.hpp"
 
 #include <cstdint>
@@ -184,7 +185,7 @@ u64 GpuSamplerDesc::hash() const {
 
 bool GpuBindLayoutDesc::add(const u32 slot, const GpuBindingType type, const u8 stages, const u32 count) {
     if (this->count >= GPU_MAX_BIND_SLOTS) {
-        GPU::log(GPU::LOG_ERROR, "bind layout: more than %u slots", GPU_MAX_BIND_SLOTS);
+        LOG::error(LOG_CATEGORY::GPU, "bind layout: more than %u slots", GPU_MAX_BIND_SLOTS);
         return false;
     }
     GpuBindSlot& entry = this->slots[this->count++];
@@ -221,7 +222,7 @@ u64 GpuBindLayoutDesc::hash() const {
 
 static GpuBindEntry* next_entry(GpuBindGroupDesc& desc, const u32 slot) {
     if (desc.count >= GPU_MAX_BIND_SLOTS) {
-        GPU::log(GPU::LOG_ERROR, "bind group: more than %u entries", GPU_MAX_BIND_SLOTS);
+        LOG::error(LOG_CATEGORY::GPU, "bind group: more than %u entries", GPU_MAX_BIND_SLOTS);
         return nullptr;
     }
     GpuBindEntry& entry = desc.entries[desc.count++];
@@ -263,7 +264,7 @@ bool GpuBindGroupDesc::bind_sampler(const u32 slot, const GpuSampler sampler) {
 
 u32 GpuVertexInput::add_binding(const u32 stride, const GpuVertexRate rate) {
     if (this->binding_count >= GPU_MAX_VERTEX_BINDINGS) {
-        GPU::log(GPU::LOG_ERROR, "vertex input: more than %u bindings", GPU_MAX_VERTEX_BINDINGS);
+        LOG::error(LOG_CATEGORY::GPU, "vertex input: more than %u bindings", GPU_MAX_VERTEX_BINDINGS);
         return UINT32_MAX;
     }
     GpuVertexBinding& binding = this->bindings[this->binding_count];
@@ -274,7 +275,7 @@ u32 GpuVertexInput::add_binding(const u32 stride, const GpuVertexRate rate) {
 
 bool GpuVertexInput::add_attribute(const u32 location, const GpuFormat format, const u32 offset, const u32 binding) {
     if (this->attribute_count >= GPU_MAX_VERTEX_ATTRIBUTES) {
-        GPU::log(GPU::LOG_ERROR, "vertex input: more than %u attributes", GPU_MAX_VERTEX_ATTRIBUTES);
+        LOG::error(LOG_CATEGORY::GPU, "vertex input: more than %u attributes", GPU_MAX_VERTEX_ATTRIBUTES);
         return false;
     }
     GpuVertexAttribute& attribute = this->attributes[this->attribute_count++];

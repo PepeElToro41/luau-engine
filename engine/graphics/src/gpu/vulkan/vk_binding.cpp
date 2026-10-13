@@ -1,4 +1,6 @@
 #include "engine/utils/hash.hpp"
+
+#include "engine/utils/log.hpp"
 #include "gpu/vulkan/vk_check.hpp"
 #include "gpu/vulkan/vk_context.hpp"
 
@@ -22,7 +24,7 @@ static VkDescriptorPool create_pool(VulkanContext& vk, const VkDescriptorPools& 
 
 bool VK_BINDING::pools_init(VulkanContext& vk, VkDescriptorPools& pools, const VkDescriptorPoolSize* sizes, const u32 size_count, const u32 max_sets, const VkDescriptorPoolCreateFlags flags) {
     if (size_count == 0 || size_count > VK_MAX_DESCRIPTOR_POOL_SIZES || max_sets == 0) {
-        GPU::log(GPU::LOG_ERROR, "[vulkan] descriptor pools need 1..%u sizes and a set budget", VK_MAX_DESCRIPTOR_POOL_SIZES);
+        LOG::error(LOG_CATEGORY::GPU, "[vulkan] descriptor pools need 1..%u sizes and a set budget", VK_MAX_DESCRIPTOR_POOL_SIZES);
         return false;
     }
     memcpy(pools.sizes, sizes, size_count * sizeof(VkDescriptorPoolSize));
@@ -240,7 +242,7 @@ static bool write_group(VulkanContext& vk, const VkBindLayoutEntry& layout, cons
         const GpuBindEntry& entry = desc.entries[i];
         const GpuBindSlot* slot = find_slot(layout.desc, entry.slot);
         if (slot == nullptr) {
-            GPU::log(GPU::LOG_ERROR, "[vulkan] bind group: the layout has no slot %u", entry.slot);
+            LOG::error(LOG_CATEGORY::GPU, "[vulkan] bind group: the layout has no slot %u", entry.slot);
             return false;
         }
         VkWriteDescriptorSet& write = writes[count];
@@ -255,7 +257,7 @@ static bool write_group(VulkanContext& vk, const VkBindLayoutEntry& layout, cons
         case GPU_BINDING_STORAGE_BUFFER: {
             const VkBufferEntry* buffer = VK_CONTEXT::buffer(vk, entry.buffer.id);
             if (buffer == nullptr) {
-                GPU::log(GPU::LOG_ERROR, "[vulkan] bind group: slot %u has no valid buffer", entry.slot);
+                LOG::error(LOG_CATEGORY::GPU, "[vulkan] bind group: slot %u has no valid buffer", entry.slot);
                 return false;
             }
             buffers[count].buffer = buffer->buffer;
@@ -268,7 +270,7 @@ static bool write_group(VulkanContext& vk, const VkBindLayoutEntry& layout, cons
         case GPU_BINDING_STORAGE_TEXTURE: {
             const VkTextureEntry* texture = VK_CONTEXT::texture(vk, entry.texture.id);
             if (texture == nullptr) {
-                GPU::log(GPU::LOG_ERROR, "[vulkan] bind group: slot %u has no valid texture", entry.slot);
+                LOG::error(LOG_CATEGORY::GPU, "[vulkan] bind group: slot %u has no valid texture", entry.slot);
                 return false;
             }
             images[count].imageView = slot->type == GPU_BINDING_STORAGE_TEXTURE ? texture->view : texture->sampled_view;
@@ -279,7 +281,7 @@ static bool write_group(VulkanContext& vk, const VkBindLayoutEntry& layout, cons
         case GPU_BINDING_SAMPLER: {
             const VkSamplerEntry* sampler = VK_CONTEXT::sampler(vk, entry.sampler.id);
             if (sampler == nullptr) {
-                GPU::log(GPU::LOG_ERROR, "[vulkan] bind group: slot %u has no valid sampler", entry.slot);
+                LOG::error(LOG_CATEGORY::GPU, "[vulkan] bind group: slot %u has no valid sampler", entry.slot);
                 return false;
             }
             images[count].sampler = sampler->sampler;
@@ -300,7 +302,7 @@ static GpuBindGroup vk_create_bind_group(GpuContext* gpu, const GpuBindLayout la
     GpuBindGroup group;
     const VkBindLayoutEntry* layout_entry = VK_CONTEXT::bind_layout(vk, layout.id);
     if (layout_entry == nullptr) {
-        GPU::log(GPU::LOG_ERROR, "[vulkan] create_bind_group: invalid layout");
+        LOG::error(LOG_CATEGORY::GPU, "[vulkan] create_bind_group: invalid layout");
         return group;
     }
     u32 pool = 0;
@@ -339,12 +341,12 @@ static GpuBindGroup vk_transient_bind_group(GpuContext* gpu, const GpuBindLayout
     VulkanContext& vk = VK_CONTEXT::of(gpu);
     GpuBindGroup group;
     if (!vk.frame_open) {
-        GPU::log(GPU::LOG_ERROR, "[vulkan] transient_bind_group: no frame is open");
+        LOG::error(LOG_CATEGORY::GPU, "[vulkan] transient_bind_group: no frame is open");
         return group;
     }
     const VkBindLayoutEntry* layout_entry = VK_CONTEXT::bind_layout(vk, layout.id);
     if (layout_entry == nullptr) {
-        GPU::log(GPU::LOG_ERROR, "[vulkan] transient_bind_group: invalid layout");
+        LOG::error(LOG_CATEGORY::GPU, "[vulkan] transient_bind_group: invalid layout");
         return group;
     }
     VkFrameSlot& slot = vk.slots[vk.current_slot];
@@ -372,7 +374,7 @@ static GpuUniformRange vk_push_uniforms(GpuContext* gpu, const void* data, const
     VulkanContext& vk = VK_CONTEXT::of(gpu);
     GpuUniformRange range;
     if (!vk.frame_open) {
-        GPU::log(GPU::LOG_ERROR, "[vulkan] push_uniforms: no frame is open");
+        LOG::error(LOG_CATEGORY::GPU, "[vulkan] push_uniforms: no frame is open");
         return range;
     }
     VkFrameSlot& slot = vk.slots[vk.current_slot];
@@ -386,7 +388,7 @@ static GpuUniformRange vk_push_uniforms(GpuContext* gpu, const void* data, const
     }
     const u64 offset = (slot.uniform_cursor + alignment - 1) & ~(alignment - 1);
     if (offset + size > ring->size) {
-        GPU::log(GPU::LOG_ERROR, "[vulkan] push_uniforms: the frame's uniform ring (%u bytes) is full", VK_UNIFORM_RING_SIZE);
+        LOG::error(LOG_CATEGORY::GPU, "[vulkan] push_uniforms: the frame's uniform ring (%u bytes) is full", VK_UNIFORM_RING_SIZE);
         return range;
     }
     memcpy(static_cast<u8*>(ring->mapped) + offset, data, size);

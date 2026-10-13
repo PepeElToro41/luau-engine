@@ -43,8 +43,8 @@
 //
 // Every structural edit sets `dirty`; the next run (or order query)
 // rebuilds the order of every pipeline. A cycle among the phases of a
-// pipeline, or among the systems of one of its phases, is reported through
-// the log once and marks that pipeline `broken`: run() returns false for
+// pipeline, or among the systems of one of its phases, is reported once as
+// a LOG_CATEGORY::SCHEDULER error and marks that pipeline `broken`: run() returns false for
 // it, and nothing of it runs, until an edit removes the cycle. Other
 // pipelines are unaffected.
 //
@@ -108,9 +108,6 @@ struct SystemContext {
 };
 
 using SystemFn = void (*)(SystemContext& ctx);
-
-// Where the scheduler reports a cycle or a refused edit. Defaults to stderr.
-using SchedulerLogFn = void (*)(const char* text, void* user_data);
 
 // --- Records -------------------------------------------------------------------
 
@@ -254,8 +251,6 @@ struct Scheduler {
     DynamicArray<ScheduleEntry> order;
     bool dirty = true;
     u64 next_sequence = 0;
-    SchedulerLogFn log = nullptr;
-    void* log_user_data = nullptr;
 
 private:
     void report(const char* format, ...);

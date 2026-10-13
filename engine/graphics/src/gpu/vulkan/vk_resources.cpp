@@ -1,5 +1,6 @@
 #include "engine/memory/temporal_allocator.hpp"
 #include "engine/templates/dynamic_array.hpp"
+#include "engine/utils/log.hpp"
 #include "gpu/vulkan/vk_check.hpp"
 #include "gpu/vulkan/vk_context.hpp"
 
@@ -163,7 +164,7 @@ static bool create_buffer_entry(VulkanContext& vk, const GpuBufferDesc& desc, Vk
 
 static bool upload_to_entry(VulkanContext& vk, VkBufferEntry& entry, const void* data, const u64 size, const u64 offset) {
     if (offset > entry.size || size > entry.size - offset) {
-        GPU::log(GPU::LOG_ERROR, "[vulkan] upload_buffer: %llu bytes at %llu do not fit in %llu", static_cast<unsigned long long>(size),
+        LOG::error(LOG_CATEGORY::GPU, "[vulkan] upload_buffer: %llu bytes at %llu do not fit in %llu", static_cast<unsigned long long>(size),
             static_cast<unsigned long long>(offset), static_cast<unsigned long long>(entry.size));
         return false;
     }
@@ -215,7 +216,7 @@ static bool upload_to_entry(VulkanContext& vk, VkBufferEntry& entry, const void*
 static GpuBuffer vk_create_buffer(GpuContext* gpu, const GpuBufferDesc& desc, const void* data) {
     VulkanContext& vk = VK_CONTEXT::of(gpu);
     if (desc.size == 0) {
-        GPU::log(GPU::LOG_ERROR, "[vulkan] create_buffer: size must be non-zero");
+        LOG::error(LOG_CATEGORY::GPU, "[vulkan] create_buffer: size must be non-zero");
         return GpuBuffer{};
     }
     VkBufferEntry entry;
@@ -239,11 +240,11 @@ static bool vk_write_buffer(GpuContext* gpu, const GpuBuffer buffer, const void*
     VulkanContext& vk = VK_CONTEXT::of(gpu);
     VkBufferEntry* entry = VK_CONTEXT::buffer(vk, buffer.id);
     if (entry == nullptr) {
-        GPU::log(GPU::LOG_ERROR, "[vulkan] write_buffer: invalid buffer");
+        LOG::error(LOG_CATEGORY::GPU, "[vulkan] write_buffer: invalid buffer");
         return false;
     }
     if (entry->memory_kind != GPU_MEMORY_HOST_VISIBLE) {
-        GPU::log(GPU::LOG_ERROR, "[vulkan] write_buffer: the buffer is not host-visible; use upload_buffer");
+        LOG::error(LOG_CATEGORY::GPU, "[vulkan] write_buffer: the buffer is not host-visible; use upload_buffer");
         return false;
     }
     return upload_to_entry(vk, *entry, data, size, offset);
@@ -253,7 +254,7 @@ static bool vk_upload_buffer(GpuContext* gpu, const GpuBuffer buffer, const void
     VulkanContext& vk = VK_CONTEXT::of(gpu);
     VkBufferEntry* entry = VK_CONTEXT::buffer(vk, buffer.id);
     if (entry == nullptr) {
-        GPU::log(GPU::LOG_ERROR, "[vulkan] upload_buffer: invalid buffer");
+        LOG::error(LOG_CATEGORY::GPU, "[vulkan] upload_buffer: invalid buffer");
         return false;
     }
     return upload_to_entry(vk, *entry, data, size, offset);
@@ -287,16 +288,16 @@ static void vk_release_buffer(GpuContext* gpu, const GpuBuffer buffer) {
 static GpuTexture vk_create_texture(GpuContext* gpu, const GpuTextureDesc& desc) {
     VulkanContext& vk = VK_CONTEXT::of(gpu);
     if (desc.width == 0 || desc.height == 0) {
-        GPU::log(GPU::LOG_ERROR, "[vulkan] create_texture: extent must be non-zero");
+        LOG::error(LOG_CATEGORY::GPU, "[vulkan] create_texture: extent must be non-zero");
         return GpuTexture{};
     }
     const VkFormat vk_format = VK_FORMATS::to_vk(desc.format);
     if (vk_format == VK_FORMAT_UNDEFINED) {
-        GPU::log(GPU::LOG_ERROR, "[vulkan] create_texture: format must be set");
+        LOG::error(LOG_CATEGORY::GPU, "[vulkan] create_texture: format must be set");
         return GpuTexture{};
     }
     if (desc.mip_levels == 0) {
-        GPU::log(GPU::LOG_ERROR, "[vulkan] create_texture: mip_levels must be at least 1");
+        LOG::error(LOG_CATEGORY::GPU, "[vulkan] create_texture: mip_levels must be at least 1");
         return GpuTexture{};
     }
 
@@ -312,7 +313,7 @@ static GpuTexture vk_create_texture(GpuContext* gpu, const GpuTextureDesc& desc)
 
     const VkFormat sampled_vk_format = desc.sampled_format != GPU_FORMAT_UNDEFINED ? VK_FORMATS::to_vk(desc.sampled_format) : vk_format;
     if (sampled_vk_format == VK_FORMAT_UNDEFINED || GPU_FORMAT::size(desc.sampled_format != GPU_FORMAT_UNDEFINED ? desc.sampled_format : desc.format) != GPU_FORMAT::size(desc.format)) {
-        GPU::log(GPU::LOG_ERROR, "[vulkan] create_texture: sampled_format must be a format of the same size");
+        LOG::error(LOG_CATEGORY::GPU, "[vulkan] create_texture: sampled_format must be a format of the same size");
         return GpuTexture{};
     }
 
@@ -382,7 +383,7 @@ static bool vk_upload_texture(GpuContext* gpu, const GpuTexture texture, const G
     VulkanContext& vk = VK_CONTEXT::of(gpu);
     VkTextureEntry* entry = VK_CONTEXT::texture(vk, texture.id);
     if (entry == nullptr) {
-        GPU::log(GPU::LOG_ERROR, "[vulkan] upload_texture: invalid texture");
+        LOG::error(LOG_CATEGORY::GPU, "[vulkan] upload_texture: invalid texture");
         return false;
     }
     if (count == 0) {
@@ -393,11 +394,11 @@ static bool vk_upload_texture(GpuContext* gpu, const GpuTexture texture, const G
     VkDeviceSize total = 0;
     for (u32 i = 0; i < count; ++i) {
         if (mips[i].mip_level >= entry->mip_levels) {
-            GPU::log(GPU::LOG_ERROR, "[vulkan] upload_texture: mip %u out of range (texture has %u)", mips[i].mip_level, entry->mip_levels);
+            LOG::error(LOG_CATEGORY::GPU, "[vulkan] upload_texture: mip %u out of range (texture has %u)", mips[i].mip_level, entry->mip_levels);
             return false;
         }
         if (mips[i].size == 0 || mips[i].pixels == nullptr) {
-            GPU::log(GPU::LOG_ERROR, "[vulkan] upload_texture: mip %u has no data", mips[i].mip_level);
+            LOG::error(LOG_CATEGORY::GPU, "[vulkan] upload_texture: mip %u has no data", mips[i].mip_level);
             return false;
         }
         total = align_up(total, STAGING_ALIGNMENT) + mips[i].size;
@@ -494,7 +495,7 @@ static void vk_destroy_texture(GpuContext* gpu, const GpuTexture texture) {
         return;
     }
     if (entry->external) {
-        GPU::log(GPU::LOG_ERROR, "[vulkan] destroy_texture: the backbuffer belongs to the swapchain");
+        LOG::error(LOG_CATEGORY::GPU, "[vulkan] destroy_texture: the backbuffer belongs to the swapchain");
         return;
     }
     // The framebuffers are queued rather than destroyed, which is still
@@ -512,7 +513,7 @@ static void vk_release_texture(GpuContext* gpu, const GpuTexture texture) {
         return;
     }
     if (entry->external) {
-        GPU::log(GPU::LOG_ERROR, "[vulkan] release_texture: the backbuffer belongs to the swapchain");
+        LOG::error(LOG_CATEGORY::GPU, "[vulkan] release_texture: the backbuffer belongs to the swapchain");
         return;
     }
     VK_RESOURCES::forget_texture_framebuffers(vk, texture.id);

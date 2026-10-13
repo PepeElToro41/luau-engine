@@ -5,6 +5,7 @@
 #include "engine/ecs/world.hpp"
 #include "engine/memory/temporal_allocator.hpp"
 #include "engine/templates/dynamic_array.hpp"
+#include "engine/utils/log.hpp"
 
 #include <cstdio>
 #include <new>
@@ -48,11 +49,11 @@ void collect_keys(const ArchetypeType& type, DynamicArray<Id>& keys) {
 
 ArchetypeListenerId add(World* world, const Id key, const ArchetypeListenerCallback callback, void* user_data) {
     if (callback == nullptr) {
-        fprintf(stderr, "[ecs] error: archetype listener needs a callback\n");
+        LOG::error(LOG_CATEGORY::ECS, "archetype listener needs a callback");
         return 0;
     }
     if (key == 0) {
-        fprintf(stderr, "[ecs] error: archetype listener registered under id 0\n");
+        LOG::error(LOG_CATEGORY::ECS, "archetype listener registered under id 0");
         return 0;
     }
     const Id folded = ECS::FOLD_ANY(key);

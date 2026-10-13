@@ -7,6 +7,7 @@
 #include "engine/plugins/render_plugin.hpp"
 #include "engine/plugins/window_plugin.hpp"
 #include "engine/render/renderer.hpp"
+#include "engine/utils/log.hpp"
 #include "plugins/editor_camera_plugin.hpp"
 #include "plugins/editor_viewport_plugin.hpp"
 #include "ui/inspectors/inspectors.hpp"
@@ -16,11 +17,9 @@
 #include <imgui_impl_sdl3.h>
 #include <imgui_impl_vulkan.h>
 
-#include <cstdio>
-
 static void imgui_check_vk_result(VkResult result) {
     if (result != VK_SUCCESS) {
-        fprintf(stderr, "[editor][imgui] VkResult %d\n", static_cast<int>(result));
+        LOG::error(LOG_CATEGORY::EDITOR, "imgui: VkResult %d", static_cast<int>(result));
     }
 }
 
@@ -33,8 +32,8 @@ bool EditorUiPlugin::build(Engine& engine) {
     Renderer* renderer = engine.get_singleton<Renderer>();
     this->editor.engine = &engine;
 
-    // Renderer messages land in the Output panel from here on.
-    renderer->log_sink = RenderLogSink{&Editor::render_log, &this->editor};
+    // Every log message lands in the Output panel from here on.
+    this->log_sink = LOG::add_sink(&OutputPanel::sink, &this->editor.output);
     INSPECTORS::register_all(*engine.get_singleton<World>());
     this->editor.explorer.editor_camera = engine.get_plugin<EditorCameraPlugin>()->controller.entity;
     // Create > Shader in the Asset Browser copies one of the engine's shaders.
@@ -45,11 +44,11 @@ bool EditorUiPlugin::build(Engine& engine) {
     if (!this->init_imgui(engine)) {
         return false;
     }
-    this->editor.output.info("GPU: %s", engine.gpu->info.device_name);
-    this->editor.output.info("Swapchain: %ux%u, %u images, %s (wanted %s)", engine.gpu->width, engine.gpu->height, VK_ACCESS::swapchain_image_count(engine.gpu),
+    LOG::info(LOG_CATEGORY::EDITOR, "GPU: %s", engine.gpu->info.device_name);
+    LOG::info(LOG_CATEGORY::EDITOR, "Swapchain: %ux%u, %u images, %s (wanted %s)", engine.gpu->width, engine.gpu->height, VK_ACCESS::swapchain_image_count(engine.gpu),
         GPU_FORMAT::name(engine.gpu->info.swapchain_format), GPU_FORMAT::name(EditorViewportPlugin::UI_FORMAT));
     if (engine.gpu->info.swapchain_format != EditorViewportPlugin::UI_FORMAT) {
-        this->editor.output.warning("Surface does not offer the UNORM swapchain format; UI colors will look washed out");
+        LOG::warning(LOG_CATEGORY::EDITOR, "Surface does not offer the UNORM swapchain format; UI colors will look washed out");
     }
 
     this->ui_phase = engine.scheduler.add_phase(engine.pipelines.render, EditorUiPlugin::UI_PHASE);
@@ -73,7 +72,7 @@ bool EditorUiPlugin::init_imgui(Engine& engine) {
     THEMES::catppuccin_mocha();
 
     if (!ImGui_ImplSDL3_InitForVulkan(engine.get_plugin<WindowPlugin>()->window.window)) {
-        engine.log(RENDER_LOG_ERROR, "ImGui SDL3 backend init failed");
+        LOG::error(LOG_CATEGORY::EDITOR, "ImGui SDL3 backend init failed");
         return false;
     }
     this->sdl_backend_ready = true;
@@ -102,7 +101,7 @@ bool EditorUiPlugin::init_imgui(Engine& engine) {
     info.PipelineInfoMain.MSAASamples = VK_SAMPLE_COUNT_1_BIT;
     info.CheckVkResultFn = imgui_check_vk_result;
     if (!ImGui_ImplVulkan_Init(&info)) {
-        engine.log(RENDER_LOG_ERROR, "ImGui Vulkan backend init failed");
+        LOG::error(LOG_CATEGORY::EDITOR, "ImGui Vulkan backend init failed");
         return false;
     }
     this->vulkan_backend_ready = true;
@@ -126,7 +125,7 @@ void EditorUiPlugin::started(SystemContext& ctx) {
     EditorUiPlugin* self = static_cast<EditorUiPlugin*>(ctx.user_data);
     // Whatever the scene plugin loaded (or spawned) is the saved state.
     self->editor.mark_scene_saved();
-    self->editor.output.info("Editor ready");
+    LOG::info(LOG_CATEGORY::EDITOR, "Editor ready");
 }
 
 void EditorUiPlugin::draw(SystemContext& ctx) {
@@ -156,9 +155,9 @@ void EditorUiPlugin::draw(SystemContext& ctx) {
 }
 
 void EditorUiPlugin::detach(SystemContext& ctx) {
-    if (Renderer* renderer = ENGINE::of(ctx).get_singleton<Renderer>()) {
-        renderer->log_sink = RenderLogSink{};
-    }
+    EditorUiPlugin* self = static_cast<EditorUiPlugin*>(ctx.user_data);
+    LOG::remove_sink(self->log_sink);
+    self->log_sink = LogSinkHandle{};
 }
 
 void EditorUiPlugin::shutdown(SystemContext& ctx) {

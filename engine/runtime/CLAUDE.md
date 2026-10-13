@@ -16,7 +16,9 @@ The pipelines and phases (`engine.pipelines.*`, `engine.phases.*`, names in `ENG
 `post_shutdown`: the platform the rest sat on), the shutdown pipeline in reverse insertion order so the last built is torn down first within each phase;
 a plugin may add a phase against these (`scheduler.phase_before(mine, phases.pre_shutdown)`).
 `engine.add_system(phase, name, fn, user_data)` is the scheduler's, a system reads its Engine with `ENGINE::of(ctx)` and the render pipeline's `FrameContext` with `ENGINE::frame(ctx)`;
-`engine.log(level, format, ...)` goes to the renderer log when there is one (an editor's Output panel) and stderr otherwise.
+messages go through core's `LOG::` (`utils/log.hpp`): the Engine, the plugin registry and the project scan as `LOG_CATEGORY::ENGINE`, scene loading and saving as `SCENE` (a structural error of a file carries its path and line),
+asset registration as `ASSET`, the window plugin as `WINDOW`;
+whoever wants to see them adds a sink, the editor's Output panel being one, stderr the built-in one.
 Engine-wide globals are singletons keyed by type (`engine.create_singleton<T>(...)` once, `engine.get_singleton<T>()` after, nullptr if missing);
 apps may register their own types too.
 The engine's own plugins live in `engine/plugins/`:

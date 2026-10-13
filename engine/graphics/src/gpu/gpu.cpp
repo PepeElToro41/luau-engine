@@ -1,38 +1,13 @@
 #include "engine/gpu/gpu.hpp"
 
+#include "engine/utils/log.hpp"
 #include "gpu/backend.hpp"
 
-#include <cstdarg>
-#include <cstdio>
 
 // The selected backend. Set once by GPU::init, never changed afterwards.
 static const GpuBackend* g_backend = nullptr;
 static GpuContext g_context;
 static bool g_context_alive = false;
-
-static GPU::LogFn g_log_fn = nullptr;
-static void* g_log_user_data = nullptr;
-
-// --- Messages ------------------------------------------------------------------
-
-void GPU::set_log_sink(const LogFn fn, void* user_data) {
-    g_log_fn = fn;
-    g_log_user_data = user_data;
-}
-
-void GPU::log(const LogLevel level, const char* format, ...) {
-    char text[2048];
-    va_list args;
-    va_start(args, format);
-    vsnprintf(text, sizeof(text), format, args);
-    va_end(args);
-    if (g_log_fn != nullptr) {
-        g_log_fn(level, text, g_log_user_data);
-        return;
-    }
-    static const char* const prefixes[] = {"", "warning: ", "error: "};
-    fprintf(stderr, "[gpu] %s%s\n", prefixes[level], text);
-}
 
 // --- Device and frames ---------------------------------------------------------
 
@@ -53,16 +28,16 @@ bool GPU::available(const GpuBackendKind kind) {
 
 GpuContext* GPU::init(const GpuInitDesc& desc) {
     if (g_context_alive) {
-        log(LOG_ERROR, "init: a GPU context already exists; switching backends needs a restart");
+        LOG::error(LOG_CATEGORY::GPU, "init: a GPU context already exists; switching backends needs a restart");
         return nullptr;
     }
     const GpuBackend* backend = backend_for(desc.backend);
     if (backend == nullptr) {
-        log(LOG_ERROR, "init: backend %u is not part of this build", static_cast<unsigned>(desc.backend));
+        LOG::error(LOG_CATEGORY::GPU, "init: backend %u is not part of this build", static_cast<unsigned>(desc.backend));
         return nullptr;
     }
     if (g_backend != nullptr && g_backend != backend) {
-        log(LOG_ERROR, "init: the backend was already selected; switching needs a restart");
+        LOG::error(LOG_CATEGORY::GPU, "init: the backend was already selected; switching needs a restart");
         return nullptr;
     }
     g_backend = backend;

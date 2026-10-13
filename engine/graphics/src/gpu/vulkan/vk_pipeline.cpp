@@ -1,4 +1,6 @@
 #include "gpu/vulkan/vk_check.hpp"
+
+#include "engine/utils/log.hpp"
 #include "gpu/vulkan/vk_context.hpp"
 
 // --- Template render passes ------------------------------------------------------
@@ -93,11 +95,11 @@ void VK_PIPELINE::shutdown(VulkanContext& vk) {
 
 static VkShaderModule create_module(VulkanContext& vk, const GpuShaderStageDesc& stage, const char* what) {
     if (stage.kind != GPU_BYTECODE_SPIRV) {
-        GPU::log(GPU::LOG_ERROR, "[vulkan] create_pipeline: the %s stage is not SPIR-V", what);
+        LOG::error(LOG_CATEGORY::GPU, "[vulkan] create_pipeline: the %s stage is not SPIR-V", what);
         return VK_NULL_HANDLE;
     }
     if ((stage.size % 4) != 0) {
-        GPU::log(GPU::LOG_ERROR, "[vulkan] create_pipeline: the %s stage's SPIR-V size is not a multiple of 4", what);
+        LOG::error(LOG_CATEGORY::GPU, "[vulkan] create_pipeline: the %s stage's SPIR-V size is not a multiple of 4", what);
         return VK_NULL_HANDLE;
     }
     VkShaderModuleCreateInfo info{};
@@ -193,19 +195,19 @@ static GpuPipeline vk_create_pipeline(GpuContext* gpu, const GpuPipelineDesc& de
     GpuPipeline result;
     const char* name = desc.name != nullptr ? desc.name : "pipeline";
     if (!desc.vertex.is_valid()) {
-        GPU::log(GPU::LOG_ERROR, "[vulkan] create_pipeline (%s): a vertex stage is required", name);
+        LOG::error(LOG_CATEGORY::GPU, "[vulkan] create_pipeline (%s): a vertex stage is required", name);
         return result;
     }
     if (desc.targets.color_count > GPU_MAX_COLOR_ATTACHMENTS) {
-        GPU::log(GPU::LOG_ERROR, "[vulkan] create_pipeline (%s): more than %u color attachments", name, GPU_MAX_COLOR_ATTACHMENTS);
+        LOG::error(LOG_CATEGORY::GPU, "[vulkan] create_pipeline (%s): more than %u color attachments", name, GPU_MAX_COLOR_ATTACHMENTS);
         return result;
     }
     if (desc.push_constant_size > gpu->info.limits.max_push_constant_size) {
-        GPU::log(GPU::LOG_ERROR, "[vulkan] create_pipeline (%s): %u bytes of push constants, the limit is %u", name, desc.push_constant_size, gpu->info.limits.max_push_constant_size);
+        LOG::error(LOG_CATEGORY::GPU, "[vulkan] create_pipeline (%s): %u bytes of push constants, the limit is %u", name, desc.push_constant_size, gpu->info.limits.max_push_constant_size);
         return result;
     }
     if (desc.bind_layout_count > GPU_MAX_BIND_GROUPS) {
-        GPU::log(GPU::LOG_ERROR, "[vulkan] create_pipeline (%s): more than %u bind groups", name, GPU_MAX_BIND_GROUPS);
+        LOG::error(LOG_CATEGORY::GPU, "[vulkan] create_pipeline (%s): more than %u bind groups", name, GPU_MAX_BIND_GROUPS);
         return result;
     }
     const VkRenderPass render_pass = VK_PIPELINE::template_render_pass(vk, desc.targets);
@@ -223,7 +225,7 @@ static GpuPipeline vk_create_pipeline(GpuContext* gpu, const GpuPipelineDesc& de
         }
         const VkBindLayoutEntry* entry = VK_CONTEXT::bind_layout(vk, id.id);
         if (entry == nullptr) {
-            GPU::log(GPU::LOG_ERROR, "[vulkan] create_pipeline (%s): bind layout %u is invalid", name, i);
+            LOG::error(LOG_CATEGORY::GPU, "[vulkan] create_pipeline (%s): bind layout %u is invalid", name, i);
             return result;
         }
         set_layouts[i] = entry->layout;

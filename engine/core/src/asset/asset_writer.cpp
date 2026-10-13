@@ -2,6 +2,7 @@
 
 #include "engine/memory/heap_allocator.hpp"
 #include "engine/platform/file.hpp"
+#include "engine/utils/log.hpp"
 
 AssetWriter::AssetWriter() : AssetWriter(MEMORY::heap_allocator()) {}
 
@@ -9,7 +10,7 @@ AssetWriter::AssetWriter(BaseAllocator* allocator) : dependencies(allocator), ch
 
 u32 AssetWriter::add_dependency(const AssetGuid& guid) {
     if (guid.is_null()) {
-        fprintf(stderr, "[asset] error: a null guid cannot be a dependency\n");
+        LOG::error(LOG_CATEGORY::ASSET, "a null guid cannot be a dependency");
         return ~0u;
     }
     for (usz i = 0; i < this->dependencies.count; ++i) {
@@ -51,7 +52,7 @@ usz AssetWriter::file_size() const {
 
 bool AssetWriter::write(void* out) const {
     if (this->guid.is_null()) {
-        fprintf(stderr, "[asset] error: cannot write an asset with a null guid\n");
+        LOG::error(LOG_CATEGORY::ASSET, "cannot write an asset with a null guid");
         return false;
     }
 
@@ -128,12 +129,12 @@ void AssetWriter::free() {
 bool ASSET_FILE::write_file(const char* path, const void* data, const usz size) {
     File file;
     if (!PLATFORM::file_open(&file, path, FILE_ACCESS_WRITE)) {
-        fprintf(stderr, "[asset] error: cannot create %s\n", path);
+        LOG::error(LOG_CATEGORY::ASSET, "cannot create %s", path);
         return false;
     }
     const bool ok = PLATFORM::file_write(file, 0, data, size);
     if (!ok) {
-        fprintf(stderr, "[asset] error: short write on %s\n", path);
+        LOG::error(LOG_CATEGORY::ASSET, "short write on %s", path);
     }
     PLATFORM::file_close(&file);
     return ok;

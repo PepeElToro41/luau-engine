@@ -1,6 +1,7 @@
 #include "support/test_support.hpp"
 
 #include "engine/scheduler/scheduler.hpp"
+#include "engine/utils/log.hpp"
 
 #include <cstring>
 
@@ -35,15 +36,31 @@ static void record_tag(SystemContext& ctx) {
     tagged->log->push(tagged->tag);
 }
 
-// Collects scheduler messages, for the tests that expect one.
+// Collects the scheduler's log messages, for the tests that expect one.
+// install() keeps stderr quiet too; remove() restores it.
 struct MessageLog {
     u32 count = 0;
     char last[512] = {};
+    LogSinkHandle handle;
+    LogLevel stderr_level = LOG_INFO;
 
-    static void sink(const char* text, void* user_data) {
+    void install() {
+        this->stderr_level = LOG::stderr_level();
+        LOG::set_stderr_level(LOG_LEVEL_NONE);
+        this->handle = LOG::add_sink(&MessageLog::sink, this);
+    }
+    void remove() {
+        LOG::remove_sink(this->handle);
+        LOG::set_stderr_level(this->stderr_level);
+    }
+
+    static void sink(const LogRecord& record, void* user_data) {
+        if (record.category != LOG_CATEGORY::SCHEDULER) {
+            return;
+        }
         MessageLog* log = static_cast<MessageLog*>(user_data);
         log->count += 1;
-        snprintf(log->last, sizeof(log->last), "%s", text);
+        snprintf(log->last, sizeof(log->last), "%s", record.text);
     }
 };
 
@@ -82,8 +99,7 @@ TEST_CASE("scheduler/scheduler: pipelines, phases and systems are added and foun
     }
     SUBCASE("duplicate and bad names are refused") {
         MessageLog messages;
-        scheduler.log = &MessageLog::sink;
-        scheduler.log_user_data = &messages;
+        messages.install();
         CHECK_FALSE(scheduler.add_pipeline("update").is_valid());
         CHECK_FALSE(scheduler.add_pipeline("").is_valid());
         CHECK_FALSE(scheduler.add_pipeline(nullptr).is_valid());
@@ -94,6 +110,7 @@ TEST_CASE("scheduler/scheduler: pipelines, phases and systems are added and foun
         long_name[sizeof(long_name) - 1] = '\0';
         CHECK_FALSE(scheduler.add_phase(update, long_name).is_valid());
         CHECK(messages.count == 6);
+        messages.remove();
     }
     SUBCASE("systems are found by name within their phase") {
         RunLog log;
@@ -269,8 +286,7 @@ TEST_CASE("scheduler/scheduler: after and before constraints order phases and sy
     }
     SUBCASE("a constraint against itself, across phases or across pipelines is refused") {
         MessageLog messages;
-        scheduler.log = &MessageLog::sink;
-        scheduler.log_user_data = &messages;
+        messages.install();
         CHECK_FALSE(scheduler.system_after(system_a, system_a));
         CHECK_FALSE(scheduler.system_after(system_a, scheduler.find_system(early, "d")));
         CHECK_FALSE(scheduler.phase_after(late, late));
@@ -285,6 +301,7 @@ TEST_CASE("scheduler/scheduler: after and before constraints order phases and sy
         CHECK(scheduler.remove_system(system_c));
         CHECK_FALSE(scheduler.system_after(system_a, system_c));
         CHECK(messages.count == 5);
+        messages.remove();
     }
 
     scheduler.free();
@@ -297,8 +314,7 @@ TEST_CASE("scheduler/scheduler: a cycle breaks only its pipeline until an edit r
     RunLog log;
     Tagged a{&log, 'a'}, b{&log, 'b'}, c{&log, 'c'}, r{&log, 'r'};
     MessageLog messages;
-    scheduler.log = &MessageLog::sink;
-    scheduler.log_user_data = &messages;
+    messages.install();
 
     const PipelineHandle update = scheduler.add_pipeline("update");
     const PhaseHandle main = scheduler.add_phase(update, "update");
@@ -359,6 +375,7 @@ TEST_CASE("scheduler/scheduler: a cycle breaks only its pipeline until an edit r
         CHECK(scheduler.run(update, nullptr, nullptr, 0.0f));
         CHECK(strcmp(log.text, "abc") == 0);
     }
+    messages.remove();
 
     scheduler.free();
     CHECK_ARENA_CLEAN();
@@ -551,8 +568,7 @@ TEST_CASE("scheduler/scheduler: a removed handle stops matching and is never ali
 
     SUBCASE("a phase with systems is not removed; an emptied one is") {
         MessageLog messages;
-        scheduler.log = &MessageLog::sink;
-        scheduler.log_user_data = &messages;
+        messages.install();
         CHECK_FALSE(scheduler.remove_phase(main));
         CHECK(messages.count == 1);
         CHECK(scheduler.phase(main) != nullptr);
@@ -566,6 +582,7 @@ TEST_CASE("scheduler/scheduler: a removed handle stops matching and is never ali
         CHECK(again.is_valid());
         CHECK(again != main);
         CHECK(scheduler.run(update, nullptr, nullptr, 0.0f));
+        messages.remove();
     }
 
     scheduler.free();

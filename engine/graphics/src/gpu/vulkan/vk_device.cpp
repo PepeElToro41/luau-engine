@@ -1,5 +1,6 @@
 #include "engine/memory/temporal_allocator.hpp"
 #include "engine/templates/dynamic_array.hpp"
+#include "engine/utils/log.hpp"
 #include "gpu/vulkan/vk_check.hpp"
 #include "gpu/vulkan/vk_context.hpp"
 
@@ -60,13 +61,13 @@ static VKAPI_ATTR VkBool32 VKAPI_CALL debug_callback(
     VkDebugUtilsMessageSeverityFlagBitsEXT severity, VkDebugUtilsMessageTypeFlagsEXT type, const VkDebugUtilsMessengerCallbackDataEXT* data, void* user_data) {
     (void)type;
     (void)user_data;
-    GPU::LogLevel level = GPU::LOG_INFO;
+    LogLevel level = LOG_INFO;
     if (severity & VK_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT) {
-        level = GPU::LOG_ERROR;
+        level = LOG_ERROR;
     } else if (severity & VK_DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT) {
-        level = GPU::LOG_WARNING;
+        level = LOG_WARNING;
     }
-    GPU::log(level, "[vulkan] %s", data->pMessage);
+    LOG::write(level, LOG_CATEGORY::GPU, "[vulkan] %s", data->pMessage);
     return VK_FALSE;
 }
 
@@ -125,7 +126,7 @@ static bool create_instance(VulkanContext& vk) {
     uint32_t sdl_extension_count = 0;
     const char* const* sdl_extensions = SDL_Vulkan_GetInstanceExtensions(&sdl_extension_count);
     if (sdl_extensions == nullptr) {
-        GPU::log(GPU::LOG_ERROR, "[vulkan] SDL_Vulkan_GetInstanceExtensions failed: %s", SDL_GetError());
+        LOG::error(LOG_CATEGORY::GPU, "[vulkan] SDL_Vulkan_GetInstanceExtensions failed: %s", SDL_GetError());
         return false;
     }
 
@@ -145,7 +146,7 @@ static bool create_instance(VulkanContext& vk) {
         if (has_instance_layer(VALIDATION_LAYER_NAME)) {
             layers.push(VALIDATION_LAYER_NAME);
         } else {
-            GPU::log(GPU::LOG_WARNING, "[vulkan] %s not available, running without validation", VALIDATION_LAYER_NAME);
+            LOG::warning(LOG_CATEGORY::GPU, "[vulkan] %s not available, running without validation", VALIDATION_LAYER_NAME);
         }
     }
     if (has_instance_extension(VK_EXT_DEBUG_UTILS_EXTENSION_NAME)) {
@@ -191,7 +192,7 @@ static bool create_instance(VulkanContext& vk) {
 
 static bool create_surface(VulkanContext& vk) {
     if (!SDL_Vulkan_CreateSurface(vk.window, vk.instance, nullptr, &vk.surface)) {
-        GPU::log(GPU::LOG_ERROR, "[vulkan] SDL_Vulkan_CreateSurface failed: %s", SDL_GetError());
+        LOG::error(LOG_CATEGORY::GPU, "[vulkan] SDL_Vulkan_CreateSurface failed: %s", SDL_GetError());
         vk.surface = VK_NULL_HANDLE;
         return false;
     }
@@ -202,7 +203,7 @@ static bool pick_physical_device(VulkanContext& vk) {
     uint32_t count = 0;
     vkEnumeratePhysicalDevices(vk.instance, &count, nullptr);
     if (count == 0) {
-        GPU::log(GPU::LOG_ERROR, "[vulkan] no physical devices with Vulkan support");
+        LOG::error(LOG_CATEGORY::GPU, "[vulkan] no physical devices with Vulkan support");
         return false;
     }
     TemporalAllocator temp = TemporalAllocator::create();
@@ -252,7 +253,7 @@ static bool pick_physical_device(VulkanContext& vk) {
     }
 
     if (best == VK_NULL_HANDLE) {
-        GPU::log(GPU::LOG_ERROR, "[vulkan] no suitable physical device (need Vulkan 1.1, swapchain support, graphics + present queues)");
+        LOG::error(LOG_CATEGORY::GPU, "[vulkan] no suitable physical device (need Vulkan 1.1, swapchain support, graphics + present queues)");
         return false;
     }
 
@@ -261,7 +262,7 @@ static bool pick_physical_device(VulkanContext& vk) {
     vkGetPhysicalDeviceMemoryProperties(best, &vk.memory_properties);
     vk.graphics_queue_family = best_families.graphics;
     vk.present_queue_family = best_families.present;
-    GPU::log(GPU::LOG_INFO, "[vulkan] using %s", vk.properties.deviceName);
+    LOG::info(LOG_CATEGORY::GPU, "[vulkan] using %s", vk.properties.deviceName);
     return true;
 }
 
@@ -293,7 +294,7 @@ static bool create_device(VulkanContext& vk) {
     available.pNext = &available_11;
     vkGetPhysicalDeviceFeatures2(vk.physical_device, &available);
     if (!available_11.shaderDrawParameters) {
-        GPU::log(GPU::LOG_ERROR, "[vulkan] the device does not support shaderDrawParameters");
+        LOG::error(LOG_CATEGORY::GPU, "[vulkan] the device does not support shaderDrawParameters");
         return false;
     }
     VkPhysicalDeviceVulkan11Features features_11{};
@@ -379,7 +380,7 @@ u32 VK_DEVICE::find_memory_type(const VulkanContext& vk, const u32 type_bits, co
 bool VK_DEVICE::allocate_memory(VulkanContext& vk, const VkMemoryRequirements& requirements, const VkMemoryPropertyFlags properties, VkDeviceMemory& out, const char* what) {
     const u32 memory_type = find_memory_type(vk, requirements.memoryTypeBits, properties);
     if (memory_type == UINT32_MAX) {
-        GPU::log(GPU::LOG_ERROR, "[vulkan] no memory type with properties 0x%x for %s", static_cast<unsigned>(properties), what);
+        LOG::error(LOG_CATEGORY::GPU, "[vulkan] no memory type with properties 0x%x for %s", static_cast<unsigned>(properties), what);
         return false;
     }
     VkMemoryAllocateInfo alloc_info{};

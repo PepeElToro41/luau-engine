@@ -44,9 +44,10 @@ STATIC_ASSERT(sizeof(f64) == 8, "Expected f64 to be 8 bytes.");
 // compiles to nothing when NDEBUG is defined (CMake's Release and MinSizeRel
 // configurations), so it is free to use on hot paths: the condition is not
 // evaluated at all in release. On failure it prints the location, the
-// condition and the formatted message to stderr and aborts. Use it for caller
-// mistakes that release builds either tolerate or cannot afford to check;
-// errors that must be reported in release print explicitly instead.
+// condition and the formatted message to stderr, hands the same text to the
+// log sinks (utils/log.hpp, so a log file ends with it) and aborts. Use it
+// for caller mistakes that release builds either tolerate or cannot afford
+// to check; errors that must be reported in release log explicitly instead.
 #ifndef NDEBUG
 #define ENGINE_DEBUG 1
 #else
@@ -55,15 +56,8 @@ STATIC_ASSERT(sizeof(f64) == 8, "Expected f64 to be 8 bytes.");
 
 namespace ENGINE_ASSERTS {
 
-[[noreturn]] inline void fail(const char* condition, const char* file, const int line, const char* format, ...) {
-    fprintf(stderr, "%s:%d: assertion failed: %s\n  ", file, line, condition);
-    va_list args;
-    va_start(args, format);
-    vfprintf(stderr, format, args);
-    va_end(args);
-    fputc('\n', stderr);
-    abort();
-}
+// Defined in src/utils/log.cpp.
+[[noreturn]] void fail(const char* condition, const char* file, int line, const char* format, ...);
 
 } // namespace ENGINE_ASSERTS
 

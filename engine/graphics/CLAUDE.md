@@ -31,7 +31,7 @@ The Vulkan backend is `src/gpu/vulkan/` (`vk_context.hpp` lists its files and th
 `VkRenderPass` + `VkFramebuffer` cached by formats + ops + textures;
 pipelines built against a template pass per `GpuTargetFormats` that shares `VK_RENDER_PASS::standard_dependencies` with the real ones, since compatibility needs identical dependencies;
 validation layers in debug builds;
-messages through `GPU::set_log_sink`).
+messages as `LOG_CATEGORY::GPU`, prefixed `[vulkan]`, the validation layer's at its own severity).
 `gpu/vulkan/vk_access.hpp` is the only public header with Vulkan in it, for the editor's ImGui glue.
 `shaders/` is the shader path, one header per step, Vulkan-free: `shader.hpp` (`ShaderStage`, `ShaderStageMask`, `ShaderLanguage`, `SHADER::stage_name`),
 `preprocessing.hpp` (`ShaderDefine`, the `#pragma pass <tag> [vertex] [fragment] [state words]` directives (`SHADER_PREPROCESSING::parse_directives` / `strip_directives`;
@@ -59,12 +59,14 @@ drawn exactly like a MeshRenderer, the geometry generated and uploaded once per 
 `RENDER_COMPONENTS::register_all` names the component entities, installs the removed hooks and exposes the scene components' `Serializer`s (core `scene/serialize.hpp`) for `.scene` files: `Transform` (`position`, `rotation` as the quaternion `x y z w`, `scale`), `Camera` (`fov_y` in radians, `near_plane`, `far_plane`), the `RenderCamera` tag, `MeshRenderer` (`mesh` GUID, `material` entity reference) and `PrimitiveRenderer` (`shape` by `PRIMITIVES::name`, `material`);
 `Shader` and `Material` have none, a scene names a material by its asset GUID),
 `renderer.hpp` (the `Renderer` state struct: graph + plans + diagnostics, executor, pipeline cache, asset cache, custom passes, the frame's set 0 (`frame_layout`, `frame_interface`, the `RENDERER_SAMPLER_*` table, the `white` texture),
-per-frame `frame_group` and `material_groups`, `log_sink`,
+per-frame `frame_group` and `material_groups`,
 `camera` (the entity the frame is drawn from when set and alive with a Transform and a Camera, ahead of the `RenderCamera` tag;
 the editor sets its fly camera so a scene file's tagged camera is left for the standalone);
 `FrameContext` = `GpuFrame` + target texture + `target_state` in/out;
 `RenderPassContext` for pass functions and custom callbacks;
-`RENDERER::init` / `shutdown` / `render` / `build_default_graph` (one DRAW_SCENE pass tagged `forward` into the backbuffer) / `register_custom_pass` / `log`),
+`RENDERER::init` / `shutdown` / `render` / `build_default_graph` (one DRAW_SCENE pass tagged `forward` into the backbuffer) / `register_custom_pass`;
+messages go through core's `LOG::` as `LOG_CATEGORY::RENDER`, shader loading and pipeline mistakes as `SHADER` (a compiler log is one `write_text_at` with the shader's path),
+GPU uploads of assets as `ASSET`),
 `shader_library.hpp` (`SHADER_LIBRARY::load(renderer, name)` opens the `AssetPath` of the name's asset entity when the World holds one (`AssetUuid` = `SHADER_LIBRARY::asset_guid(name)`, a hash of the name since the file carries no GUID, found with `ASSET_ENTITY::find`;
 that is how a project shader in any folder is found) and otherwise `<project>/render/<name>.slang` (or `.glsl`) then the engine's `render/`, the two render directories being the include roots either way, into that asset entity or else a new named unparented `Shader` entity, so a shader file, its asset and its `Shader` are one entity;
 `reload` / `reload_all` swap the program in place and bump `generation`),

@@ -1,6 +1,7 @@
 #pragma once
 
 #include "engine/defines.hpp"
+#include "engine/utils/log.hpp"
 #include "engine/memory/base_allocator.hpp"
 #include "engine/templates/dynamic_array.hpp"
 #include "engine/utils/type_id.hpp"
@@ -123,7 +124,7 @@ T* PluginRegistry::add(Args&&... args) {
 
     const TypeId type = TYPE_ID::get<T>();
     if (this->find(type) != nullptr) {
-        fprintf(stderr, "[plugins] plugin '%s' was already added\n", T::NAME);
+        LOG::error(LOG_CATEGORY::ENGINE, "plugin '%s' was already added", T::NAME);
         return nullptr;
     }
     T* plugin = this->allocator->allocate_array<T>(1);
@@ -153,7 +154,7 @@ template <typename T>
 T* PluginRegistry::require(Engine& engine) {
     const usz index = this->find_index(TYPE_ID::get<T>());
     if (index == this->entries.count) {
-        fprintf(stderr, "[plugins] plugin '%s' is required but was not added\n", T::NAME);
+        LOG::error(LOG_CATEGORY::ENGINE, "plugin '%s' is required but was not added", T::NAME);
         return nullptr;
     }
     if (!this->build_entry(engine, index)) {

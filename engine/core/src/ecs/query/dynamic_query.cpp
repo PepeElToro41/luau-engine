@@ -4,6 +4,7 @@
 #include "engine/ecs/query/query_scan.hpp"
 #include "engine/ecs/world.hpp"
 #include "engine/memory/temporal_allocator.hpp"
+#include "engine/utils/log.hpp"
 
 #include <cstdio>
 #include <cstring>
@@ -117,7 +118,7 @@ bool DynamicQuery::check_fields(const usz type_count, const char* what) const {
     if (type_count == this->program.field_count) {
         return true;
     }
-    fprintf(stderr, "[ecs] error: %s() given %llu output types, but the query has %llu output terms\n",
+    LOG::error(LOG_CATEGORY::ECS, "%s() given %llu output types, but the query has %llu output terms",
         what, static_cast<unsigned long long>(type_count), static_cast<unsigned long long>(this->program.field_count));
     return false;
 }

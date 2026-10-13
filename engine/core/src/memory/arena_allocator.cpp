@@ -1,6 +1,7 @@
 #include "engine/memory/arena_allocator.hpp"
 
 #include "engine/memory/heap_allocator.hpp"
+#include "engine/utils/log.hpp"
 
 #include <cstddef>
 #include <cstdint>
@@ -51,7 +52,7 @@ void* ArenaAllocator::allocate(const size_t size, const size_t alignment) {
     const uintptr_t aligned = (base + this->offset + alignment - 1) & ~(static_cast<uintptr_t>(alignment) - 1);
     const usz aligned_offset = aligned - base;
     if (aligned_offset + size > this->arena_size) {
-        fprintf(stderr, "[memory] arena out of memory: %llu bytes requested, %llu of %llu used\n",
+        LOG::error(LOG_CATEGORY::MEMORY, "arena out of memory: %llu bytes requested, %llu of %llu used",
                 static_cast<unsigned long long>(size), static_cast<unsigned long long>(this->offset),
                 static_cast<unsigned long long>(this->arena_size));
         return nullptr;
@@ -70,7 +71,7 @@ void* ArenaAllocator::reallocate(void* ptr, const size_t new_size, const size_t 
     (void)alignment;
     // An arena cannot resize a block and does not know how large it was, so
     // there is nothing sensible to copy. Callers must allocate + copy themselves.
-    fprintf(stderr, "[memory] error: reallocate is not supported on an arena (%llu bytes requested)\n",
+    LOG::error(LOG_CATEGORY::MEMORY, "reallocate is not supported on an arena (%llu bytes requested)",
             static_cast<unsigned long long>(new_size));
     return nullptr;
 }

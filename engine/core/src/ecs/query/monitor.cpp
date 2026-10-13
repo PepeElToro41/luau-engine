@@ -6,6 +6,7 @@
 #include "engine/ecs/utils/sorted_ids.hpp"
 #include "engine/ecs/world.hpp"
 #include "engine/memory/temporal_allocator.hpp"
+#include "engine/utils/log.hpp"
 
 #include <cstdio>
 
@@ -82,7 +83,7 @@ void fire(World* world, const EntityId entity, const MonitorEvent event, const A
 
 ObserverId create(World* world, const QueryTerm* terms, const usz term_count, const MonitorCallback callback, void* user_data) {
     if (callback == nullptr) {
-        fprintf(stderr, "[ecs] error: monitor needs a callback\n");
+        LOG::error(LOG_CATEGORY::ECS, "monitor needs a callback");
         return 0;
     }
 
@@ -94,11 +95,11 @@ ObserverId create(World* world, const QueryTerm* terms, const usz term_count, co
     for (usz i = 0; i < term_count; i++) {
         const QueryTerm& term = terms[i];
         if (term.id == 0) {
-            fprintf(stderr, "[ecs] error: monitor term %llu has id 0 (did a type fail to register?)\n", i);
+            LOG::error(LOG_CATEGORY::ECS, "monitor term %llu has id 0 (did a type fail to register?)", i);
             return 0;
         }
         if (!term.is_on_this() || term.is_optional() || term.is_or()) {
-            fprintf(stderr, "[ecs] error: monitor term %llu (%llx) is not a plain term on the matched entity; monitors only support with() / without() terms\n",
+            LOG::error(LOG_CATEGORY::ECS, "monitor term %llu (%llx) is not a plain term on the matched entity; monitors only support with() / without() terms",
                 i, term.id);
             return 0;
         }

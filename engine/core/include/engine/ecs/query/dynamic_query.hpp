@@ -11,6 +11,7 @@
 #include "engine/memory/base_allocator.hpp"
 #include "engine/memory/temporal_allocator.hpp"
 #include "engine/templates/dynamic_array.hpp"
+#include "engine/utils/log.hpp"
 
 #include <cstddef>
 #include <cstdio>
@@ -198,7 +199,7 @@ void DynamicQuery::each(Fn&& fn) {
     bool reported = false;
     while (it.next(&it)) {
         if (!DynamicQuery::each_chunk<Fn, Ts...>(it, fn, std::index_sequence_for<Ts...> { }) && !reported) {
-            fprintf(stderr, "[ecs] error: each(): a field given as a plain type is missing in a chunk (optional term or or-chain); take it as a pointer\n");
+            LOG::error(LOG_CATEGORY::ECS, "each(): a field given as a plain type is missing in a chunk (optional term or or-chain); take it as a pointer");
             reported = true;
         }
     }

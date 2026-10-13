@@ -107,8 +107,9 @@ struct SerializeContext {
     void* user_data = nullptr;
 
     // Diagnostics: the file and the line being read / the entity being
-    // written, for warnings; `warn` receives the formatted text (stderr
-    // when nullptr). `warnings` counts them.
+    // written, for warnings; `warn` receives the formatted text prefixed
+    // with `path:line: ` (a LOG_CATEGORY::SCENE warning carrying the
+    // location when nullptr). `warnings` counts them.
     const char* path = nullptr;
     u32 line = 0;
     void (*warn)(const char* text, void* user_data) = nullptr;

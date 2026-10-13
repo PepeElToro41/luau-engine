@@ -1,4 +1,6 @@
 #include "gpu/vulkan/vk_check.hpp"
+
+#include "engine/utils/log.hpp"
 #include "gpu/vulkan/vk_context.hpp"
 
 // The one Vulkan context of the process (see gpu.hpp: one GpuContext, one
@@ -43,11 +45,11 @@ VulkanContext& VK_CONTEXT::of_command_list(const GpuCommandList cmd, VkCommandLi
 static bool vk_init(GpuContext* gpu, const GpuInitDesc& desc) {
     VulkanContext& vk = g_vk;
     if (vk.gpu != nullptr) {
-        GPU::log(GPU::LOG_ERROR, "[vulkan] init: already initialized");
+        LOG::error(LOG_CATEGORY::GPU, "[vulkan] init: already initialized");
         return false;
     }
     if (desc.window == nullptr) {
-        GPU::log(GPU::LOG_ERROR, "[vulkan] init: a window is required");
+        LOG::error(LOG_CATEGORY::GPU, "[vulkan] init: a window is required");
         return false;
     }
     vk.gpu = gpu;

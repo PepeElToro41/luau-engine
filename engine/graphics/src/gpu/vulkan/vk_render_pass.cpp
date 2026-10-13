@@ -1,4 +1,6 @@
 #include "engine/utils/hash.hpp"
+
+#include "engine/utils/log.hpp"
 #include "gpu/vulkan/vk_check.hpp"
 #include "gpu/vulkan/vk_context.hpp"
 
@@ -171,12 +173,12 @@ static void vk_cmd_begin_render_pass(const GpuCommandList cmd, const GpuRenderPa
     VkCommandListEntry* list = nullptr;
     VulkanContext& vk = VK_CONTEXT::of_command_list(cmd, &list);
     if (list == nullptr) {
-        GPU::log(GPU::LOG_ERROR, "[vulkan] begin_render_pass: invalid command list");
+        LOG::error(LOG_CATEGORY::GPU, "[vulkan] begin_render_pass: invalid command list");
         return;
     }
     const char* name = desc.name != nullptr ? desc.name : "render pass";
     if (desc.color_count > GPU_MAX_COLOR_ATTACHMENTS || (desc.color_count == 0 && !desc.has_depth)) {
-        GPU::log(GPU::LOG_ERROR, "[vulkan] begin_render_pass (%s): needs 1..%u color attachments or a depth attachment", name, GPU_MAX_COLOR_ATTACHMENTS);
+        LOG::error(LOG_CATEGORY::GPU, "[vulkan] begin_render_pass (%s): needs 1..%u color attachments or a depth attachment", name, GPU_MAX_COLOR_ATTACHMENTS);
         return;
     }
 
@@ -189,7 +191,7 @@ static void vk_cmd_begin_render_pass(const GpuCommandList cmd, const GpuRenderPa
     for (u32 i = 0; i < desc.color_count; ++i) {
         const VkTextureEntry* texture = VK_CONTEXT::texture(vk, desc.color[i].texture.id);
         if (texture == nullptr) {
-            GPU::log(GPU::LOG_ERROR, "[vulkan] begin_render_pass (%s): color attachment %u is not a valid texture", name, i);
+            LOG::error(LOG_CATEGORY::GPU, "[vulkan] begin_render_pass (%s): color attachment %u is not a valid texture", name, i);
             return;
         }
         texture_ids[count] = desc.color[i].texture.id;
@@ -206,7 +208,7 @@ static void vk_cmd_begin_render_pass(const GpuCommandList cmd, const GpuRenderPa
     if (desc.has_depth) {
         const VkTextureEntry* texture = VK_CONTEXT::texture(vk, desc.depth.texture.id);
         if (texture == nullptr) {
-            GPU::log(GPU::LOG_ERROR, "[vulkan] begin_render_pass (%s): the depth attachment is not a valid texture", name);
+            LOG::error(LOG_CATEGORY::GPU, "[vulkan] begin_render_pass (%s): the depth attachment is not a valid texture", name);
             return;
         }
         texture_ids[count] = desc.depth.texture.id;

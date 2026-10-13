@@ -6,6 +6,7 @@
 #include "engine/plugins/render_plugin.hpp"
 #include "engine/plugins/window_plugin.hpp"
 #include "engine/render/renderer.hpp"
+#include "engine/utils/log.hpp"
 
 bool EditorCameraPlugin::build(Engine& engine) {
     if (engine.require<WindowPlugin>() == nullptr || engine.require<CorePlugin>() == nullptr || engine.require<RenderPlugin>() == nullptr) {
@@ -14,7 +15,7 @@ bool EditorCameraPlugin::build(Engine& engine) {
     World* world = engine.get_singleton<World>();
     Renderer* renderer = engine.get_singleton<Renderer>();
     if (!this->controller.init(*world)) {
-        engine.log(RENDER_LOG_ERROR, "Editor camera could not be created");
+        LOG::error(LOG_CATEGORY::EDITOR, "Editor camera could not be created");
         return false;
     }
     // The Viewport is always drawn from the fly camera, whichever scene

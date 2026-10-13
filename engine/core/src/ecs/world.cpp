@@ -9,6 +9,7 @@
 #include "engine/ecs/query/observer.hpp"
 #include "engine/memory/heap_allocator.hpp"
 #include "engine/memory/temporal_allocator.hpp"
+#include "engine/utils/log.hpp"
 
 #include <cstdio>
 #include <new>
@@ -167,7 +168,7 @@ const TypeInfo* World::get_type_info(const ComponentId id) const {
 
 EntityId World::claim_component_id(const TypeId type_id) {
     if (this->next_component_id > ECS::MAX_COMPONENT_ID) {
-        fprintf(stderr, "[ecs] error: out of component ids (max %llu); cannot register a new component or tag type\n",
+        LOG::error(LOG_CATEGORY::ECS, "out of component ids (max %llu); cannot register a new component or tag type",
             ECS::MAX_COMPONENT_ID);
         return 0;
     }

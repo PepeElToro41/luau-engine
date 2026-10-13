@@ -10,6 +10,7 @@
 #include "engine/scene/scene.hpp"
 #include "engine/templates/dynamic_array.hpp"
 #include "engine/utils/hash.hpp"
+#include "engine/utils/log.hpp"
 
 #include <cstdio>
 #include <cstring>
@@ -69,7 +70,7 @@ static bool load_program(Renderer& renderer, const char* name, const char* path,
     desc.target = renderer.gpu->info.bytecode;
     bool ok = SHADER_PROGRAM::load(desc, MEMORY::heap_allocator(), shader.program);
     if (shader.program.log != nullptr && shader.program.log[0] != '\0') {
-        RENDERER::log(renderer, ok ? RENDER_LOG_WARNING : RENDER_LOG_ERROR, "shader %s:\n%s", path, shader.program.log);
+        LOG::write_text_at(ok ? LOG_WARNING : LOG_ERROR, LOG_CATEGORY::SHADER, path, 0, shader.program.log);
     }
     if (!ok) {
         return false;
@@ -80,7 +81,7 @@ static bool load_program(Renderer& renderer, const char* name, const char* path,
     shader.material_layout = GpuBindLayout{};
     if (shader.program.material_interface.binding_count > 0) {
         if (!SHADER_REFLECT::layout_bindings(shader.program.material_interface, 2, layout, error, sizeof(error))) {
-            RENDERER::log(renderer, RENDER_LOG_ERROR, "shader %s: material set: %s", name, error);
+            LOG::error(LOG_CATEGORY::SHADER, "shader %s: material set: %s", name, error);
             return false;
         }
         shader.material_layout = GPU::bind_layout(renderer.gpu, layout);
@@ -93,7 +94,7 @@ static bool load_program(Renderer& renderer, const char* name, const char* path,
             continue;
         }
         if (!SHADER_REFLECT::layout_bindings(pass.reflection, 1, layout, error, sizeof(error))) {
-            RENDERER::log(renderer, RENDER_LOG_ERROR, "shader %s, pass %s: inputs: %s", name, pass.tag_name, error);
+            LOG::error(LOG_CATEGORY::SHADER, "shader %s, pass %s: inputs: %s", name, pass.tag_name, error);
             return false;
         }
         shader.input_layouts[p] = GPU::bind_layout(renderer.gpu, layout);
@@ -134,7 +135,7 @@ EntityId SHADER_LIBRARY::load(Renderer& renderer, const char* name) {
 
     char path[RENDERER_PATH_MAX];
     if (!resolve_path(renderer, name, path, sizeof(path))) {
-        RENDERER::log(renderer, RENDER_LOG_ERROR, "shader %s: no registered file, and no %s.slang (or .glsl) in the project or engine render directories", name, name);
+        LOG::error(LOG_CATEGORY::SHADER, "shader %s: no registered file, and no %s.slang (or .glsl) in the project or engine render directories", name, name);
         return 0;
     }
     Shader shader;
@@ -164,7 +165,7 @@ bool SHADER_LIBRARY::reload(Renderer& renderer, const EntityId entity) {
     }
     char path[RENDERER_PATH_MAX];
     if (!resolve_path(renderer, shader->name, path, sizeof(path))) {
-        RENDERER::log(renderer, RENDER_LOG_ERROR, "shader %s: file disappeared", shader->name);
+        LOG::error(LOG_CATEGORY::SHADER, "shader %s: file disappeared", shader->name);
         return false;
     }
     Shader fresh;

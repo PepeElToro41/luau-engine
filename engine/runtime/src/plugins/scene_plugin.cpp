@@ -7,6 +7,7 @@
 #include "engine/render/components.hpp"
 #include "engine/render/demo_scene.hpp"
 #include "engine/scene/scene.hpp"
+#include "engine/utils/log.hpp"
 
 bool ScenePlugin::build(Engine& engine) {
     if (engine.require<ProjectPlugin>() == nullptr) {
@@ -30,18 +31,18 @@ void ScenePlugin::load(SystemContext& ctx) {
     const std::string path = scene.string();
     std::error_code error;
     if (!std::filesystem::exists(scene, error) || error) {
-        engine.log(RENDER_LOG_WARNING, "No startup scene at %s%s", path.c_str(), self->spawn_demo_when_missing ? "; spawning the built-in demo" : "");
+        LOG::warning(LOG_CATEGORY::ENGINE, "No startup scene at %s%s", path.c_str(), self->spawn_demo_when_missing ? "; spawning the built-in demo" : "");
     } else {
         const AssetGuid guid = engine.load_asset_file(path.c_str());
         if (guid.is_null()) {
-            engine.log(RENDER_LOG_ERROR, "Scene %s could not be registered", path.c_str());
+            LOG::error(LOG_CATEGORY::ENGINE, "Scene %s could not be registered", path.c_str());
         } else if (engine.load_scene(guid)) {
             self->loaded = true;
             return;
         }
     }
     if (self->spawn_demo_when_missing && !RENDER_DEMO::spawn(engine)) {
-        engine.log(RENDER_LOG_ERROR, "Demo scene could not be created");
+        LOG::error(LOG_CATEGORY::ENGINE, "Demo scene could not be created");
     }
 }
 
@@ -73,7 +74,7 @@ bool SCENE_PLUGIN::tag_scene_camera(Engine& engine) {
         }
     });
     if (camera == 0) {
-        engine.log(RENDER_LOG_WARNING, "The scene has no camera to render from");
+        LOG::warning(LOG_CATEGORY::ENGINE, "The scene has no camera to render from");
         return false;
     }
     world->add<RenderCamera>(camera);

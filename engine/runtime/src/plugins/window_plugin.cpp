@@ -1,4 +1,5 @@
 #include "engine/plugins/window_plugin.hpp"
+#include "engine/utils/log.hpp"
 
 #include "engine/engine.hpp"
 #include "engine/gpu/gpu.hpp"
@@ -20,7 +21,7 @@ bool WindowPlugin::build(Engine& engine) {
     gpu_desc.swapchain_format = this->desc.swapchain_format;
     engine.gpu = GPU::init(gpu_desc);
     if (engine.gpu == nullptr) {
-        fprintf(stderr, "[window] GPU init failed\n");
+        LOG::error(LOG_CATEGORY::WINDOW, "GPU init failed");
         this->window.shutdown();
         DISPLAY_WINDOW::sdl_shutdown();
         this->sdl_ready = false;

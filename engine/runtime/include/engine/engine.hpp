@@ -1,6 +1,7 @@
 #pragma once
 
 #include "engine/asset/asset_entity.hpp"
+#include "engine/utils/log.hpp"
 #include "engine/asset/asset_resource_provider.hpp"
 #include "engine/asset/asset_view.hpp"
 #include "engine/defines.hpp"
@@ -193,10 +194,6 @@ struct Engine {
     // scheduler.add_system, for the common case.
     SystemHandle add_system(PhaseHandle phase, const char* name, SystemFn fn, void* user_data);
 
-    // A message for whoever is watching: the renderer log when there is one
-    // (an editor's Output panel), stderr otherwise.
-    void log(RenderLogLevel level, const char* format, ...);
-
     // --- Assets --------------------------------------------------------------
 
     // Registers the asset file at `path` (a .lunaasset, or a text asset
@@ -278,7 +275,6 @@ struct Engine {
 
 private:
     static EntityId resolve_asset(const AssetGuid& guid, void* user_data);
-    static void scene_warning(const char* text, void* user_data);
     // The text of the scene asset `guid`, resident in the provider until
     // unload_scene_text; nullptr (with a message) when it is not a scene.
     const char* scene_text(const AssetGuid& guid, usz* out_size, const char** out_path);
@@ -289,7 +285,7 @@ private:
 template <typename T, typename... Args>
 T* Engine::add_plugin(Args&&... args) {
     if (this->initialized) {
-        fprintf(stderr, "[engine] plugin '%s' added after init; plugins are added before it\n", T::NAME);
+        LOG::error(LOG_CATEGORY::ENGINE, "plugin '%s' added after init; plugins are added before it", T::NAME);
         return nullptr;
     }
     return this->plugins.add<T>(std::forward<Args>(args)...);

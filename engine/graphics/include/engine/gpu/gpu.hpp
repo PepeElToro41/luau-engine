@@ -162,16 +162,4 @@ void cmd_blit(GpuCommandList cmd, GpuTexture src, GpuTexture dst, bool linear);
 void cmd_begin_label(GpuCommandList cmd, const char* name);
 void cmd_end_label(GpuCommandList cmd);
 
-// --- Messages ------------------------------------------------------------------
-
-enum LogLevel : u32 {
-    LOG_INFO = 0,
-    LOG_WARNING = 1,
-    LOG_ERROR = 2,
-};
-using LogFn = void (*)(LogLevel level, const char* text, void* user_data);
-// Where the backend's messages go; stderr when unset. The renderer chains
-// its own sink to it.
-void set_log_sink(LogFn fn, void* user_data);
-
 } // namespace GPU

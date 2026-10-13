@@ -9,6 +9,7 @@
 #include "engine/ecs/hierarchy.hpp"
 #include "engine/ecs/world.hpp"
 #include "engine/memory/temporal_allocator.hpp"
+#include "engine/utils/log.hpp"
 
 #include <cstdio>
 #include <new>
@@ -41,11 +42,11 @@ bool split_terms(const QueryTerm* terms, const usz term_count, BaseAllocator* al
     for (usz i = 0; i < term_count; i++) {
         const QueryTerm& term = terms[i];
         if (term.id == 0) {
-            fprintf(stderr, "[ecs] error: query term %llu has id 0 (did a type fail to register?)\n", i);
+            LOG::error(LOG_CATEGORY::ECS, "query term %llu has id 0 (did a type fail to register?)", i);
             return false;
         }
         if (!term.is_on_this() || term.is_optional() || term.is_or()) {
-            fprintf(stderr, "[ecs] error: query term %llu (%llx) is not a plain term on the matched entity; the trivial query only supports with() / without() terms\n",
+            LOG::error(LOG_CATEGORY::ECS, "query term %llu (%llx) is not a plain term on the matched entity; the trivial query only supports with() / without() terms",
                 i, term.id);
             return false;
         }

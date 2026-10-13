@@ -1,6 +1,7 @@
 #include "engine/asset/asset_types/material_asset.hpp"
 
 #include "engine/platform/file.hpp"
+#include "engine/utils/log.hpp"
 
 #include <cstdio>
 #include <cstdlib>
@@ -453,21 +454,21 @@ void MATERIAL_ASSET::write(const MaterialAsset& material, DynamicArray<char>& ou
 
 bool MATERIAL_ASSET::write_file(const MaterialAsset& material, const char* path) {
     if (material.guid.is_null()) {
-        fprintf(stderr, "[asset] error: cannot write %s: the material has no guid\n", path != nullptr ? path : "(null)");
+        LOG::error(LOG_CATEGORY::ASSET, "cannot write %s: the material has no guid", path != nullptr ? path : "(null)");
         return false;
     }
     DynamicArray<char> text;
     write(material, text);
     File file;
     if (!PLATFORM::file_open(&file, path, FILE_ACCESS_WRITE)) {
-        fprintf(stderr, "[asset] error: cannot open %s for writing\n", path != nullptr ? path : "(null)");
+        LOG::error(LOG_CATEGORY::ASSET, "cannot open %s for writing", path != nullptr ? path : "(null)");
         text.free();
         return false;
     }
     const bool ok = PLATFORM::file_write(file, 0, text.data, text.count);
     PLATFORM::file_close(&file);
     if (!ok) {
-        fprintf(stderr, "[asset] error: writing %s failed\n", path);
+        LOG::error(LOG_CATEGORY::ASSET, "writing %s failed", path);
     }
     text.free();
     return ok;

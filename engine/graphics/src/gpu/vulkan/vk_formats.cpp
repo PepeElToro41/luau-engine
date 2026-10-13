@@ -1,5 +1,7 @@
 #include "gpu/vulkan/vk_context.hpp"
 
+#include "engine/utils/log.hpp"
+
 // Indexed by GpuFormat.
 static const VkFormat VK_FORMAT_TABLE[GPU_FORMAT_COUNT] = {
     VK_FORMAT_UNDEFINED,
@@ -202,6 +204,6 @@ VkFormat VK_FORMATS::find_depth_format(const VulkanContext& vk) {
             return candidate;
         }
     }
-    GPU::log(GPU::LOG_ERROR, "[vulkan] no supported depth attachment format");
+    LOG::error(LOG_CATEGORY::GPU, "[vulkan] no supported depth attachment format");
     return VK_FORMAT_UNDEFINED;
 }

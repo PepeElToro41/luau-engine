@@ -1,8 +1,9 @@
 #pragma once
 
 #include "engine/defines.hpp"
-#include "import/importer.hpp"
 #include "engine/project.hpp"
+#include "engine/utils/log.hpp"
+#include "import/importer.hpp"
 #include "selection.hpp"
 #include "ui/output_panel.hpp"
 
@@ -58,8 +59,8 @@ struct AssetBrowserPanel {
     // Submits the window. `open` is the View-menu toggle. `project` is the
     // engine's Project singleton; null or closed shows an empty panel.
     // Deletions, renames, folder creations and their failures are reported
-    // to `output`.
-    void draw(bool* open, const Project* project, OutputPanel& output, Selection& selection);
+    // to the log (LOG_CATEGORY::EDITOR).
+    void draw(bool* open, const Project* project, Selection& selection);
 
     // Shows `folder`, relative to the project root (empty for the root
     // itself). Takes effect on the next draw().
@@ -94,8 +95,8 @@ private:
     void rescan(const Project& project);
     void draw_breadcrumbs(const Project& project);
     void draw_entries(const Project& project, Selection& selection);
-    void draw_delete_popup(const Project& project, OutputPanel& output, Selection& selection);
-    void delete_entry(const Project& project, const Entry& entry, OutputPanel& output, Selection& selection);
+    void draw_delete_popup(const Project& project, Selection& selection);
+    void delete_entry(const Project& project, const Entry& entry, Selection& selection);
     // The one name modal, used by New Folder..., Rename... and Create.
     enum struct NameMode { NEW_FOLDER, RENAME, NEW_FILE };
     // What the Create dropdown makes.
@@ -120,10 +121,10 @@ private:
     // The file name the Create modal would make: the typed name plus the
     // kind's extension, unless it was typed already.
     std::string create_file_name() const;
-    void draw_name_popup(const Project& project, OutputPanel& output, Selection& selection);
-    bool create_folder(const Project& project, const char* name, OutputPanel& output, Selection& selection);
-    bool create_file(const Project& project, const char* name, OutputPanel& output, Selection& selection);
-    bool rename_entry(const Project& project, const Entry& entry, const char* name, OutputPanel& output, Selection& selection);
+    void draw_name_popup(const Project& project, Selection& selection);
+    bool create_folder(const Project& project, const char* name, Selection& selection);
+    bool create_file(const Project& project, const char* name, Selection& selection);
+    bool rename_entry(const Project& project, const Entry& entry, const char* name, Selection& selection);
     // Why `name` cannot be used in `current`, or null when it can. `except`
     // is a listing name that does not count as taken (the entry being
     // renamed).
@@ -131,8 +132,8 @@ private:
     // The Save Original... modal: the kept original being saved and the
     // path typed for it.
     void begin_save_original(const Project& project, const Entry& entry);
-    void draw_save_original_popup(const Project& project, OutputPanel& output);
-    bool save_original(const Project& project, const char* path, OutputPanel& output);
+    void draw_save_original_popup(const Project& project);
+    bool save_original(const Project& project, const char* path);
 
     bool dirty = true;
     // Entry whose Delete is awaiting confirmation; name is empty when none.

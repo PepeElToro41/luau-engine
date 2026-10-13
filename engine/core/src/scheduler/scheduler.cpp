@@ -3,6 +3,7 @@
 #include "engine/memory/heap_allocator.hpp"
 #include "engine/memory/temporal_allocator.hpp"
 #include "engine/utils/hash.hpp"
+#include "engine/utils/log.hpp"
 
 #include <cstdarg>
 #include <cstdio>
@@ -62,16 +63,10 @@ void Scheduler::mark_dirty() {
 }
 
 void Scheduler::report(const char* format, ...) {
-    char text[512];
     va_list args;
     va_start(args, format);
-    vsnprintf(text, sizeof(text), format, args);
+    LOG::vwrite(LOG_ERROR, LOG_CATEGORY::SCHEDULER, nullptr, 0, format, args);
     va_end(args);
-    if (this->log != nullptr) {
-        this->log(text, this->log_user_data);
-    } else {
-        fprintf(stderr, "[scheduler] %s\n", text);
-    }
 }
 
 // --- Pipelines -----------------------------------------------------------------

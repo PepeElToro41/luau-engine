@@ -6,6 +6,7 @@
 #include "engine/engine.hpp"
 #include "engine/render/renderer.hpp"
 #include "engine/render/shader_library.hpp"
+#include "engine/utils/log.hpp"
 
 #include <cctype>
 #include <string>
@@ -65,7 +66,7 @@ bool PROJECT::open(Engine& engine, const std::filesystem::path& root) {
         }
     }
     if (!project->open(root)) {
-        engine.log(RENDER_LOG_ERROR, "Project directory not found: %s", root.string().c_str());
+        LOG::error(LOG_CATEGORY::ENGINE, "Project directory not found: %s", root.string().c_str());
         return false;
     }
     // The whole project is shader source: its root is the include root and
@@ -75,7 +76,7 @@ bool PROJECT::open(Engine& engine, const std::filesystem::path& root) {
         const std::string render_dir = project->root.string();
         RENDERER::set_project_render_dir(*renderer, render_dir.c_str());
     }
-    engine.log(RENDER_LOG_INFO, "Project '%s' opened at %s", project->name.c_str(), project->root.string().c_str());
+    LOG::info(LOG_CATEGORY::ENGINE, "Project '%s' opened at %s", project->name.c_str(), project->root.string().c_str());
     return true;
 }
 
@@ -102,13 +103,13 @@ static u32 register_shader_assets(Engine& engine, const std::filesystem::path& d
         const std::string path = file.string();
         const auto [where, inserted] = seen.emplace(stem, path);
         if (!inserted) {
-            engine.log(RENDER_LOG_WARNING, "Shader %s is ignored: %s already registered the name '%s'", path.c_str(), where->second.c_str(), stem.c_str());
+            LOG::warning(LOG_CATEGORY::ENGINE, "Shader %s is ignored: %s already registered the name '%s'", path.c_str(), where->second.c_str(), stem.c_str());
             return;
         }
         if (assets->add(SHADER_LIBRARY::asset_guid(stem.c_str()), ASSET_TYPE::SHADER, stem.c_str(), path.c_str()) != 0) {
             registered += 1;
         } else {
-            engine.log(RENDER_LOG_WARNING, "Shader %s could not be registered", path.c_str());
+            LOG::warning(LOG_CATEGORY::ENGINE, "Shader %s could not be registered", path.c_str());
         }
     };
     if (recursive) {
@@ -146,10 +147,10 @@ bool PROJECT::scan(Engine& engine, ProjectScanResult* result) {
         if (!engine.load_asset_file(path.c_str()).is_null()) {
             counts.assets += 1;
         } else {
-            engine.log(RENDER_LOG_WARNING, "Asset %s could not be registered", path.c_str());
+            LOG::warning(LOG_CATEGORY::ENGINE, "Asset %s could not be registered", path.c_str());
         }
     }
-    engine.log(RENDER_LOG_INFO, "%u asset files registered", counts.assets);
+    LOG::info(LOG_CATEGORY::ENGINE, "%u asset files registered", counts.assets);
 
     // Engine shaders first: a project file of the same name has the same
     // GUID and points the entity at its own path, which is the override.
@@ -162,7 +163,7 @@ bool PROJECT::scan(Engine& engine, ProjectScanResult* result) {
     // overrides one, so the project walk starts a fresh name set.
     seen.clear();
     counts.shaders += register_shader_assets(engine, project->root, true, seen);
-    engine.log(RENDER_LOG_INFO, "%u shader files registered", counts.shaders);
+    LOG::info(LOG_CATEGORY::ENGINE, "%u shader files registered", counts.shaders);
     if (result != nullptr) {
         *result = counts;
     }

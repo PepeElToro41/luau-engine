@@ -1,6 +1,7 @@
 #include "engine/render/graph_executor.hpp"
 
 #include "engine/render/renderer.hpp"
+#include "engine/utils/log.hpp"
 #include "render/passes.hpp"
 
 #include <utility>
@@ -89,7 +90,7 @@ static bool create_image(Renderer& renderer, const PlannedResource& resource, Gr
     desc.usage = texture_usage(resource.usage);
     out.texture = GPU::create_texture(renderer.gpu, desc);
     if (!out.texture.is_valid()) {
-        RENDERER::log(renderer, RENDER_LOG_ERROR, "render graph: cannot create the image of resource %llu", static_cast<unsigned long long>(resource.handle.id));
+        LOG::error(LOG_CATEGORY::RENDER, "render graph: cannot create the image of resource %llu", static_cast<unsigned long long>(resource.handle.id));
         return false;
     }
     out.handle = resource.handle;
@@ -155,7 +156,7 @@ void GRAPH_EXECUTOR::free(Renderer& renderer) {
 GpuResourceState GRAPH_EXECUTOR::execute(Renderer& renderer, const FrameContext& frame, const RenderGraphPlan& plan) {
     GraphExecutor& executor = renderer.executor;
     if (plan.resources.count != executor.images.count) {
-        RENDERER::log(renderer, RENDER_LOG_ERROR, "render graph: execute: the plan was not realized");
+        LOG::error(LOG_CATEGORY::RENDER, "render graph: execute: the plan was not realized");
         return frame.target_state;
     }
 

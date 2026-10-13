@@ -11,6 +11,7 @@
 #include "engine/ecs/world.hpp"
 #include "engine/memory/base_allocator.hpp"
 #include "engine/memory/temporal_allocator.hpp"
+#include "engine/utils/log.hpp"
 
 #include <concepts>
 #include <cstddef>
@@ -235,12 +236,12 @@ private:
             return;
         }
         if (this->cache != nullptr) {
-            fprintf(stderr, "[ecs] error: query %s() after the cache was built; %llx was ignored. Constrain the query before its first run, or cleanup() first\n",
+            LOG::error(LOG_CATEGORY::ECS, "query %s() after the cache was built; %llx was ignored. Constrain the query before its first run, or cleanup() first",
                 side, static_cast<unsigned long long>(id));
             return;
         }
         if (count == QUERY_MAX_EXTRA_TERMS) {
-            fprintf(stderr, "[ecs] error: query %s() holds at most %llu ids; %llx was ignored. Use World::query_build() for larger queries\n",
+            LOG::error(LOG_CATEGORY::ECS, "query %s() holds at most %llu ids; %llx was ignored. Use World::query_build() for larger queries",
                 side, static_cast<unsigned long long>(QUERY_MAX_EXTRA_TERMS), static_cast<unsigned long long>(id));
             return;
         }
