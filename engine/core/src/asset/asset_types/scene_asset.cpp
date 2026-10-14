@@ -103,8 +103,14 @@ void write_entity(World& world, const EntityId entity, const EntityIdLow local, 
             components[component_count++] = {id, *serializer};
         }
     }
+    // Lowest order first, ties by name: the layout then depends on nothing
+    // but the file's own words, never on the order the components were
+    // registered in (component ids are an implementation detail).
     const auto by_order = [](const Exposed& a, const Exposed& b) {
-        return a.serializer.order != b.serializer.order ? a.serializer.order < b.serializer.order : a.id < b.id;
+        if (a.serializer.order != b.serializer.order) {
+            return a.serializer.order < b.serializer.order;
+        }
+        return strcmp(a.serializer.name, b.serializer.name) < 0;
     };
     std::sort(components, components + component_count, by_order);
     std::sort(tags, tags + tag_count, by_order);

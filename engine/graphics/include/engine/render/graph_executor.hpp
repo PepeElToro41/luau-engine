@@ -45,5 +45,8 @@ bool realize(Renderer& renderer, const RenderGraphPlan& plan);
 GpuResourceState execute(Renderer& renderer, const FrameContext& frame, const RenderGraphPlan& plan);
 // Destroys every texture now. The GPU must be idle.
 void free(Renderer& renderer);
+// Releases every texture at the end of the frames in flight, for a view
+// torn down while the GPU works.
+void release(Renderer& renderer);
 
 } // namespace GRAPH_EXECUTOR

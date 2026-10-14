@@ -3,6 +3,13 @@
 #include "engine/engine.hpp"
 
 bool CorePlugin::build(Engine& engine) {
+    // What a play instance shares with the authoring world and what it has
+    // of its own (see engine.hpp on the singleton stores).
+    SINGLETON_SCOPE::declare<AssetResourceProvider>(SCOPE_SHARED, "AssetResourceProvider");
+    SINGLETON_SCOPE::declare<World>(SCOPE_LOCAL, "World");
+    SINGLETON_SCOPE::declare<Scene>(SCOPE_LOCAL, "Scene");
+    SINGLETON_SCOPE::declare<AssetEntities>(SCOPE_LOCAL, "AssetEntities");
+    SINGLETON_SCOPE::declare<FrameAllocator>(SCOPE_LOCAL, "FrameAllocator");
     AssetResourceProvider* assets = engine.create_singleton<AssetResourceProvider>();
     if (assets == nullptr) {
         return false;

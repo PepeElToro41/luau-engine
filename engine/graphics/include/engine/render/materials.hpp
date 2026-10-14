@@ -92,6 +92,12 @@ EntityId load(Renderer& renderer, const AssetGuid& asset);
 bool reload(Renderer& renderer, EntityId material);
 // Reloads every material that came from a file.
 void reload_all(Renderer& renderer);
+// Fills Renderer::materials from the Material entities of the renderer's
+// world that carry an asset guid, keeping the lowest entity per guid: what
+// a renderer made for a world cloned from another does, so that load() of
+// an asset the clone already holds finds that entity instead of making a
+// second. Returns how many it indexed.
+usz index_loaded(Renderer& renderer);
 
 // The entity's current state as a MaterialAsset: its shader's name, every
 // block member, texture slot and sampler slot of the material interface,

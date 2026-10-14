@@ -18,16 +18,19 @@ bool EditorGridPlugin::build(Engine& engine) {
     return true;
 }
 
+// The grid is an authoring tool: its pass lives in the root renderer's
+// graph, never in a play instance's, so the Viewport shows the game without
+// it while playing.
 void EditorGridPlugin::update(SystemContext& ctx) {
     EditorGridPlugin* self = static_cast<EditorGridPlugin*>(ctx.user_data);
-    if (Renderer* renderer = ENGINE::of(ctx).get_singleton<Renderer>()) {
+    if (Renderer* renderer = ENGINE::of(ctx).root.get<Renderer>()) {
         self->grid.update(*renderer);
     }
 }
 
 void EditorGridPlugin::detach(SystemContext& ctx) {
     EditorGridPlugin* self = static_cast<EditorGridPlugin*>(ctx.user_data);
-    if (Renderer* renderer = ENGINE::of(ctx).get_singleton<Renderer>()) {
+    if (Renderer* renderer = ENGINE::of(ctx).root.get<Renderer>()) {
         self->grid.shutdown(*renderer);
     }
 }

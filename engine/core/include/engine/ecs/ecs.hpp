@@ -40,15 +40,35 @@ constexpr u64 ID_FLAGS_MASK = 0xFull << 60;
 constexpr u64 ID_COMPONENT_MASK = ~ID_FLAGS_MASK;
 constexpr u64 ID_FLAG_PAIR = 1ull << 63;
 
-// Component ids are handed out below this; everything above is a regular
-// entity id. Keeping components low keeps per-component lookups dense.
+// --- Id bands ----------------------------------------------------------------
+// The id space is split into three bands, the same for every world:
+//
+//   [FIRST_COMPONENT_ID .. MAX_COMPONENT_ID]    components and tags (low ids
+//                                               keep the per-component
+//                                               lookups dense); the
+//                                               preregistered tier grows up
+//                                               from the bottom, the
+//                                               world-local runtime tier down
+//                                               from the top (see
+//                                               component_registry.hpp)
+//   [FIRST_BUILTIN_ID .. REST]                  the built-in ids below
+//                                               (WILDCARD .. IS_A)
+//   [FIRST_USER_ENTITY_ID .. ]                  entities; World::init starts
+//                                               new_entity() here, and a
+//                                               play fence or a networking
+//                                               range carves out what it
+//                                               needs above it
+//
+// World::init makes every id up to REST alive, so nothing created collides
+// with a component or a built-in.
+
+constexpr Id FIRST_COMPONENT_ID = 1;
 constexpr Id MAX_COMPONENT_ID = 256;
+constexpr Id FIRST_BUILTIN_ID = MAX_COMPONENT_ID + 1;
 
 // --- Built-in ids ------------------------------------------------------------
 // Hardcoded so they are stable across worlds. They start right after the
-// component range. World::create() registers every id up to and including
-// REST and starts handing out fresh entities after it, so no created entity
-// collides with them.
+// component range.
 
 constexpr Id WILDCARD         = MAX_COMPONENT_ID + 1;  // matches any id: (R, *), (*, T)
 constexpr Id ANY              = MAX_COMPONENT_ID + 2;  // like WILDCARD but matches at most once per entity
@@ -66,6 +86,9 @@ constexpr Id PANIC            = MAX_COMPONENT_ID + 10; // policy: the deletion i
 constexpr Id CHILD_OF         = MAX_COMPONENT_ID + 11; // (CHILD_OF, parent); exclusive, traversable, (ON_DELETE_TARGET, DELETE)
 constexpr Id IS_A             = MAX_COMPONENT_ID + 12; // (IS_A, base); traversable
 constexpr Id REST             = MAX_COMPONENT_ID + 13; // last built-in id; user entities start after it
+
+// Where World::init starts handing out entities.
+constexpr Id FIRST_USER_ENTITY_ID = REST + 1;
 
 // --- Utilities ---------------------------------------------------------------
 

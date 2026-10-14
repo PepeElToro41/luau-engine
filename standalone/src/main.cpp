@@ -1,6 +1,7 @@
 #include "engine/engine.hpp"
 #include "engine/plugins/core_plugin.hpp"
 #include "engine/plugins/demo_plugin.hpp"
+#include "engine/plugins/play_plugin.hpp"
 #include "engine/plugins/project_plugin.hpp"
 #include "engine/plugins/render_plugin.hpp"
 #include "engine/plugins/scene_plugin.hpp"
@@ -23,11 +24,15 @@
 // tagged RenderCamera, else the first camera under scene_root. F5 reloads
 // the shaders, F6 toggles the demo post-process pass, F7 the demo shadow
 // pass (also --post / --shadow). `--cooked` makes the asset provider refuse
-// uncooked files, as a shipped build would.
+// uncooked files, as a shipped build would. The game is playing from the
+// start: PlayPlugin runs in place and its play pipelines tick every frame,
+// or with `--isolate` in a clone of the loaded world, as the editor's Play
+// would run it.
 int main(const int argc, char** argv) {
     bool demo_post = false;
     bool demo_shadow = false;
     bool cooked_only = false;
+    bool isolate = false;
     std::filesystem::path project_dir = STANDALONE_DEFAULT_PROJECT_DIR;
     std::filesystem::path scene_path = "scenes/demo.scene";
     for (int i = 1; i < argc; ++i) {
@@ -37,12 +42,14 @@ int main(const int argc, char** argv) {
             demo_shadow = true;
         } else if (strcmp(argv[i], "--cooked") == 0) {
             cooked_only = true;
+        } else if (strcmp(argv[i], "--isolate") == 0) {
+            isolate = true;
         } else if (strcmp(argv[i], "--project") == 0 && i + 1 < argc) {
             project_dir = argv[++i];
         } else if (strcmp(argv[i], "--scene") == 0 && i + 1 < argc) {
             scene_path = argv[++i];
         } else {
-            fprintf(stderr, "usage: standalone [--project <dir>] [--scene <path>] [--post] [--shadow] [--cooked]\n");
+            fprintf(stderr, "usage: standalone [--project <dir>] [--scene <path>] [--post] [--shadow] [--cooked] [--isolate]\n");
             return 1;
         }
     }
@@ -55,6 +62,11 @@ int main(const int argc, char** argv) {
     // a development project's imports are not cooked yet, so that is opt-in.
     engine.add_plugin<CorePlugin>(cooked_only);
     engine.add_plugin<RenderPlugin>();
+    // The game runs from startup: in place, since there is no authoring
+    // state to protect, or with --isolate in a clone of the loaded scene the
+    // way the editor's Play does, which is how that path is checked without
+    // the editor.
+    engine.add_plugin<PlayPlugin>(isolate, true);
     engine.add_plugin<ProjectPlugin>(project_dir);
     engine.add_plugin<ScenePlugin>(scene_path);
     engine.add_plugin<DemoPlugin>(demo_post, demo_shadow);

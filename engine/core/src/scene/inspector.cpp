@@ -1,5 +1,6 @@
 #include "engine/scene/inspector.hpp"
 
+#include "engine/ecs/component_registry.hpp"
 #include "engine/ecs/ecs.hpp"
 #include "engine/memory/temporal_allocator.hpp"
 
@@ -9,6 +10,7 @@ void INSPECTOR::expose(World& world, const Id id, const char* name, const Inspec
     if (id == 0 || ECS::IS_PAIR(id) || draw == nullptr || !world.alive(id)) {
         return;
     }
+    COMPONENT_REGISTRY::preregister<Inspector>("Inspector");
     Inspector inspector;
     if (name != nullptr) {
         strncpy(inspector.name, name, ENTITY_NAME_CAPACITY - 1);
@@ -29,6 +31,7 @@ void INSPECTOR::addable(World& world, const Id id, const InspectorInitFn init) {
     if (id == 0 || ECS::IS_PAIR(id) || !world.alive(id)) {
         return;
     }
+    COMPONENT_REGISTRY::preregister<Addable>("Addable");
     Addable addable;
     addable.init = init;
     world.set(id, addable);

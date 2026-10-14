@@ -39,6 +39,11 @@ struct Name {
 
 namespace SCENE {
 
+// Preregisters Name (component_registry.hpp) and binds it on `world`, so
+// every world agrees on its id. Idempotent; Scene::init and
+// AssetEntities::init call it, and set_name registers it lazily anyway.
+void register_components(World& world);
+
 // The entity's CHILD_OF target (with generation), or 0 if it has no parent
 // or is not alive.
 EntityId parent(World& world, EntityId entity);
@@ -90,6 +95,11 @@ struct Scene {
     // outlive the Scene. There is nothing to free: the root is an ordinary
     // entity released with the World.
     void init(World* world);
+    // Adopts `root`, an alive entity of `world`, as the scene root instead
+    // of creating one: for a world cloned from another, whose root it
+    // already holds under the same id. `current` and `current_path` are
+    // left for the caller to copy over.
+    void init(World* world, EntityId root);
 
     // A new named entity under `parent`, or under the root when `parent` is
     // 0. Returns 0 if the entity could not be created.

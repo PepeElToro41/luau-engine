@@ -58,6 +58,7 @@ static std::string lower_extension(const std::filesystem::path& file) {
 }
 
 bool PROJECT::open(Engine& engine, const std::filesystem::path& root) {
+    SINGLETON_SCOPE::declare<Project>(SCOPE_SHARED, "Project");
     Project* project = engine.get_singleton<Project>();
     if (project == nullptr) {
         project = engine.create_singleton<Project>();
@@ -72,9 +73,9 @@ bool PROJECT::open(Engine& engine, const std::filesystem::path& root) {
     // The whole project is shader source: its root is the include root and
     // where a name falls back to when no asset entity carries a path, and
     // its render/ overrides the engine's shaders by name.
-    if (Renderer* renderer = engine.get_singleton<Renderer>()) {
+    if (RenderResources* resources = engine.get_singleton<RenderResources>()) {
         const std::string render_dir = project->root.string();
-        RENDERER::set_project_render_dir(*renderer, render_dir.c_str());
+        RENDER_RESOURCES::set_project_render_dir(*resources, render_dir.c_str());
     }
     LOG::info(LOG_CATEGORY::ENGINE, "Project '%s' opened at %s", project->name.c_str(), project->root.string().c_str());
     return true;
@@ -155,9 +156,9 @@ bool PROJECT::scan(Engine& engine, ProjectScanResult* result) {
     // Engine shaders first: a project file of the same name has the same
     // GUID and points the entity at its own path, which is the override.
     std::unordered_map<std::string, std::string> seen;
-    const Renderer* renderer = engine.get_singleton<Renderer>();
-    if (renderer != nullptr && renderer->engine_render_dir[0] != '\0') {
-        counts.shaders += register_shader_assets(engine, renderer->engine_render_dir, false, seen);
+    const RenderResources* resources = engine.get_singleton<RenderResources>();
+    if (resources != nullptr && resources->engine_render_dir[0] != '\0') {
+        counts.shaders += register_shader_assets(engine, resources->engine_render_dir, false, seen);
     }
     // The engine's files are not duplicates of themselves when the project
     // overrides one, so the project walk starts a fresh name set.

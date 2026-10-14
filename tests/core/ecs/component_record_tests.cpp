@@ -35,9 +35,10 @@ TEST_CASE("ecs/component_record: archetypes are linked in creation order with th
     World world;
     world.init();
 
-    // Health first, so its component id sorts before Position's in a type.
-    const Id health = world.id<Health>();
+    // Position first: runtime ids are handed out counting down, so Health's
+    // id then sorts before Position's in a type.
     const Id position = world.id<Position>();
+    const Id health = world.id<Health>();
     REQUIRE(health < position);
     const EntityId a = world.new_entity();
     world.set<Position>(a, { 1, 1 });

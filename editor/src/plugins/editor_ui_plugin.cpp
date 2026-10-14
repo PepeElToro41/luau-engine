@@ -29,7 +29,7 @@ bool EditorUiPlugin::build(Engine& engine) {
         return false;
     }
     WindowPlugin* window = engine.get_plugin<WindowPlugin>();
-    Renderer* renderer = engine.get_singleton<Renderer>();
+    const RenderResources* resources = engine.get_singleton<RenderResources>();
     this->editor.engine = &engine;
 
     // Every log message lands in the Output panel from here on.
@@ -37,7 +37,7 @@ bool EditorUiPlugin::build(Engine& engine) {
     INSPECTORS::register_all(*engine.get_singleton<World>());
     this->editor.explorer.editor_camera = engine.get_plugin<EditorCameraPlugin>()->controller.entity;
     // Create > Shader in the Asset Browser copies one of the engine's shaders.
-    this->editor.asset_browser.shader_template_dir = renderer->engine_render_dir;
+    this->editor.asset_browser.shader_template_dir = resources->engine_render_dir;
     // The close request goes through the Unsaved Scene prompt.
     window->quit_on_close = false;
 

@@ -24,7 +24,8 @@ bool EditorHighlightPlugin::build(Engine& engine) {
 void EditorHighlightPlugin::update(SystemContext& ctx) {
     EditorHighlightPlugin* self = static_cast<EditorHighlightPlugin*>(ctx.user_data);
     Engine& engine = ENGINE::of(ctx);
-    Renderer* renderer = engine.get_singleton<Renderer>();
+    // An authoring tool, like the grid: the root renderer's graph only.
+    Renderer* renderer = engine.root.get<Renderer>();
     if (renderer == nullptr) {
         return;
     }
@@ -36,7 +37,7 @@ void EditorHighlightPlugin::update(SystemContext& ctx) {
             selected = ui->editor.selection.entity;
         }
     }
-    Scene* scene = engine.get_singleton<Scene>();
+    Scene* scene = engine.root.get<Scene>();
     if (selected != 0 && (scene == nullptr || !scene->contains(selected))) {
         selected = 0;
     }
@@ -50,7 +51,7 @@ void EditorHighlightPlugin::update(SystemContext& ctx) {
 
 void EditorHighlightPlugin::detach(SystemContext& ctx) {
     EditorHighlightPlugin* self = static_cast<EditorHighlightPlugin*>(ctx.user_data);
-    if (Renderer* renderer = ENGINE::of(ctx).get_singleton<Renderer>()) {
+    if (Renderer* renderer = ENGINE::of(ctx).root.get<Renderer>()) {
         self->highlight.shutdown(*renderer);
     }
 }

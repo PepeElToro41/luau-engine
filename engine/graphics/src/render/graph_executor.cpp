@@ -151,6 +151,15 @@ void GRAPH_EXECUTOR::free(Renderer& renderer) {
     renderer.executor.images.free();
 }
 
+void GRAPH_EXECUTOR::release(Renderer& renderer) {
+    for (GraphImage& image : renderer.executor.images) {
+        if (!image.external && image.texture.is_valid()) {
+            GPU::release_texture(renderer.gpu, image.texture);
+        }
+    }
+    renderer.executor.images.free();
+}
+
 // --- Execute -------------------------------------------------------------------
 
 GpuResourceState GRAPH_EXECUTOR::execute(Renderer& renderer, const FrameContext& frame, const RenderGraphPlan& plan) {

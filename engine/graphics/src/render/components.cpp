@@ -2,17 +2,41 @@
 
 #include "engine/asset/asset_entity.hpp"
 #include "engine/asset/text_asset.hpp"
+#include "engine/ecs/component_registry.hpp"
 #include "engine/ecs/world.hpp"
+#include "engine/ecs/world_clone.hpp"
 #include "engine/memory/heap_allocator.hpp"
 #include "engine/render/renderer.hpp"
 #include "engine/scene/scene.hpp"
 #include "engine/scene/serialize.hpp"
 
+#include <cstring>
+
 static void shader_removed(World* world, const EntityId entity, Id, void* user_data) {
     Renderer* renderer = static_cast<Renderer*>(user_data);
+    if (ECS::ENTITY_LOW(entity) < renderer->owns_from) {
+        // Borrowed from the world this one was cloned from: the program and
+        // the pipelines keyed by this id are the original's to free.
+        return;
+    }
     if (Shader* shader = world->get<Shader>(entity)) {
         PIPELINES::release_shader(*renderer, entity);
         shader->program.free();
+    }
+}
+
+// A cloned Material gets its own parameter block: edits made while playing
+// die with the play world and the authoring material is untouched.
+static void material_clone(const void* source, void* destination, const usz size, void*) {
+    memcpy(destination, source, size);
+    Material* material = static_cast<Material*>(destination);
+    const Material* original = static_cast<const Material*>(source);
+    if (original->params != nullptr && original->param_size > 0) {
+        material->params = MEMORY::heap_allocator()->allocate_array<u8>(original->param_size);
+        memcpy(material->params, original->params, original->param_size);
+    } else {
+        material->params = nullptr;
+        material->param_size = 0;
     }
 }
 
@@ -139,7 +163,16 @@ static bool primitive_renderer_read(SerializeContext& ctx, void* data, const cha
     return false;
 }
 
-void RENDER_COMPONENTS::register_all(World& world, Renderer& renderer) {
+void RENDER_COMPONENTS::register_components(World& world) {
+    // Process-wide ids, so a world cloned from this one and this one agree
+    // on every render component without copying anything over.
+    COMPONENT_REGISTRY::preregister<Transform>("Transform");
+    COMPONENT_REGISTRY::preregister<Camera>("Camera");
+    COMPONENT_REGISTRY::preregister<RenderCamera>("RenderCamera");
+    COMPONENT_REGISTRY::preregister<MeshRenderer>("MeshRenderer");
+    COMPONENT_REGISTRY::preregister<PrimitiveRenderer>("PrimitiveRenderer");
+    COMPONENT_REGISTRY::preregister<Shader>("Shader");
+    COMPONENT_REGISTRY::preregister<Material>("Material");
     // Named so the editor can list them by name even where nothing draws them.
     SCENE::set_name(world, world.component<Transform>(), "Transform");
     SCENE::set_name(world, world.component<Camera>(), "Camera");
@@ -155,7 +188,18 @@ void RENDER_COMPONENTS::register_all(World& world, Renderer& renderer) {
     SERIALIZE::expose_tag<RenderCamera>(world, "RenderCamera");
     SERIALIZE::expose<MeshRenderer>(world, "MeshRenderer", &mesh_renderer_write, &mesh_renderer_read, 20);
     SERIALIZE::expose<PrimitiveRenderer>(world, "PrimitiveRenderer", &primitive_renderer_write, &primitive_renderer_read, 20);
+    // A Shader has no Cloner: the program is shared by the clone, which the
+    // removed hook's owns_from check accounts for.
+    CLONE::expose<Material>(world, &material_clone);
+}
+
+void RENDER_COMPONENTS::install_hooks(World& world, Renderer& renderer) {
     world.hook_removed<Shader>(shader_removed, &renderer);
     world.hook_removed<Material>(material_removed, &renderer);
     world.query<Material>().observe(material_changed);
+}
+
+void RENDER_COMPONENTS::register_all(World& world, Renderer& renderer) {
+    RENDER_COMPONENTS::register_components(world);
+    RENDER_COMPONENTS::install_hooks(world, renderer);
 }

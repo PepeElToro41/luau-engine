@@ -9,7 +9,7 @@
 
 // --- Lifetime ----------------------------------------------------------------------
 
-static bool init_frame_set(Renderer& renderer) {
+static bool init_frame_set(RenderResources& resources) {
     // Set 0: the frame block at binding 0 and the sampler table at 1..4, as
     // engine/frame.slang declares them. Shaders may use any subset.
     GpuBindLayoutDesc layout;
@@ -17,12 +17,12 @@ static bool init_frame_set(Renderer& renderer) {
     for (u32 i = 0; i < RENDERER_SAMPLER_COUNT; ++i) {
         layout.add(1 + i, GPU_BINDING_SAMPLER, GPU_STAGE_VERTEX | GPU_STAGE_FRAGMENT);
     }
-    renderer.frame_layout = GPU::bind_layout(renderer.gpu, layout);
-    if (!renderer.frame_layout.is_valid()) {
+    resources.frame_layout = GPU::bind_layout(resources.gpu, layout);
+    if (!resources.frame_layout.is_valid()) {
         return false;
     }
 
-    ShaderReflection& interface = renderer.frame_interface;
+    ShaderReflection& interface = resources.frame_interface;
     interface = ShaderReflection{};
     ReflectedBinding& block = interface.bindings[interface.binding_count++];
     block.set = 0;
@@ -44,14 +44,14 @@ static bool init_frame_set(Renderer& renderer) {
     }
 
     GpuSamplerDesc desc;
-    renderer.samplers[RENDERER_SAMPLER_LINEAR] = GPU::sampler(renderer.gpu, desc);
+    resources.samplers[RENDERER_SAMPLER_LINEAR] = GPU::sampler(resources.gpu, desc);
     desc.address_u = desc.address_v = desc.address_w = GPU_ADDRESS_CLAMP;
-    renderer.samplers[RENDERER_SAMPLER_LINEAR_CLAMP] = GPU::sampler(renderer.gpu, desc);
+    resources.samplers[RENDERER_SAMPLER_LINEAR_CLAMP] = GPU::sampler(resources.gpu, desc);
     desc.min_filter = desc.mag_filter = desc.mip_filter = GPU_FILTER_NEAREST;
-    renderer.samplers[RENDERER_SAMPLER_NEAREST_CLAMP] = GPU::sampler(renderer.gpu, desc);
+    resources.samplers[RENDERER_SAMPLER_NEAREST_CLAMP] = GPU::sampler(resources.gpu, desc);
     desc.address_u = desc.address_v = desc.address_w = GPU_ADDRESS_REPEAT;
-    renderer.samplers[RENDERER_SAMPLER_NEAREST] = GPU::sampler(renderer.gpu, desc);
-    for (const GpuSampler sampler : renderer.samplers) {
+    resources.samplers[RENDERER_SAMPLER_NEAREST] = GPU::sampler(resources.gpu, desc);
+    for (const GpuSampler sampler : resources.samplers) {
         if (!sampler.is_valid()) {
             return false;
         }
@@ -62,49 +62,75 @@ static bool init_frame_set(Renderer& renderer) {
     white_desc.format = GPU_FORMAT_RGBA8_UNORM;
     white_desc.width = 1;
     white_desc.height = 1;
-    renderer.white = GPU::create_texture(renderer.gpu, white_desc);
-    if (!renderer.white.is_valid()) {
+    resources.white = GPU::create_texture(resources.gpu, white_desc);
+    if (!resources.white.is_valid()) {
         return false;
     }
     const u8 white_pixel[4] = {255, 255, 255, 255};
     GpuTextureUpload upload;
     upload.pixels = white_pixel;
     upload.size = sizeof(white_pixel);
-    return GPU::upload_texture(renderer.gpu, renderer.white, &upload, 1);
+    return GPU::upload_texture(resources.gpu, resources.white, &upload, 1);
 }
 
-bool RENDERER::init(Renderer& renderer, GpuContext* gpu, World* world, AssetResourceProvider* provider, BaseAllocator* frame_allocator, const char* engine_render_dir) {
-    if (frame_allocator == nullptr) {
+bool RENDER_RESOURCES::init(RenderResources& resources, GpuContext* gpu, AssetResourceProvider* provider, const char* engine_render_dir) {
+    if (gpu == nullptr) {
         return false;
     }
-    renderer.gpu = gpu;
+    resources.gpu = gpu;
+    resources.provider = provider;
+    if (engine_render_dir != nullptr) {
+        strncpy(resources.engine_render_dir, engine_render_dir, RENDERER_PATH_MAX - 1);
+    }
+    GPU_ASSETS::init(resources.assets, gpu, provider);
+    return init_frame_set(resources);
+}
+
+void RENDER_RESOURCES::shutdown(RenderResources& resources) {
+    if (resources.gpu == nullptr) {
+        return;
+    }
+    PIPELINES::free(resources);
+    GPU_ASSETS::shutdown(resources.assets);
+    if (resources.white.is_valid()) {
+        GPU::destroy_texture(resources.gpu, resources.white);
+        resources.white = GpuTexture{};
+    }
+    resources.gpu = nullptr;
+    resources.provider = nullptr;
+}
+
+void RENDER_RESOURCES::set_project_render_dir(RenderResources& resources, const char* path) {
+    resources.project_render_dir[0] = '\0';
+    if (path != nullptr) {
+        strncpy(resources.project_render_dir, path, RENDERER_PATH_MAX - 1);
+    }
+}
+
+bool RENDERER::init(Renderer& renderer, RenderResources* resources, World* world, AssetResourceProvider* provider, BaseAllocator* frame_allocator) {
+    if (resources == nullptr || resources->gpu == nullptr || frame_allocator == nullptr) {
+        return false;
+    }
+    renderer.gpu = resources->gpu;
+    renderer.resources = resources;
     renderer.world = world;
     renderer.provider = provider;
     renderer.frame_allocator = frame_allocator;
-    if (engine_render_dir != nullptr) {
-        strncpy(renderer.engine_render_dir, engine_render_dir, RENDERER_PATH_MAX - 1);
-    }
     renderer.graph.init();
     renderer.plan.init();
     renderer.next_plan.init();
-    GPU_ASSETS::init(renderer.assets, gpu, provider);
-    if (!init_frame_set(renderer)) {
-        return false;
-    }
     build_default_graph(renderer);
     return true;
 }
 
-void RENDERER::shutdown(Renderer& renderer) {
+void RENDERER::shutdown(Renderer& renderer, const bool gpu_idle) {
     if (renderer.gpu == nullptr) {
         return;
     }
-    PIPELINES::free(renderer);
-    GRAPH_EXECUTOR::free(renderer);
-    GPU_ASSETS::shutdown(renderer.assets);
-    if (renderer.white.is_valid()) {
-        GPU::destroy_texture(renderer.gpu, renderer.white);
-        renderer.white = GpuTexture{};
+    if (gpu_idle) {
+        GRAPH_EXECUTOR::free(renderer);
+    } else {
+        GRAPH_EXECUTOR::release(renderer);
     }
     renderer.material_groups.free();
     renderer.materials.free();
@@ -117,13 +143,8 @@ void RENDERER::shutdown(Renderer& renderer) {
     renderer.gpu = nullptr;
     renderer.world = nullptr;
     renderer.provider = nullptr;
-}
-
-void RENDERER::set_project_render_dir(Renderer& renderer, const char* path) {
-    renderer.project_render_dir[0] = '\0';
-    if (path != nullptr) {
-        strncpy(renderer.project_render_dir, path, RENDERER_PATH_MAX - 1);
-    }
+    renderer.resources = nullptr;
+    renderer.frame_allocator = nullptr;
 }
 
 // --- Graph -----------------------------------------------------------------------
@@ -228,9 +249,9 @@ static void write_frame_set(Renderer& renderer, const u32 width, const u32 heigh
     GpuBindGroupDesc desc;
     desc.bind_buffer(0, range.buffer, range.offset, range.size);
     for (u32 i = 0; i < RENDERER_SAMPLER_COUNT; ++i) {
-        desc.bind_sampler(1 + i, renderer.samplers[i]);
+        desc.bind_sampler(1 + i, renderer.resources->samplers[i]);
     }
-    renderer.frame_group = GPU::transient_bind_group(renderer.gpu, renderer.frame_layout, desc);
+    renderer.frame_group = GPU::transient_bind_group(renderer.gpu, renderer.resources->frame_layout, desc);
 }
 
 static GpuResourceState render_fallback(Renderer& renderer, const FrameContext& frame) {

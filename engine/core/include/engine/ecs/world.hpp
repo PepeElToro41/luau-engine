@@ -23,6 +23,10 @@ template <typename... Ts>
 struct Query;
 struct QueryBuilder;
 
+// World::component_owner value of a component registered by name
+// (World::register_component): bound, but to no C++ type.
+constexpr TypeId COMPONENT_OWNER_NAMED = ~static_cast<TypeId>(0);
+
 // Owns everything an ECS instance needs: the entity index, every archetype
 // and component record, and the lookup tables that find them by type or id.
 //
@@ -50,16 +54,33 @@ struct World {
     HashMap<Id, ComponentRecord*> component_index;
 
     // C++ type (see TYPE_ID::get) -> the entity that represents that type as a
-    // component in this world. Filled by component<T>().
+    // component in this world. Filled by component<T>() / tag<T>().
     HashMap<TypeId, EntityId> type_index;
     // Component entity id -> storage size and alignment, for ids whose
     // TypeInfo cannot be read off the entity itself. Today that is
     // only ECS::COMPONENT: its column stores every other component's TypeInfo,
     // so its own size has to be known before that column can exist.
     HashMap<ComponentId, TypeInfo> type_info_index;
-    // Next id component<T>() hands out. Component ids are the pre-registered
-    // entities in [1, ECS::MAX_COMPONENT_ID]; init() makes them all alive.
-    Id next_component_id = 1;
+    // Component ids are the entities in [ECS::FIRST_COMPONENT_ID,
+    // ECS::MAX_COMPONENT_ID], all alive since init(), handed out in two tiers
+    // (see component_registry.hpp): a type the process preregistered gets
+    // its registry id, the same in every world; anything else (a type first
+    // met through component<T>() here, a component registered by name) gets
+    // the next id of this world's own counter, which starts at the top of
+    // the band and grows down toward the registry's. The owner table holds,
+    // per id, the TypeId bound to it (COMPONENT_OWNER_NAMED for a named
+    // component), so every binding is checked against it rather than
+    // trusted, and component_type_of() reads it back.
+    Id runtime_next_id = ECS::MAX_COMPONENT_ID;
+    TypeId component_owner[ECS::MAX_COMPONENT_ID + 1] = {};
+    // HASH::fnv1a_str(name) -> the component registered under that name
+    // (register_component), so a re-declaration reuses its id.
+    HashMap<u64, EntityId> component_names;
+    // When set, component<T>() / tag<T>() for a type the registry does not
+    // know logs an error and returns 0 instead of claiming a runtime id:
+    // every component of the world must have been preregistered. What a
+    // play world may turn on; the authoring world stays lax.
+    bool strict_components = false;
 
     // Hooks registered on WILDCARD (every id) and on (*, *) (every pair); all
     // other hooks live on the ComponentRecord of their id. hook_counts[kind]
@@ -147,6 +168,13 @@ struct World {
     // EntityIndex::set_range. A max of 0 means unbounded; a min of 0 means
     // "start after the highest id issued so far".
     void set_range(EntityIdLow min, EntityIdLow max);
+    // The bounds of the range new_entity() issues from (0 / 0 before any
+    // was set) and the highest id ever issued or registered: what a play
+    // fence (every id at or above range_min() was created after the clone)
+    // or a networking id carve-out is built on.
+    EntityIdLow range_min() const;
+    EntityIdLow range_max() const;
+    EntityIdLow last_id() const;
 
     // Alive entity (with generation) behind a pair's relation / target, or 0
     // if that entity is not alive. The pair only stores the low ids; see
@@ -161,23 +189,38 @@ struct World {
     // is not alive or the relation is not traversable.
     u32 depth(EntityId entity, Id relation = ECS::CHILD_OF);
 
-    // The component entity for T, claiming it on first call: the next id in
-    // [1, ECS::MAX_COMPONENT_ID] (already alive since init()) is bound to T's
-    // type id and T's TypeInfo (sizeof / alignof) is stored on it as its
-    // ECS::COMPONENT data. Empty types register as tags with a zero-length
-    // TypeInfo. Later calls return the same entity. Returns 0 and reports an
-    // error if every component id has been handed out.
+    // The component entity for T, claiming it on first call: T's registry
+    // id when the process preregistered it (component_registry.hpp), else
+    // the next runtime id of this world, bound to T's type id with T's
+    // TypeInfo (sizeof / alignof) stored on the entity as its ECS::COMPONENT
+    // data. Empty types register as tags with a zero-length TypeInfo. Later
+    // calls return the same entity. Returns 0 and reports an error if the
+    // component band is exhausted, if the id is already bound to another
+    // type, or if the world is strict and T was not preregistered.
     template <typename T>
     EntityId component();
 
     // The tag entity for T, claiming it on first call. Same as component<T>()
     // but no ECS::COMPONENT data is stored, so T carries no data regardless of
-    // its size. Shares the id counter and type_index with component<T>(): the
-    // first of the two called for a T decides what it is, and the other then
-    // returns that same entity. Returns 0 and reports an error if every
-    // component id has been handed out.
+    // its size. Shares type_index with component<T>(): the first of the two
+    // called for a T decides what it is (process-wide for a preregistered T,
+    // per world otherwise), and the other then returns that same entity.
     template <typename T>
     EntityId tag();
+
+    // A component defined by name rather than by C++ type: the next runtime
+    // id of this world, with `info` stored as its ECS::COMPONENT data (a
+    // zero length makes a tag). What Luau-defined components are. Calling
+    // it again with the same name returns the same id (the first call's
+    // info stays; a different size is reported), so a script reloaded in a
+    // loop never exhausts the band. 0 for an empty name or a full band.
+    EntityId register_component(const char* name, const TypeInfo& info);
+    // The component registered under `name`, or 0.
+    EntityId find_component(const char* name) const;
+    // The C++ type bound to component id `id` in this world, 0 for an id
+    // nothing claimed or a component registered by name
+    // (COMPONENT_OWNER_NAMED is never returned).
+    TypeId component_type_of(Id id) const;
 
     // --- Typed ids -----------------------------------------------------------
     // Every typed operation below resolves its id through these, registering
@@ -375,10 +418,20 @@ struct World {
     void free();
 
 private:
-    // Binds the next free component id to `type_id` and returns it, or 0 (with
-    // an error) if the component range is exhausted. The id is already alive
-    // since init() with generation 0, so the low id is the full entity id.
-    EntityId claim_component_id(TypeId type_id);
+    // The id for `type_id`: its registry id, or a fresh runtime id, bound
+    // through bind_component with `info` as its data (none for a tag). 0 with
+    // an error when the band is exhausted, the binding is refused or the
+    // world is strict and the type unregistered.
+    EntityId claim_component_id(TypeId type_id, const TypeInfo& info, bool as_tag);
+    // The next free id of the runtime tier, or 0 (with an error) once it has
+    // met the registry's tier.
+    Id claim_runtime_id();
+    // Records `type_id` as the owner of component id `id` (refusing, with an
+    // error, an id another type already owns in this world), indexes it and
+    // stores `info` as its ECS::COMPONENT data when given. The id is already
+    // alive since init() with generation 0, so the low id is the full entity
+    // id. Returns the id, or 0.
+    EntityId bind_component(Id id, TypeId type_id, const TypeInfo* info);
 
     // Pair id (first, Second) for the *_second forms, or 0 if either side is 0.
     template <typename Second>
@@ -408,19 +461,12 @@ EntityId World::component() {
     if (existing != nullptr) {
         return *existing;
     }
-
-    const EntityId entity = this->claim_component_id(type_id);
-    if (entity == 0) {
-        return 0;
-    }
-
     TypeInfo type_info { };
     if constexpr (!std::is_empty_v<T>) {
         type_info.length = sizeof(T);
         type_info.alignment = alignof(T);
     }
-    ENTITY::set(this, entity, ECS::COMPONENT, &type_info);
-    return entity;
+    return this->claim_component_id(type_id, type_info, false);
 }
 
 // --- Typed ids ---------------------------------------------------------------
@@ -636,7 +682,7 @@ EntityId World::tag() {
     if (existing != nullptr) {
         return *existing;
     }
-    return this->claim_component_id(type_id);
+    return this->claim_component_id(type_id, TypeInfo { }, true);
 }
 
 // --- Hooks -------------------------------------------------------------------

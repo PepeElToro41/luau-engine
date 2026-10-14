@@ -136,9 +136,23 @@ static_assert(sizeof(FrameUniforms) == 3 * 64 + 2 * 16, "FrameUniforms must matc
 
 namespace RENDER_COMPONENTS {
 
-// Registers every component above with `world`, names the component
-// entities for the editor, and installs the removed hooks that hand Shader
-// and Material resources back to `renderer`.
+// Preregisters every component above (component_registry.hpp) and binds
+// it on `world`, names the component entities for the editor, exposes the
+// scene components' serializers for .scene files and the Material's Cloner
+// (a world clone deep-copies the parameter block, so a game tweaking a
+// material in play never touches the authoring one). Idempotent.
+void register_components(World& world);
+// Installs on `world` the removed hooks that hand Shader and Material
+// resources back to `renderer` (the renderer drawing that world) and the
+// observer that tags a file material AssetDirty when it is written. A
+// Shader's hook frees its program and pipelines only for an entity at or
+// above `renderer.owns_from`: a play instance borrows the authoring
+// world's programs through the ids its clone preserved and must not free
+// them (SHADER_LIBRARY::reload while playing is refused for the same
+// reason), while a shader it loaded itself is its own. A Material's block
+// is always the world's own, cloned or not.
+void install_hooks(World& world, Renderer& renderer);
+// Both of the above: what RenderPlugin does for the authoring world.
 void register_all(World& world, Renderer& renderer);
 
 } // namespace RENDER_COMPONENTS

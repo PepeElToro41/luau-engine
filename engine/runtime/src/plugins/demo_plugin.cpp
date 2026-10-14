@@ -1,10 +1,12 @@
 #include "engine/plugins/demo_plugin.hpp"
 
 #include "engine/engine.hpp"
+#include "engine/play.hpp"
 #include "engine/plugins/render_plugin.hpp"
 #include "engine/plugins/window_plugin.hpp"
 #include "engine/render/demo_scene.hpp"
 #include "engine/render/shader_library.hpp"
+#include "engine/utils/log.hpp"
 
 bool DemoPlugin::build(Engine& engine) {
     if (engine.require<RenderPlugin>() == nullptr) {
@@ -32,6 +34,13 @@ bool DemoPlugin::set_shadow(Engine& engine, const bool enabled) {
 }
 
 void DemoPlugin::reload_shaders(Engine& engine) {
+    // A play instance borrows the authoring world's programs; reloading
+    // them there would free them from under it.
+    const PlayState* play = engine.get_singleton<PlayState>();
+    if (play != nullptr && play->isolated) {
+        LOG::warning(LOG_CATEGORY::ENGINE, "Stop playing to reload shaders");
+        return;
+    }
     if (Renderer* renderer = engine.get_singleton<Renderer>()) {
         SHADER_LIBRARY::reload_all(*renderer);
     }

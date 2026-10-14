@@ -2,6 +2,7 @@
 #include "engine/utils/log.hpp"
 
 #include "engine/engine.hpp"
+#include "engine/play.hpp"
 #include "engine/plugins/core_plugin.hpp"
 #include "engine/render/components.hpp"
 #include "engine/render/renderer.hpp"
@@ -20,11 +21,17 @@ bool RenderPlugin::build(Engine& engine) {
         LOG::error(LOG_CATEGORY::RENDER, "Engine::gpu is not set; the render plugin needs a GPU context");
         return false;
     }
+    SINGLETON_SCOPE::declare<RenderResources>(SCOPE_SHARED, "RenderResources");
+    SINGLETON_SCOPE::declare<Renderer>(SCOPE_LOCAL, "Renderer");
     World* world = engine.get_singleton<World>();
     AssetResourceProvider* assets = engine.get_singleton<AssetResourceProvider>();
     FrameAllocator* frame_allocator = engine.get_singleton<FrameAllocator>();
+    RenderResources* resources = engine.create_singleton<RenderResources>();
+    if (resources == nullptr || !RENDER_RESOURCES::init(*resources, engine.gpu, assets, ENGINE_RENDER_DIR)) {
+        return false;
+    }
     Renderer* renderer = engine.create_singleton<Renderer>();
-    if (renderer == nullptr || !RENDERER::init(*renderer, engine.gpu, world, assets, frame_allocator, ENGINE_RENDER_DIR)) {
+    if (renderer == nullptr || !RENDERER::init(*renderer, resources, world, assets, frame_allocator)) {
         return false;
     }
     RENDER_COMPONENTS::register_all(*world, *renderer);
@@ -42,8 +49,14 @@ void RenderPlugin::render(SystemContext& ctx) {
     }
     FrameContext& frame = ENGINE::frame(ctx);
     renderer->graph.set_clear_color(renderer->default_forward, 0, renderer->clear_color);
-    renderer->time = static_cast<f32>(engine.time);
-    renderer->delta_time = engine.last_dt;
+    // A running game is drawn on its own clock: paused, its shaders freeze.
+    if (const PlayState* play = engine.get_singleton<PlayState>()) {
+        renderer->time = static_cast<f32>(play->time);
+        renderer->delta_time = play->delta_time;
+    } else {
+        renderer->time = static_cast<f32>(engine.time);
+        renderer->delta_time = engine.last_dt;
+    }
     frame.target_state = RENDERER::render(*renderer, frame);
 }
 
@@ -68,5 +81,8 @@ void RenderPlugin::shutdown(SystemContext& ctx) {
     Engine& engine = ENGINE::of(ctx);
     if (Renderer* renderer = engine.get_singleton<Renderer>()) {
         RENDERER::shutdown(*renderer);
+    }
+    if (RenderResources* resources = engine.get_singleton<RenderResources>()) {
+        RENDER_RESOURCES::shutdown(*resources);
     }
 }

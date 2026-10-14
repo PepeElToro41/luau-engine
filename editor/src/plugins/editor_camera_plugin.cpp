@@ -2,6 +2,7 @@
 
 #include "engine/ecs/world.hpp"
 #include "engine/engine.hpp"
+#include "engine/play.hpp"
 #include "engine/plugins/core_plugin.hpp"
 #include "engine/plugins/render_plugin.hpp"
 #include "engine/plugins/window_plugin.hpp"
@@ -40,8 +41,14 @@ void EditorCameraPlugin::update(SystemContext& ctx) {
     Engine& engine = ENGINE::of(ctx);
     EditorCameraPlugin* self = static_cast<EditorCameraPlugin*>(ctx.user_data);
     WindowPlugin* window = engine.get_plugin<WindowPlugin>();
-    World* world = engine.get_singleton<World>();
+    // The fly camera is the authoring world's: while a game plays, the
+    // Viewport shows the game's camera and the mouse is the game's.
+    World* world = engine.root.get<World>();
     if (window == nullptr || world == nullptr) {
+        return;
+    }
+    if (engine.get_singleton<PlayState>() != nullptr) {
+        self->controller.update(*world, window->window.window, false, ctx.dt);
         return;
     }
     self->controller.update(*world, window->window.window, self->viewport_hovered, ctx.dt);

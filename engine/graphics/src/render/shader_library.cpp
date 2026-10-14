@@ -34,7 +34,7 @@ static bool resolve_path(const Renderer& renderer, const char* name, char* out, 
             }
         }
     }
-    const char* roots[2] = {renderer.project_render_dir, renderer.engine_render_dir};
+    const char* roots[2] = {renderer.resources->project_render_dir, renderer.resources->engine_render_dir};
     const char* extensions[2] = {"slang", "glsl"};
     for (const char* root : roots) {
         if (root[0] == '\0') {
@@ -56,17 +56,17 @@ static bool resolve_path(const Renderer& renderer, const char* name, char* out, 
 static bool load_program(Renderer& renderer, const char* name, const char* path, Shader& shader) {
     const char* include_dirs[2];
     usz include_dir_count = 0;
-    if (renderer.project_render_dir[0] != '\0') {
-        include_dirs[include_dir_count++] = renderer.project_render_dir;
+    if (renderer.resources->project_render_dir[0] != '\0') {
+        include_dirs[include_dir_count++] = renderer.resources->project_render_dir;
     }
-    if (renderer.engine_render_dir[0] != '\0') {
-        include_dirs[include_dir_count++] = renderer.engine_render_dir;
+    if (renderer.resources->engine_render_dir[0] != '\0') {
+        include_dirs[include_dir_count++] = renderer.resources->engine_render_dir;
     }
     ShaderProgramLoadDesc desc;
     desc.path = path;
     desc.include_dirs = include_dirs;
     desc.include_dir_count = include_dir_count;
-    desc.frame_interface = &renderer.frame_interface;
+    desc.frame_interface = &renderer.resources->frame_interface;
     desc.target = renderer.gpu->info.bytecode;
     bool ok = SHADER_PROGRAM::load(desc, MEMORY::heap_allocator(), shader.program);
     if (shader.program.log != nullptr && shader.program.log[0] != '\0') {
@@ -161,6 +161,13 @@ EntityId SHADER_LIBRARY::load(Renderer& renderer, const char* name) {
 bool SHADER_LIBRARY::reload(Renderer& renderer, const EntityId entity) {
     Shader* shader = renderer.world != nullptr ? renderer.world->get<Shader>(entity) : nullptr;
     if (shader == nullptr) {
+        return false;
+    }
+    if (ECS::ENTITY_LOW(entity) < renderer.owns_from) {
+        // The program belongs to the world this one was cloned from; freeing
+        // it here would pull it from under the original. Reload there, or
+        // stop playing first.
+        LOG::warning(LOG_CATEGORY::SHADER, "shader %s is borrowed from the authoring world and cannot be reloaded while playing", shader->name);
         return false;
     }
     char path[RENDERER_PATH_MAX];

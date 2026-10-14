@@ -4,7 +4,9 @@
 #include "engine/asset/asset_types/scene_asset.hpp"
 #include "engine/asset/text_asset.hpp"
 #include "engine/gpu/vulkan/vk_access.hpp"
+#include "engine/play.hpp"
 #include "engine/plugins/demo_plugin.hpp"
+#include "engine/plugins/play_plugin.hpp"
 #include "engine/plugins/window_plugin.hpp"
 #include "engine/project.hpp"
 #include "engine/render/demo_scene.hpp"
@@ -52,6 +54,20 @@ DemoPlugin* Editor::demo() const {
     return this->engine->get_plugin<DemoPlugin>();
 }
 
+PlayPlugin* Editor::play() const {
+    return this->engine->get_plugin<PlayPlugin>();
+}
+
+bool Editor::is_playing() const {
+    const PlayPlugin* play = this->play();
+    return play != nullptr && !play->is_stopped();
+}
+
+const PlayState* Editor::play_state() const {
+    PlayPlugin* play = this->play();
+    return play != nullptr ? play->state(*this->engine) : nullptr;
+}
+
 void Editor::mark_scene_saved() {
     this->scene_dirty = false;
     this->scene_saved_hash = this->scene_hash();
@@ -84,18 +100,42 @@ void Editor::draw() {
     if (ImGui::Shortcut(ImGuiMod_Ctrl | ImGuiKey_O, ImGuiInputFlags_RouteGlobal)) {
         this->request_open_scene();
     }
+    if (PlayPlugin* play = this->play()) {
+        if (ImGui::Shortcut(ImGuiMod_Ctrl | ImGuiKey_P, ImGuiInputFlags_RouteGlobal)) {
+            play->request_toggle();
+        }
+        if (ImGui::Shortcut(ImGuiMod_Ctrl | ImGuiMod_Shift | ImGuiKey_P, ImGuiInputFlags_RouteGlobal)) {
+            if (play->is_playing()) {
+                play->request_pause();
+            } else if (play->is_paused()) {
+                play->request_resume();
+            }
+        }
+        if (ImGui::Shortcut(ImGuiKey_F10, ImGuiInputFlags_RouteGlobal) && play->is_paused()) {
+            play->request_step();
+        }
+    }
+    // While playing every panel shows the play world; what it changes there
+    // is the game's, never the scene file's.
+    const bool playing = this->is_playing();
+    const PlayState* play_state = this->play_state();
     Scene* scene = this->engine->get_singleton<Scene>();
     if (this->show_explorer) {
         this->explorer.scene_title = this->scene_display_name() + (this->scene_dirty ? "*" : "");
+        if (play_state != nullptr) {
+            this->explorer.scene_title += play_state->is_paused() ? "  (paused)" : "  (playing)";
+        }
+        this->explorer.runtime_from = play_state != nullptr ? play_state->fence : 0;
         this->explorer.draw(&this->show_explorer, this->engine->get_singleton<World>(), scene, this->selection);
-        if (this->explorer.changed) {
+        if (this->explorer.changed && !playing) {
             this->scene_dirty = true;
         }
     }
     if (this->show_inspector) {
         this->resolve_selection();
+        this->inspector.playing = playing;
         this->inspector.draw(&this->show_inspector, this->engine->get_singleton<World>(), this->engine->get_singleton<Project>(), this->selection);
-        if (this->inspector.changed && this->selection.is_entity() && scene != nullptr && scene->contains(this->selection.entity)) {
+        if (this->inspector.changed && !playing && this->selection.is_entity() && scene != nullptr && scene->contains(this->selection.entity)) {
             this->scene_dirty = true;
         }
         if (this->inspector.file_action != InspectorFileAction::NONE) {
@@ -177,6 +217,12 @@ void Editor::apply_file_action(const InspectorFileAction action) {
     if (!this->selection.is_file() || this->selection.entity == 0 || project == nullptr || !project->is_open() || renderer == nullptr) {
         return;
     }
+    if (this->is_playing()) {
+        // The entity shown is the play world's copy; its values are not the
+        // file's to take, nor is a reload the authoring material's to lose.
+        LOG::warning(LOG_CATEGORY::EDITOR, "Stop playing to save or reload files");
+        return;
+    }
     const std::string shown = this->selection.file.generic_string();
     const std::string absolute = (project->root / this->selection.file).string();
     switch (action) {
@@ -201,6 +247,10 @@ void Editor::save_all() {
     World* world = this->engine->get_singleton<World>();
     const Project* project = this->engine->get_singleton<Project>();
     if (renderer == nullptr || world == nullptr) {
+        return;
+    }
+    if (this->is_playing()) {
+        LOG::warning(LOG_CATEGORY::EDITOR, "Stop playing to save");
         return;
     }
     // Collect first: saving moves the entity out of the archetype being
@@ -327,11 +377,15 @@ void Editor::draw_main_menu() {
         return;
     }
 
+    const bool playing = this->is_playing();
     if (ImGui::BeginMenu("File")) {
         const Project* project = this->engine->get_singleton<Project>();
         const bool has_project = project != nullptr && project->is_open();
         const Scene* scene = this->engine->get_singleton<Scene>();
         const bool scene_has_file = scene != nullptr && scene->current_path[0] != '\0';
+        // The scene file is the authoring world's; while a game plays the
+        // panels show its clone, so nothing here reads or writes the file.
+        ImGui::BeginDisabled(playing);
         if (ImGui::MenuItem("New Scene")) {
             this->request_new_scene();
         }
@@ -346,13 +400,14 @@ void Editor::draw_main_menu() {
             this->save_scene_as();
         }
         ImGui::EndDisabled();
+        ImGui::EndDisabled();
         ImGui::Separator();
         ImGui::BeginDisabled(!has_project || this->file_dialog.is_pending());
         if (ImGui::MenuItem("Import...")) {
             this->open_import_dialog();
         }
         ImGui::EndDisabled();
-        ImGui::BeginDisabled(!has_project);
+        ImGui::BeginDisabled(!has_project || playing);
         // Registers files added since startup (a .material or .slang
         // created outside the editor, or a shader file the Asset Browser
         // wrote), so the Inspector's dropdowns offer them.
@@ -365,9 +420,11 @@ void Editor::draw_main_menu() {
         // Every file-backed entity with unsaved edits (AssetDirty) and the
         // scene; the shortcut itself is polled in draw_editor so it works
         // from any panel.
+        ImGui::BeginDisabled(playing);
         if (ImGui::MenuItem("Save All", "Ctrl+S")) {
             this->save_all();
         }
+        ImGui::EndDisabled();
         ImGui::Separator();
         if (ImGui::MenuItem("Quit", "Alt+F4")) {
             this->request_quit();
@@ -380,9 +437,12 @@ void Editor::draw_main_menu() {
         EditorGridPlugin* grid = this->grid();
         EditorHighlightPlugin* highlight = this->highlight();
         Renderer* renderer = this->engine->get_singleton<Renderer>();
+        // The play world borrows the authoring world's programs.
+        ImGui::BeginDisabled(playing);
         if (ImGui::MenuItem("Reload Shaders", "F5") && renderer != nullptr) {
             SHADER_LIBRARY::reload_all(*renderer);
         }
+        ImGui::EndDisabled();
         ImGui::BeginDisabled(demo == nullptr);
         bool post = demo != nullptr && demo->post;
         if (ImGui::MenuItem("Post-process Pass", nullptr, &post) && demo != nullptr) {
@@ -409,6 +469,28 @@ void Editor::draw_main_menu() {
         ImGui::EndMenu();
     }
 
+    if (PlayPlugin* play = this->play(); play != nullptr && ImGui::BeginMenu("Play")) {
+        if (ImGui::MenuItem("Play", "Ctrl+P", false, play->is_stopped())) {
+            play->request_play();
+        }
+        if (ImGui::MenuItem("Pause", "Ctrl+Shift+P", false, play->is_playing())) {
+            play->request_pause();
+        }
+        if (ImGui::MenuItem("Resume", "Ctrl+Shift+P", false, play->is_paused())) {
+            play->request_resume();
+        }
+        if (ImGui::MenuItem("Step", "F10", false, play->is_paused())) {
+            play->request_step();
+        }
+        if (ImGui::MenuItem("Stop", "Ctrl+P", false, !play->is_stopped())) {
+            play->request_stop();
+        }
+        ImGui::Separator();
+        ImGui::SetNextItemWidth(120.0f);
+        ImGui::SliderFloat("Time scale", &play->time_scale, 0.0f, 4.0f, "%.2f");
+        ImGui::EndMenu();
+    }
+
     if (ImGui::BeginMenu("View")) {
         ImGui::MenuItem(PANELS::EXPLORER, nullptr, &this->show_explorer);
         ImGui::MenuItem(PANELS::INSPECTOR, nullptr, &this->show_inspector);
@@ -425,7 +507,54 @@ void Editor::draw_main_menu() {
         ImGui::EndMenu();
     }
 
+    this->draw_play_controls();
     ImGui::EndMainMenuBar();
+}
+
+void Editor::draw_play_controls() {
+    PlayPlugin* play = this->play();
+    if (play == nullptr) {
+        return;
+    }
+    // Centered in the bar, the way every engine puts them: one button when
+    // stopped, two or three otherwise, each wide enough for its longest
+    // label so the row does not shift as the state changes.
+    const f32 width = 64.0f;
+    const f32 spacing = ImGui::GetStyle().ItemSpacing.x;
+    const u32 count = play->is_stopped() ? 1 : play->is_playing() ? 2 : 3;
+    const f32 total = static_cast<f32>(count) * width + static_cast<f32>(count - 1) * spacing;
+    const f32 start = (ImGui::GetWindowWidth() - total) * 0.5f;
+    if (start > ImGui::GetCursorPosX()) {
+        ImGui::SetCursorPosX(start);
+    }
+    const ImVec2 size(width, 0.0f);
+    // Under an id of their own: the Play menu's entry sits in this same
+    // window, and a button labeled "Play" would hash to the same id.
+    ImGui::PushID("play_controls");
+    if (play->is_stopped()) {
+        if (ImGui::Button("Play", size)) {
+            play->request_play();
+        }
+    } else {
+        if (play->is_playing()) {
+            if (ImGui::Button("Pause", size)) {
+                play->request_pause();
+            }
+        } else {
+            if (ImGui::Button("Resume", size)) {
+                play->request_resume();
+            }
+            ImGui::SameLine();
+            if (ImGui::Button("Step", size)) {
+                play->request_step();
+            }
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("Stop", size)) {
+            play->request_stop();
+        }
+    }
+    ImGui::PopID();
 }
 
 void Editor::draw_viewport() {
@@ -468,6 +597,12 @@ void Editor::draw_stats() {
         }
         if (camera != nullptr) {
             ImGui::Text("Camera speed %.2f u/s%s", camera->controller.speed, camera->controller.flying ? " (flying)" : "");
+        }
+        if (const PlayState* play = this->play_state()) {
+            ImGui::Text("Play: %s, %.2f s, frame %llu, ids from %llu", play->is_paused() ? "paused" : "playing", play->time,
+                static_cast<unsigned long long>(play->frame), static_cast<unsigned long long>(play->fence));
+        } else {
+            ImGui::Text("Play: stopped");
         }
         ImGui::Text("GPU %s", gpu->info.device_name);
     }
@@ -512,6 +647,10 @@ bool Editor::save_scene_to(const std::filesystem::path& absolute) {
 }
 
 void Editor::save_scene() {
+    if (this->is_playing()) {
+        LOG::warning(LOG_CATEGORY::EDITOR, "Stop playing to save the scene");
+        return;
+    }
     const Scene* scene = this->engine->get_singleton<Scene>();
     if (scene != nullptr && scene->current_path[0] != '\0') {
         this->save_scene_to(scene->current_path);
@@ -521,6 +660,10 @@ void Editor::save_scene() {
 }
 
 void Editor::save_scene_as() {
+    if (this->is_playing()) {
+        LOG::warning(LOG_CATEGORY::EDITOR, "Stop playing to save the scene");
+        return;
+    }
     const Project* project = this->engine->get_singleton<Project>();
     std::string start;
     if (project != nullptr && project->is_open()) {
@@ -542,6 +685,10 @@ void Editor::new_scene_now() {
 }
 
 void Editor::request_new_scene() {
+    if (this->is_playing()) {
+        LOG::warning(LOG_CATEGORY::EDITOR, "Stop playing to change the scene");
+        return;
+    }
     this->pending = PendingAction::NEW;
     if (this->scene_needs_save()) {
         this->open_unsaved_popup = true;
@@ -551,6 +698,10 @@ void Editor::request_new_scene() {
 }
 
 void Editor::request_open_scene(const std::filesystem::path& file) {
+    if (this->is_playing()) {
+        LOG::warning(LOG_CATEGORY::EDITOR, "Stop playing to change the scene");
+        return;
+    }
     this->pending = file.empty() ? PendingAction::OPEN : PendingAction::OPEN_FILE;
     this->pending_file = file;
     if (this->scene_needs_save()) {
@@ -611,6 +762,11 @@ u64 Editor::scene_hash() {
 bool Editor::scene_needs_save() {
     if (this->scene_dirty) {
         return true;
+    }
+    if (this->is_playing()) {
+        // The world the hash would read is the game's; the authoring one
+        // cannot have changed since Play.
+        return false;
     }
     // The safety net: a change the panels did not see (code, a script).
     return this->scene_hash() != this->scene_saved_hash;

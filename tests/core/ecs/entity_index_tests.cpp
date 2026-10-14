@@ -3,6 +3,7 @@
 #include "engine/ecs/ecs.hpp"
 #include "engine/ecs/entity_index.hpp"
 #include "engine/memory/heap_allocator.hpp"
+#include "engine/utils/log.hpp"
 
 // The EntityIndex is standalone: no World is involved, so every test builds
 // one on the heap allocator and calls free() at the end.
@@ -282,7 +283,9 @@ TEST_CASE("ecs/entity_index: set_range bounds the ids new_entity issues") {
     SUBCASE("a min of 0 starts after the highest id issued") {
         index.make_alive(50);
         index.set_range(0, 0);
-        CHECK(index.range_min == 51);
+        REQUIRE(index.range_active() != nullptr);
+        CHECK(index.range_active()->min == 51);
+        CHECK(index.range_active()->max == 0);
         CHECK(index.new_entity() == 51);
     }
     SUBCASE("an exhausted range yields 0 and a null record") {
@@ -367,8 +370,8 @@ TEST_CASE("ecs/entity_index: free returns to the fresh state") {
     CHECK(index.pages.count == 0);
     CHECK(index.dense_list.count == 0);
     CHECK(index.last_id == 0);
-    CHECK(index.range_min == 0);
-    CHECK(index.range_max == 0);
+    CHECK(index.ranges.count == 0);
+    CHECK(index.range_active() == nullptr);
     CHECK_FALSE(index.is_alive(entity));
 
     SUBCASE("the index is usable again") {
@@ -417,4 +420,240 @@ TEST_CASE("ecs/entity_index: pages fill at PAGE_SIZE and records stay put") {
     }
 
     index.free();
+}
+
+TEST_CASE("ecs/entity_index: a range is a struct that owns its dead ids") {
+    EntityIndex index(MEMORY::heap_allocator());
+
+    // The first new_entity() makes the default range.
+    const EntityId a = index.new_entity();
+    REQUIRE(a == 1);
+    REQUIRE(index.ranges.count == 1);
+    EntityRange* whole = index.range_active();
+    REQUIRE(whole != nullptr);
+    CHECK(whole->min == 1);
+    CHECK(whole->max == 0);
+    CHECK(whole->cur == 1);
+    CHECK(whole->contains(1));
+    CHECK(whole->contains(1000000));
+    CHECK_FALSE(whole->contains(0));
+    CHECK(index.range_find(1) == whole);
+    CHECK(index.range_find(5000) == whole);
+    CHECK(index.range_find(0) == nullptr);
+
+    SUBCASE("a dead id waits in its range's pool, carrying its next generation") {
+        CHECK(index.delete_entity(a));
+        REQUIRE(whole->recycled.count == 1);
+        CHECK(whole->recycled[0] == with_generation(1, 1));
+        // Alive-only dense list: the dead id is no longer in it.
+        CHECK(index.dense_list.count == 1);
+        CHECK(index.new_entity() == with_generation(1, 1));
+        CHECK(whole->recycled.count == 0);
+    }
+    SUBCASE("make_alive takes a dead id out of the pool") {
+        CHECK(index.delete_entity(a));
+        index.make_alive(with_generation(1, 4));
+        CHECK(whole->recycled.count == 0);
+        CHECK(index.is_alive(with_generation(1, 4)));
+        CHECK(index.new_entity() == 2);
+    }
+    SUBCASE("make_alive inside a range moves its cursor past the id") {
+        index.make_alive(40);
+        CHECK(whole->cur == 40);
+        CHECK(index.new_entity() == 41);
+        CHECK(index.count() == 3);
+    }
+
+    index.free();
+    CHECK_ARENA_CLEAN();
+}
+
+TEST_CASE("ecs/entity_index: two ranges recycle independently") {
+    EntityIndex index(MEMORY::heap_allocator());
+    EntityRange* low = index.range_new(10, 19);
+    EntityRange* high = index.range_new(100, 0);
+    REQUIRE(low != nullptr);
+    REQUIRE(high != nullptr);
+    CHECK(index.ranges.count == 2);
+    CHECK(index.ranges[0] == low);
+    CHECK(index.ranges[1] == high);
+    // Created, not activated: nothing issues until one is set.
+    CHECK(index.range_active() == nullptr);
+    CHECK(index.new_entity() == 0);
+    CHECK(index.count() == 0);
+
+    REQUIRE(index.range_set(low));
+    const EntityId l1 = index.new_entity();
+    const EntityId l2 = index.new_entity();
+    CHECK(l1 == 10);
+    CHECK(l2 == 11);
+    REQUIRE(index.range_set(high));
+    const EntityId h1 = index.new_entity();
+    CHECK(h1 == 100);
+
+    SUBCASE("a dead id is never recycled into another range") {
+        CHECK(index.delete_entity(l1));
+        CHECK(low->recycled.count == 1);
+        CHECK(high->recycled.count == 0);
+        // The active range is `high`: l1 stays where it is.
+        CHECK(index.new_entity() == 101);
+        CHECK(index.new_entity() == 102);
+        REQUIRE(index.range_set(low));
+        CHECK(index.new_entity() == with_generation(10, 1));
+        CHECK(index.new_entity() == 12);
+    }
+    SUBCASE("each range keeps its own cursor") {
+        REQUIRE(index.range_set(low));
+        CHECK(index.new_entity() == 12);
+        REQUIRE(index.range_set(high));
+        CHECK(index.new_entity() == 101);
+        CHECK(index.last_id == 101);
+    }
+    SUBCASE("a bounded range runs out on its own") {
+        REQUIRE(index.range_set(low));
+        for (EntityIdLow id = 12; id <= 19; ++id) {
+            CHECK(index.new_entity() == id);
+        }
+        CHECK(index.new_entity() == 0);
+        CHECK(index.delete_entity(l2));
+        CHECK(index.new_entity() == with_generation(11, 1));
+        CHECK(index.new_entity() == 0);
+        // The other range is unaffected.
+        REQUIRE(index.range_set(high));
+        CHECK(index.new_entity() == 101);
+    }
+    SUBCASE("range_set refuses a range the index does not own") {
+        EntityRange stranger(MEMORY::heap_allocator());
+        CHECK_FALSE(index.range_set(&stranger));
+        CHECK(index.range_active() == high);
+    }
+
+    index.free();
+    CHECK_ARENA_CLEAN();
+}
+
+TEST_CASE("ecs/entity_index: an id outside every range is dropped, not recycled") {
+    EntityIndex index(MEMORY::heap_allocator());
+    REQUIRE(index.range_new(100, 0) != nullptr);
+    index.set_range(100, 0);
+    // Registered below every range, the way component ids and built-ins are.
+    index.make_alive(7);
+    index.make_alive(with_generation(8, 3));
+    CHECK(index.range_find(7) == nullptr);
+    CHECK(index.count() == 2);
+
+    CHECK(index.delete_entity(7));
+    CHECK(index.delete_entity(with_generation(8, 3)));
+    CHECK(index.count() == 0);
+    CHECK(index.range_active()->recycled.count == 0);
+    CHECK_FALSE(index.is_alive(7));
+    CHECK(index.get_record_any(7)->dense == 0);
+    CHECK(index.new_entity() == 100);
+    CHECK(index.new_entity() == 101);
+
+    SUBCASE("the id can still be registered again by hand") {
+        index.make_alive(with_generation(7, 9));
+        CHECK(index.is_alive(with_generation(7, 9)));
+        CHECK(index.count() == 3);
+    }
+
+    index.free();
+    CHECK_ARENA_CLEAN();
+}
+
+TEST_CASE("ecs/entity_index: overlapping ranges are refused") {
+    EntityIndex index(MEMORY::heap_allocator());
+    REQUIRE(index.range_new(100, 199) != nullptr);
+    REQUIRE(index.range_new(300, 0) != nullptr);
+
+    const LogLevel level = LOG::stderr_level();
+    LOG::set_stderr_level(LOG_LEVEL_NONE);
+    CHECK(index.range_new(0, 10) == nullptr);        // starts at 0
+    CHECK(index.range_new(50, 40) == nullptr);       // empty
+    CHECK(index.range_new(150, 160) == nullptr);     // inside the first
+    CHECK(index.range_new(50, 100) == nullptr);      // touches the first
+    CHECK(index.range_new(199, 250) == nullptr);     // touches the first's end
+    CHECK(index.range_new(250, 0) == nullptr);       // runs into the second
+    CHECK(index.range_new(250, 300) == nullptr);     // touches the second
+    CHECK(index.range_new(400, 500) == nullptr);     // inside the unbounded second
+    CHECK(index.range_new(100, 199) == nullptr);     // the same again
+    LOG::set_stderr_level(level);
+    CHECK(index.ranges.count == 2);
+
+    // The gaps are free.
+    EntityRange* gap = index.range_new(200, 299);
+    REQUIRE(gap != nullptr);
+    REQUIRE(index.range_new(1, 99) != nullptr);
+    CHECK(index.ranges.count == 4);
+    CHECK(index.ranges[0]->min == 1);
+    CHECK(index.ranges[1]->min == 100);
+    CHECK(index.ranges[2] == gap);
+    CHECK(index.ranges[3]->min == 300);
+    CHECK(index.range_find(99)->min == 1);
+    CHECK(index.range_find(100)->min == 100);
+    CHECK(index.range_find(250) == gap);
+    CHECK(index.range_find(1000000)->min == 300);
+
+    index.free();
+    CHECK_ARENA_CLEAN();
+}
+
+TEST_CASE("ecs/entity_index: set_range trims the range it cuts into and the dead ids follow") {
+    EntityIndex index(MEMORY::heap_allocator());
+    const EntityId a = index.new_entity(); // the default range [1, ...)
+    const EntityId b = index.new_entity();
+    const EntityId c = index.new_entity();
+    EntityRange* whole = index.range_active();
+    REQUIRE(whole != nullptr);
+    CHECK(index.delete_entity(c));
+    REQUIRE(whole->recycled.count == 1);
+
+    // [1, ...) becomes [1, 2]; the dead 3 moves to the new [3, ...).
+    index.set_range(3, 0);
+    EntityRange* upper = index.range_active();
+    REQUIRE(upper != nullptr);
+    CHECK(upper != whole);
+    CHECK(upper->min == 3);
+    CHECK(upper->max == 0);
+    CHECK(whole->max == 2);
+    CHECK(whole->recycled.count == 0);
+    REQUIRE(upper->recycled.count == 1);
+    CHECK(upper->recycled[0] == with_generation(3, 1));
+    CHECK(index.new_entity() == with_generation(3, 1));
+    CHECK(index.new_entity() == 4);
+
+    SUBCASE("ids of the trimmed range still recycle there, never in the active one") {
+        CHECK(index.delete_entity(a));
+        CHECK(whole->recycled.count == 1);
+        CHECK(index.new_entity() == 5);
+        index.set_range(1, 2);
+        CHECK(index.range_active() == whole);
+        CHECK(index.new_entity() == with_generation(1, 1));
+        CHECK(index.new_entity() == 0); // 2 is alive, the range is full
+        CHECK(index.is_alive(b));
+    }
+    SUBCASE("the new range is clamped to end before the next one") {
+        index.set_range(1, 0);
+        CHECK(index.range_active() == whole);
+        CHECK(whole->max == 2);
+        CHECK(index.new_entity() == 0);
+        // Re-setting an existing range with a smaller max keeps it disjoint.
+        index.set_range(3, 100);
+        CHECK(upper->max == 100);
+        index.set_range(50, 0);
+        EntityRange* top = index.range_active();
+        REQUIRE(top != nullptr);
+        CHECK(top->min == 50);
+        CHECK(upper->max == 49);
+        CHECK(index.new_entity() == 50);
+    }
+    SUBCASE("free releases every range") {
+        REQUIRE(index.ranges.count == 2);
+        index.free();
+        CHECK(index.ranges.count == 0);
+        CHECK(index.range_active() == nullptr);
+    }
+
+    index.free();
+    CHECK_ARENA_CLEAN();
 }

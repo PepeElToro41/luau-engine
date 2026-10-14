@@ -1,5 +1,7 @@
 #include "engine/scene/serialize.hpp"
 
+#include "engine/ecs/component_registry.hpp"
+
 #include "engine/asset/asset_entity.hpp"
 #include "engine/asset/text_asset.hpp"
 #include "engine/ecs/ecs.hpp"
@@ -54,6 +56,7 @@ void SERIALIZE::expose(World& world, const Id id, const char* name, const Serial
     if (id == 0 || ECS::IS_PAIR(id) || name == nullptr || !world.alive(id)) {
         return;
     }
+    COMPONENT_REGISTRY::preregister<Serializer>("Serializer");
     Serializer serializer;
     strncpy(serializer.name, name, ENTITY_NAME_CAPACITY - 1);
     serializer.write = write;

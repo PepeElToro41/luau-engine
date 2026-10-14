@@ -17,6 +17,8 @@
 #include <string>
 
 struct DemoPlugin;
+struct PlayPlugin;
+struct PlayState;
 struct EditorCameraPlugin;
 struct EditorGridPlugin;
 struct EditorHighlightPlugin;
@@ -34,6 +36,14 @@ struct EditorViewportPlugin;
 // comparison of the serialized text's hash with the one recorded at the
 // last save, so an edit made by other code is caught at the prompts: New,
 // Open and Quit ask Save / Discard / Cancel when something would be lost.
+//
+// Play (the toolbar in the menu bar, the Play menu, Ctrl+P) runs the game
+// in a clone of the authoring world (PlayPlugin): every panel then shows
+// the play world, since that is what the engine's singletons resolve to,
+// the Explorer marks the entities the game created, and edits made while
+// playing are the play world's, gone at Stop. The scene file is left
+// alone meanwhile: New / Open / Save and Save All are off, and the dirty
+// check does not read the play world.
 struct Editor {
     // Draws the dockspace, the menus and every open panel; called between
     // ImGui::NewFrame and ImGui::Render.
@@ -68,11 +78,18 @@ private:
     EditorHighlightPlugin* highlight() const;
     EditorViewportPlugin* viewport() const;
     DemoPlugin* demo() const;
+    PlayPlugin* play() const;
+    // Whether a game runs (playing or paused): the panels show its world.
+    bool is_playing() const;
+    // The running game's state, nullptr when stopped.
+    const PlayState* play_state() const;
 
     void open_import_dialog();
     void poll_import_dialog();
     void queue_import(const std::filesystem::path& source);
     void draw_main_menu();
+    // The Play / Pause / Step / Stop buttons, in the menu bar.
+    void draw_play_controls();
     // Gives a file selection the entity it is loaded as (a .material's
     // Material entity), once per file picked.
     void resolve_selection();

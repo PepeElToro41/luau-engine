@@ -87,7 +87,8 @@ void Engine::shutdown() {
         this->scheduler.run(this->pipelines.shutdown, this, nullptr, 0.0f);
     }
     this->plugins.free();
-    this->singletons.free();
+    this->active = &this->root;
+    this->root.free();
     this->scheduler.free();
     this->pipelines = EnginePipelines{};
     this->phases = EnginePhases{};
@@ -103,9 +104,15 @@ SystemHandle Engine::add_system(const PhaseHandle phase, const char* name, const
 // --- Frame -------------------------------------------------------------------------
 
 void Engine::update(const f32 dt) {
-    // A new frame: last frame's scratch is gone.
-    if (FrameAllocator* frame_allocator = this->get_singleton<FrameAllocator>()) {
+    // A new frame: last frame's scratch is gone, the root's and the active
+    // instance's alike (one allocator when no instance is active).
+    if (FrameAllocator* frame_allocator = this->root.get<FrameAllocator>()) {
         frame_allocator->reset();
+    }
+    if (this->active != &this->root) {
+        if (FrameAllocator* frame_allocator = this->active->get<FrameAllocator>()) {
+            frame_allocator->reset();
+        }
     }
     this->time += dt;
     this->last_dt = dt;

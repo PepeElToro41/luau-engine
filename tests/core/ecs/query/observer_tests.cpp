@@ -505,19 +505,22 @@ TEST_CASE("ecs/observer: archetype lists hold the ids and term entries sorted an
     CHECK(lists.observers[0] == o1);
     CHECK(lists.observers[1] == o2);
     CHECK(lists.observers[2] == o4);
-    // Position < Velocity < TagA (ids are claimed in registration order).
+    // TagA < Velocity < Position: runtime ids are claimed counting down,
+    // and Position was registered first.
+    REQUIRE(world.id<TagA>() < world.id<Velocity>());
+    REQUIRE(world.id<Velocity>() < world.id<Position>());
     REQUIRE(lists.observer_terms.count == 4);
-    CHECK(lists.observer_terms[0].id == world.id<Position>());
-    CHECK(lists.observer_terms[0].observer == o1);
-    CHECK(lists.observer_terms[0].output);
-    CHECK(lists.observer_terms[1].id == world.id<Position>());
+    CHECK(lists.observer_terms[0].id == world.id<TagA>());
+    CHECK(lists.observer_terms[0].observer == o4);
+    CHECK_FALSE(lists.observer_terms[0].output);
+    CHECK(lists.observer_terms[1].id == world.id<Velocity>());
     CHECK(lists.observer_terms[1].observer == o2);
-    CHECK_FALSE(lists.observer_terms[1].output);
-    CHECK(lists.observer_terms[2].id == world.id<Velocity>());
-    CHECK(lists.observer_terms[2].observer == o2);
+    CHECK(lists.observer_terms[1].output);
+    CHECK(lists.observer_terms[2].id == world.id<Position>());
+    CHECK(lists.observer_terms[2].observer == o1);
     CHECK(lists.observer_terms[2].output);
-    CHECK(lists.observer_terms[3].id == world.id<TagA>());
-    CHECK(lists.observer_terms[3].observer == o4);
+    CHECK(lists.observer_terms[3].id == world.id<Position>());
+    CHECK(lists.observer_terms[3].observer == o2);
     CHECK_FALSE(lists.observer_terms[3].output);
     // The root never carries observers.
     CHECK(world.root_archetype->observers.observers.count == 0);
@@ -536,8 +539,8 @@ TEST_CASE("ecs/observer: archetype lists hold the ids and term entries sorted an
     CHECK(lists.observers[0] == o1);
     CHECK(lists.observers[1] == o4);
     REQUIRE(lists.observer_terms.count == 2);
-    CHECK(lists.observer_terms[0].observer == o1);
-    CHECK(lists.observer_terms[1].observer == o4);
+    CHECK(lists.observer_terms[0].observer == o4);
+    CHECK(lists.observer_terms[1].observer == o1);
 
     // Gone for good: no events, and a second unobserve says so.
     world.set(e, Velocity { 2, 2 });
@@ -556,11 +559,12 @@ TEST_CASE("ecs/observer: archetype lists hold the ids and term entries sorted an
     REQUIRE(other.observers.count == 2);
     CHECK(other.observers[0] == o1);
     CHECK(other.observers[1] == o3);
+    // Health was registered after Position, so its id is the lower one.
     REQUIRE(other.observer_terms.count == 2);
-    CHECK(other.observer_terms[0].id == world.id<Position>());
-    CHECK(other.observer_terms[0].observer == o1);
-    CHECK(other.observer_terms[1].id == world.id<Health>());
-    CHECK(other.observer_terms[1].observer == o3);
+    CHECK(other.observer_terms[0].id == world.id<Health>());
+    CHECK(other.observer_terms[0].observer == o3);
+    CHECK(other.observer_terms[1].id == world.id<Position>());
+    CHECK(other.observer_terms[1].observer == o1);
     CHECK(log.count_of(OBSERVER_MOVED) == 2);
 
     world.unobserve(o1);

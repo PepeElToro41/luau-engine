@@ -1,6 +1,7 @@
 #include "engine/ecs/world.hpp"
 
 #include "engine/ecs/archetype/archetype_listener.hpp"
+#include "engine/ecs/component_registry.hpp"
 #include "engine/ecs/ecs.hpp"
 #include "engine/ecs/entity.hpp"
 #include "engine/ecs/hierarchy.hpp"
@@ -9,6 +10,7 @@
 #include "engine/ecs/query/observer.hpp"
 #include "engine/memory/heap_allocator.hpp"
 #include "engine/memory/temporal_allocator.hpp"
+#include "engine/utils/hash.hpp"
 #include "engine/utils/log.hpp"
 
 #include <cstdio>
@@ -23,6 +25,7 @@ World::World(BaseAllocator* allocator) :
     component_index(allocator),
     type_index(allocator),
     type_info_index(allocator),
+    component_names(allocator),
     monitors(allocator),
     observers(allocator),
     archetype_listeners(allocator),
@@ -34,10 +37,10 @@ World::World() : World(MEMORY::heap_allocator()) {}
 void World::init() {
     this->root_archetype = Archetype::create_archetype(this, ArchetypeType());
 
-    for (Id id = 1; id <= ECS::REST; ++id) {
+    for (Id id = ECS::FIRST_COMPONENT_ID; id <= ECS::REST; ++id) {
         this->make_alive(id);
     }
-    this->set_range(ECS::REST + 1, 0);
+    this->set_range(ECS::FIRST_USER_ENTITY_ID, 0);
 
     // ECS::COMPONENT stores a TypeInfo per component entity. Its own TypeInfo
     // has to be known before its first column is created (ComponentRecord
@@ -60,7 +63,7 @@ void World::init() {
 
     // Nothing built in may be deleted: not the component ids (type_index
     // would keep pointing at a dead entity) nor the ids the ECS relies on.
-    for (Id id = 1; id <= ECS::REST; ++id) {
+    for (Id id = ECS::FIRST_COMPONENT_ID; id <= ECS::REST; ++id) {
         ENTITY::add(this, id, ECS::PAIR(ECS::ON_DELETE, ECS::PANIC));
     }
 }
@@ -96,6 +99,20 @@ void World::clear(const EntityId entity) {
 
 void World::set_range(const EntityIdLow min, const EntityIdLow max) {
     this->entity_index.set_range(min, max);
+}
+
+EntityIdLow World::range_min() const {
+    const EntityRange* range = this->entity_index.range_active();
+    return range != nullptr ? range->min : 0;
+}
+
+EntityIdLow World::range_max() const {
+    const EntityRange* range = this->entity_index.range_active();
+    return range != nullptr ? range->max : 0;
+}
+
+EntityIdLow World::last_id() const {
+    return this->entity_index.last_id;
 }
 
 bool World::has(const EntityId entity, const Id id) const {
@@ -166,17 +183,109 @@ const TypeInfo* World::get_type_info(const ComponentId id) const {
     return type_info;
 }
 
-EntityId World::claim_component_id(const TypeId type_id) {
-    if (this->next_component_id > ECS::MAX_COMPONENT_ID) {
-        LOG::error(LOG_CATEGORY::ECS, "out of component ids (max %llu); cannot register a new component or tag type",
-            ECS::MAX_COMPONENT_ID);
+// --- Component ids -------------------------------------------------------------
+
+Id World::claim_runtime_id() {
+    // The registry owns [1, count()]; this world's tier must stay above it.
+    // Slots a clone brought over as bound are skipped, never reissued.
+    const Id floor = COMPONENT_REGISTRY::count();
+    while (this->runtime_next_id > floor && this->component_owner[this->runtime_next_id] != 0) {
+        this->runtime_next_id -= 1;
+    }
+    if (this->runtime_next_id <= floor) {
+        LOG::error(LOG_CATEGORY::ECS, "out of component ids: %llu preregistered and %llu runtime components fill the band of %llu; cannot register a new component or tag type",
+            static_cast<unsigned long long>(floor), static_cast<unsigned long long>(ECS::MAX_COMPONENT_ID - floor),
+            static_cast<unsigned long long>(ECS::MAX_COMPONENT_ID));
         return 0;
     }
-    const EntityId entity = this->next_component_id;
-    this->next_component_id += 1;
-    this->type_index.insert(type_id, entity);
-    return entity;
+    const Id id = this->runtime_next_id;
+    this->runtime_next_id -= 1;
+    return id;
 }
+
+EntityId World::bind_component(const Id id, const TypeId type_id, const TypeInfo* info) {
+    if (id < ECS::FIRST_COMPONENT_ID || id > ECS::MAX_COMPONENT_ID || type_id == 0) {
+        return 0;
+    }
+    const TypeId owner = this->component_owner[id];
+    if (owner != 0 && owner != type_id) {
+        // A preregistered id landing on a runtime id this world handed out
+        // earlier (the registry grew up into the world's tier), or a type
+        // the registry decided about after this world bound it.
+        LOG::error(LOG_CATEGORY::ECS, "component id %llu is already bound to type %llu in this world; type %llu cannot take it (a preregistration met a runtime component; preregister at startup)",
+            static_cast<unsigned long long>(id), static_cast<unsigned long long>(owner), static_cast<unsigned long long>(type_id));
+        return 0;
+    }
+    this->component_owner[id] = type_id;
+    this->type_index.insert(type_id, id);
+    if (info != nullptr) {
+        ENTITY::set(this, id, ECS::COMPONENT, info);
+    }
+    return id;
+}
+
+EntityId World::claim_component_id(const TypeId type_id, const TypeInfo& info, const bool as_tag) {
+    if (const ComponentRegistryEntry* entry = COMPONENT_REGISTRY::find(type_id)) {
+        // The registry decided, process-wide, whether the type carries data.
+        return this->bind_component(entry->id, type_id, entry->is_tag ? nullptr : &entry->info);
+    }
+    if (this->strict_components) {
+        LOG::error(LOG_CATEGORY::ECS, "component type %llu was not preregistered and this world is strict; preregister it with COMPONENT_REGISTRY::preregister<T>() at startup",
+            static_cast<unsigned long long>(type_id));
+        return 0;
+    }
+    const Id id = this->claim_runtime_id();
+    if (id == 0) {
+        return 0;
+    }
+    return this->bind_component(id, type_id, as_tag ? nullptr : &info);
+}
+
+EntityId World::register_component(const char* name, const TypeInfo& info) {
+    if (name == nullptr || name[0] == '\0') {
+        return 0;
+    }
+    const u64 key = HASH::fnv1a_str(name);
+    if (const EntityId* existing = this->component_names.find(key)) {
+        // A re-declaration keeps its id and its first size: columns are
+        // already laid out with it.
+        const TypeInfo* current = static_cast<const TypeInfo*>(ENTITY::get(this, *existing, ECS::COMPONENT));
+        const usz current_length = current != nullptr ? current->length : 0;
+        if (current_length != info.length) {
+            LOG::warning(LOG_CATEGORY::ECS, "component '%s' is registered again with %llu bytes; it keeps its %llu", name,
+                static_cast<unsigned long long>(info.length), static_cast<unsigned long long>(current_length));
+        }
+        return *existing;
+    }
+    const Id id = this->claim_runtime_id();
+    if (id == 0) {
+        return 0;
+    }
+    this->component_owner[id] = COMPONENT_OWNER_NAMED;
+    this->component_names.insert(key, id);
+    if (info.length != 0) {
+        ENTITY::set(this, id, ECS::COMPONENT, &info);
+    }
+    return id;
+}
+
+EntityId World::find_component(const char* name) const {
+    if (name == nullptr) {
+        return 0;
+    }
+    const EntityId* found = this->component_names.find(HASH::fnv1a_str(name));
+    return found != nullptr ? *found : 0;
+}
+
+TypeId World::component_type_of(const Id id) const {
+    if (id < ECS::FIRST_COMPONENT_ID || id > ECS::MAX_COMPONENT_ID) {
+        return 0;
+    }
+    const TypeId owner = this->component_owner[id];
+    return owner != COMPONENT_OWNER_NAMED ? owner : 0;
+}
+
+// --- Hooks ---------------------------------------------------------------------
 
 HookList* World::hook_list_for(const Id id, const bool create) {
     HookList** slot = nullptr;
@@ -340,7 +449,11 @@ void World::free() {
     this->component_index.free();
     this->type_index.free();
     this->type_info_index.free();
-    this->next_component_id = 1;
+    this->component_names.free();
+    this->runtime_next_id = ECS::MAX_COMPONENT_ID;
+    for (Id id = 0; id <= ECS::MAX_COMPONENT_ID; ++id) {
+        this->component_owner[id] = 0;
+    }
 
     if (this->any_hooks != nullptr) {
         this->any_hooks->free();

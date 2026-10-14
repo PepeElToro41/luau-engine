@@ -1,6 +1,7 @@
 #include "engine/scene/scene.hpp"
 
 #include "engine/ecs/archetype/archetype.hpp"
+#include "engine/ecs/component_registry.hpp"
 #include "engine/ecs/entity_index.hpp"
 #include "engine/ecs/world.hpp"
 #include "engine/utils/log.hpp"
@@ -18,6 +19,11 @@ Name Name::make(const char* text) {
         name.value[ENTITY_NAME_CAPACITY - 1] = '\0';
     }
     return name;
+}
+
+void SCENE::register_components(World& world) {
+    COMPONENT_REGISTRY::preregister<Name>("Name");
+    world.component<Name>();
 }
 
 // --- Hierarchy ---------------------------------------------------------------
@@ -137,7 +143,17 @@ EntityId SCENE::spawn(World& world, const char* name, const EntityId parent) {
 
 void Scene::init(World* world) {
     this->world = world;
+    SCENE::register_components(*world);
     this->root = SCENE::spawn(*world, "scene_root", 0);
+}
+
+void Scene::init(World* world, const EntityId root) {
+    this->world = world;
+    SCENE::register_components(*world);
+    this->root = world->alive(root) ? root : 0;
+    if (this->root == 0) {
+        LOG::error(LOG_CATEGORY::SCENE, "scene: entity %llx is not alive and cannot be the root", static_cast<unsigned long long>(root));
+    }
 }
 
 EntityId Scene::spawn(const char* name, const EntityId parent) {

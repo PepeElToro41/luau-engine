@@ -8,11 +8,13 @@
 
 // The pipeline cache: one GpuPipeline per (shader entity, shader
 // generation, pass tag, mesh vertex layout, target formats), built on first
-// request. A failed build is cached as an invalid pipeline so it is
-// reported once. A reloaded shader gets a new generation, so its old
+// request, kept in the shared RenderResources since a shader entity means
+// the same program in every world drawn with them. A failed build is
+// cached as an invalid pipeline so it is reported once. A reloaded shader gets a new generation, so its old
 // pipelines simply stop being requested; release_shader() frees them.
 
 struct Renderer;
+struct RenderResources;
 struct Shader;
 
 struct PipelineKey {
@@ -48,6 +50,6 @@ GpuPipeline get(Renderer& renderer, EntityId shader_entity, const Shader& shader
 // Releases (deferred) every pipeline of `shader`, any generation.
 void release_shader(Renderer& renderer, EntityId shader);
 // Destroys every pipeline now. The GPU must be idle.
-void free(Renderer& renderer);
+void free(RenderResources& resources);
 
 } // namespace PIPELINES

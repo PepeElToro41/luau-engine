@@ -50,6 +50,9 @@ struct InspectorPanel {
     // component edit or an added component. The App turns that into the
     // scene's dirty flag when the entity is scene content.
     bool changed = false;
+    // Set by the Editor while a game plays: the entity shown is the play
+    // world's and the panel says so, since edits to it end with the game.
+    bool playing = false;
 
 private:
     // Scratch slots the draw functions keep edit state in, one per id of

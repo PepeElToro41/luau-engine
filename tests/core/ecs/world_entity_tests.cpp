@@ -386,7 +386,7 @@ TEST_CASE("ecs/world: a constructed world only wires the allocator") {
     CHECK(world.entity_index.is_empty());
     CHECK(world.archetypes.alive_count == 0);
     CHECK(world.component_records.alive_count == 0);
-    CHECK(world.next_component_id == 1);
+    CHECK(world.runtime_next_id == ECS::MAX_COMPONENT_ID);
     CHECK(world.hook_counts[HOOK_ADDED] == 0);
     CHECK(world.any_hooks == nullptr);
 
@@ -442,7 +442,7 @@ TEST_CASE("ecs/world: free resets the world so it can be initialized again") {
 
     world.free();
     CHECK(world.root_archetype == nullptr);
-    CHECK(world.next_component_id == 1);
+    CHECK(world.runtime_next_id == ECS::MAX_COMPONENT_ID);
     CHECK_FALSE(world.alive(e));
     CHECK_ARENA_CLEAN();
 

@@ -529,6 +529,28 @@ bool MATERIAL::reload(Renderer& renderer, const EntityId entity) {
     return true;
 }
 
+usz MATERIAL::index_loaded(Renderer& renderer) {
+    if (renderer.world == nullptr) {
+        return 0;
+    }
+    renderer.materials.clear();
+    usz indexed = 0;
+    renderer.world->query<Material>().each([&](const EntityId entity, Material& material) {
+        if (material.asset.is_null()) {
+            return;
+        }
+        if (const EntityId* existing = renderer.materials.find(material.asset)) {
+            if (*existing <= entity) {
+                return;
+            }
+            renderer.materials.remove(material.asset);
+        }
+        renderer.materials.insert(material.asset, entity);
+        indexed += 1;
+    });
+    return indexed;
+}
+
 void MATERIAL::reload_all(Renderer& renderer) {
     DynamicArray<EntityId> entities;
     for (auto& entry : renderer.materials) {

@@ -37,11 +37,12 @@ TEST_CASE("ecs/components: component<T> claims one id per type and keeps it") {
     CHECK(world.id<Position>() == position);
     CHECK(world.id<Velocity>() == velocity);
 
-    // Ids are handed out in order from next_component_id.
-    const Id next = world.next_component_id;
+    // Types nobody preregistered are runtime components: handed out from
+    // runtime_next_id, which grows down from the top of the band.
+    const Id next = world.runtime_next_id;
     const EntityId health = world.component<Health>();
     CHECK(health == next);
-    CHECK(world.next_component_id == next + 1);
+    CHECK(world.runtime_next_id == next - 1);
 
     world.free();
     CHECK_ARENA_CLEAN();
@@ -126,10 +127,10 @@ TEST_CASE("ecs/components: a typed query on a new type claims its component id")
     world.init();
 
     const EntityId e = world.new_entity();
-    const Id next = world.next_component_id;
+    const Id next = world.runtime_next_id;
 
     CHECK_FALSE(world.has<Health>(e));
-    CHECK(world.next_component_id == next + 1);
+    CHECK(world.runtime_next_id == next - 1);
     CHECK(world.id<Health>() == next);
 
     world.free();

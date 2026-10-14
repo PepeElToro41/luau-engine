@@ -22,6 +22,9 @@ void InspectorPanel::draw(bool* open, World* world, const Project* project, cons
         ImGui::End();
         return;
     }
+    if (this->playing && selection.kind != SelectionKind::NONE) {
+        ImGui::TextDisabled("Playing: edits are the game's and end with it");
+    }
 
     switch (selection.kind) {
     case SelectionKind::ENTITY:

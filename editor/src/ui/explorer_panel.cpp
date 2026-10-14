@@ -130,15 +130,25 @@ void ExplorerPanel::draw_entity(World& world, const EntityId entity, const bool 
         this->reveal = 0;
     }
 
+    // Created by the running game: tinted, so the authored tree and what
+    // the game added to it tell apart.
+    const bool runtime = this->runtime_from != 0 && ECS::ENTITY_LOW(entity) >= this->runtime_from;
+    if (runtime) {
+        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.55f, 0.85f, 0.55f, 1.0f));
+    }
     // The entity id is the ImGui id, so renames keep the node's open state.
     const bool node_open = ImGui::TreeNodeEx(reinterpret_cast<void*>(static_cast<uintptr_t>(entity)), flags, "%s", label);
+    if (runtime) {
+        ImGui::PopStyleColor();
+    }
     if (ImGui::IsItemClicked() && !ImGui::IsItemToggledOpen()) {
         selection.select_entity(entity);
     }
     if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayNormal)) {
-        ImGui::SetTooltip("id %llu, generation %llu",
+        ImGui::SetTooltip("id %llu, generation %llu%s",
             static_cast<unsigned long long>(ECS::ENTITY_LOW(entity)),
-            static_cast<unsigned long long>(entity >> ECS::ENTITY_BITS));
+            static_cast<unsigned long long>(entity >> ECS::ENTITY_BITS),
+            runtime ? ", created while playing" : "");
     }
     // Right-click: the row's context menu (the tree node's id). Opening it
     // also selects the row, like the Asset Browser does.

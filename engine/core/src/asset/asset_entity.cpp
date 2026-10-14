@@ -1,6 +1,7 @@
 #include "engine/asset/asset_entity.hpp"
 
 #include "engine/asset/text_asset.hpp"
+#include "engine/ecs/component_registry.hpp"
 #include "engine/ecs/query/query.hpp"
 #include "engine/ecs/world.hpp"
 #include "engine/memory/heap_allocator.hpp"
@@ -18,6 +19,16 @@ constexpr u32 KNOWN_TYPES[] = {ASSET_TYPE::TEXTURE, ASSET_TYPE::MESH, ASSET_TYPE
 // --- ASSET_ENTITY -----------------------------------------------------------
 
 void ASSET_ENTITY::register_components(World& world) {
+    COMPONENT_REGISTRY::preregister<AssetUuid>("AssetUuid");
+    COMPONENT_REGISTRY::preregister<AssetPath>("AssetPath");
+    COMPONENT_REGISTRY::preregister<AssetDirty>("AssetDirty");
+    COMPONENT_REGISTRY::preregister<AssetType>("AssetType");
+    COMPONENT_REGISTRY::preregister<AssetTexture>("AssetTexture");
+    COMPONENT_REGISTRY::preregister<AssetMesh>("AssetMesh");
+    COMPONENT_REGISTRY::preregister<AssetMaterial>("AssetMaterial");
+    COMPONENT_REGISTRY::preregister<AssetScene>("AssetScene");
+    COMPONENT_REGISTRY::preregister<AssetShader>("AssetShader");
+    SCENE::register_components(world);
     SCENE::set_name(world, world.component<AssetUuid>(), "AssetUuid");
     SCENE::set_name(world, world.component<AssetPath>(), "AssetPath");
     SCENE::set_name(world, world.tag<AssetDirty>(), "AssetDirty");
@@ -162,6 +173,22 @@ EntityId AssetEntities::add(const AssetView& view, const char* path) {
     char name[ENTITY_NAME_CAPACITY];
     ASSET_ENTITY::name_from_path(path, name, sizeof(name));
     return this->add(view.header->guid, view.header->type, name, path);
+}
+
+usz AssetEntities::rebuild() {
+    this->entities.clear();
+    if (this->world == nullptr) {
+        return 0;
+    }
+    usz found = 0;
+    this->world->query<AssetUuid>().each([&](const EntityId entity, const AssetUuid& asset) {
+        if (asset.guid.is_null() || this->entities.contains(asset.guid)) {
+            return;
+        }
+        this->entities.insert(asset.guid, entity);
+        found += 1;
+    });
+    return found;
 }
 
 EntityId AssetEntities::find(const AssetGuid& guid) const {

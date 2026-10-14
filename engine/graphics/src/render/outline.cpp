@@ -322,9 +322,9 @@ bool OUTLINE::draw_mask(Renderer& renderer, const RenderPassContext& ctx, const 
     }
     const GpuMesh* mesh = nullptr;
     if (const MeshRenderer* mesh_renderer = world->get<MeshRenderer>(entity)) {
-        mesh = GPU_ASSETS::get_mesh(renderer.assets, mesh_renderer->mesh);
+        mesh = GPU_ASSETS::get_mesh(renderer.resources->assets, mesh_renderer->mesh);
     } else if (const PrimitiveRenderer* primitive = world->get<PrimitiveRenderer>(entity)) {
-        mesh = GPU_ASSETS::get_primitive(renderer.assets, primitive->shape);
+        mesh = GPU_ASSETS::get_primitive(renderer.resources->assets, primitive->shape);
     }
     if (mesh == nullptr) {
         return false;

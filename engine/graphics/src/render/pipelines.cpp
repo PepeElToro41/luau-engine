@@ -37,7 +37,8 @@ GpuPipeline PIPELINES::get(Renderer& renderer, const EntityId shader_entity, con
     key.tag = tag;
     key.vertex_layout = mesh != nullptr ? mesh->hash : 0;
     key.formats = formats.hash();
-    if (const GpuPipeline* found = renderer.pipelines.pipelines.find(key)) {
+    HashMap<PipelineKey, GpuPipeline, PipelineKeyHash>& cache = renderer.resources->pipelines.pipelines;
+    if (const GpuPipeline* found = cache.find(key)) {
         return *found;
     }
 
@@ -45,7 +46,7 @@ GpuPipeline PIPELINES::get(Renderer& renderer, const EntityId shader_entity, con
     const ShaderPassProgram* pass = shader.program.find_pass(tag);
     if (pass == nullptr) {
         // Not an error: the shader has no variant for this pass.
-        renderer.pipelines.pipelines.insert(key, pipeline);
+        cache.insert(key, pipeline);
         return pipeline;
     }
     const u32 pass_index = static_cast<u32>(pass - shader.program.passes);
@@ -59,7 +60,7 @@ GpuPipeline PIPELINES::get(Renderer& renderer, const EntityId shader_entity, con
     if (mesh != nullptr) {
         if (!VERTEX_INPUT::build(pass->reflection, *mesh, desc.vertex_input, error, sizeof(error))) {
             LOG::error(LOG_CATEGORY::SHADER, "shader %s, pass %s: %s", shader.name, pass->tag_name, error);
-            renderer.pipelines.pipelines.insert(key, pipeline);
+            cache.insert(key, pipeline);
             return pipeline;
         }
     } else {
@@ -77,7 +78,7 @@ GpuPipeline PIPELINES::get(Renderer& renderer, const EntityId shader_entity, con
     // the backend fills gaps with the empty layout.
     const u32 sets = pass->reflection.set_count();
     desc.bind_layout_count = sets > 1 ? sets : 1;
-    desc.bind_layouts[0] = renderer.frame_layout;
+    desc.bind_layouts[0] = renderer.resources->frame_layout;
     if (desc.bind_layout_count > 1) {
         desc.bind_layouts[1] = shader.input_layouts[pass_index];
     }
@@ -94,13 +95,14 @@ GpuPipeline PIPELINES::get(Renderer& renderer, const EntityId shader_entity, con
     if (!pipeline.is_valid()) {
         LOG::error(LOG_CATEGORY::SHADER, "shader %s, pass %s: pipeline creation failed", shader.name, pass->tag_name);
     }
-    renderer.pipelines.pipelines.insert(key, pipeline);
+    cache.insert(key, pipeline);
     return pipeline;
 }
 
 void PIPELINES::release_shader(Renderer& renderer, const EntityId shader) {
+    HashMap<PipelineKey, GpuPipeline, PipelineKeyHash>& cache = renderer.resources->pipelines.pipelines;
     DynamicArray<PipelineKey> stale;
-    for (auto& entry : renderer.pipelines.pipelines) {
+    for (auto& entry : cache) {
         if (entry.key.shader == shader) {
             if (entry.value.is_valid()) {
                 GPU::release_pipeline(renderer.gpu, entry.value);
@@ -109,16 +111,16 @@ void PIPELINES::release_shader(Renderer& renderer, const EntityId shader) {
         }
     }
     for (const PipelineKey& key : stale) {
-        renderer.pipelines.pipelines.remove(key);
+        cache.remove(key);
     }
     stale.free();
 }
 
-void PIPELINES::free(Renderer& renderer) {
-    for (auto& entry : renderer.pipelines.pipelines) {
+void PIPELINES::free(RenderResources& resources) {
+    for (auto& entry : resources.pipelines.pipelines) {
         if (entry.value.is_valid()) {
-            GPU::destroy_pipeline(renderer.gpu, entry.value);
+            GPU::destroy_pipeline(resources.gpu, entry.value);
         }
     }
-    renderer.pipelines.pipelines.free();
+    resources.pipelines.pipelines.free();
 }

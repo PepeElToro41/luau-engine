@@ -126,6 +126,12 @@ struct AssetEntities {
     // 0 when `view` is not ok.
     EntityId add(const AssetView& view, const char* path);
 
+    // Forgets the index and fills it again from every entity of the world
+    // that carries an AssetUuid: what an index made for a world cloned from
+    // another does, since the clone brought the entities but no index.
+    // Returns how many it found.
+    usz rebuild();
+
     // The entity for `guid`, or 0 if none (never added, or deleted since).
     EntityId find(const AssetGuid& guid) const;
     bool contains(const AssetGuid& guid) const { return this->find(guid) != 0; }

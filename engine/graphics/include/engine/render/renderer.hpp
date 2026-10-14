@@ -16,11 +16,28 @@
 #include "engine/templates/dynamic_array.hpp"
 #include "engine/templates/hash_map.hpp"
 
-// The engine's renderer: the render graph that describes the frame, the
-// shaders and materials as ECS entities, and everything shared between
-// them (pipeline cache, uploaded assets, the frame's set 0). It is a plain
-// state struct the Engine owns as a singleton; RENDERER:: and the
-// namespaces of the headers above act on it:
+// The engine's renderer, in two halves that belong to different scopes.
+//
+// RenderResources is everything device-level and shared by every view of
+// every world: the pipeline cache (keyed by shader entity and generation,
+// which a world cloned id for id keeps valid), the uploaded assets (by
+// GUID), the frame's set-0 layout and interface, the engine sampler table,
+// the white texture and the two shader directories. One per process, an
+// Engine singleton declared SCOPE_SHARED.
+//
+// Renderer is the state of one view being drawn from one World: the render
+// graph that describes the frame and its plans, the executor that owns the
+// graph's transient textures, the custom passes, the per-frame bind groups,
+// the loaded materials of that world, the camera and the clock. One per
+// instance (the authoring world's, and a play instance's while it runs),
+// declared SCOPE_LOCAL, each pointing at the shared RenderResources. The
+// split is what makes a play instance's Stop clean: a material or a shader
+// loaded during play lives in the instance's maps and goes with them, and
+// the editor's own passes (grid, selection outline) sit in the authoring
+// renderer's graph and never in the play instance's.
+//
+// Both are plain state structs the Engine owns as singletons; RENDERER::,
+// RENDER_RESOURCES:: and the namespaces of the headers above act on them:
 //
 //     Renderer* renderer = engine.get_singleton<Renderer>();
 //     EntityId unlit = SHADER_LIBRARY::load(*renderer, "unlit");   // render/unlit.slang
@@ -98,12 +115,34 @@ struct CustomPass {
     void* user_data = nullptr;
 };
 
+// The shared half: see above.
+struct RenderResources {
+    GpuContext* gpu = nullptr;
+    AssetResourceProvider* provider = nullptr;
+
+    PipelineCache pipelines;
+    GpuAssetCache assets;
+
+    // Set 0: the frame block and the sampler table.
+    ShaderReflection frame_interface;
+    GpuBindLayout frame_layout;
+    GpuSampler samplers[RENDERER_SAMPLER_COUNT] = {};
+    // What unset texture slots sample.
+    GpuTexture white;
+
+    char engine_render_dir[RENDERER_PATH_MAX] = {};
+    char project_render_dir[RENDERER_PATH_MAX] = {};
+};
+
+// The per-instance half: see above.
 struct Renderer {
     GpuContext* gpu = nullptr;
     World* world = nullptr;
     AssetResourceProvider* provider = nullptr;
+    // The shared half this view draws with. Never null after init.
+    RenderResources* resources = nullptr;
     // Scratch for the frame being recorded (draw lists and the like): the
-    // Engine's FrameAllocator, reset by the Engine once per frame, never
+    // instance's FrameAllocator, reset by the Engine once per frame, never
     // here. Never null after init.
     BaseAllocator* frame_allocator = nullptr;
 
@@ -119,16 +158,8 @@ struct Renderer {
     u32 reported_version = 0xffffffffu;
 
     GraphExecutor executor;
-    PipelineCache pipelines;
-    GpuAssetCache assets;
     HashMap<u64, CustomPass> custom_passes;
 
-    // Set 0: the frame block and the sampler table.
-    ShaderReflection frame_interface;
-    GpuBindLayout frame_layout;
-    GpuSampler samplers[RENDERER_SAMPLER_COUNT] = {};
-    // What unset texture slots sample.
-    GpuTexture white;
     FrameUniforms frame_uniforms;
     // This frame's set-0 group and per-material set-2 groups.
     GpuBindGroup frame_group;
@@ -147,25 +178,48 @@ struct Renderer {
     // tag for the standalone. 0 (the default) falls back to the tag, then
     // to the first Camera.
     EntityId camera = 0;
-
-    char engine_render_dir[RENDERER_PATH_MAX] = {};
-    char project_render_dir[RENDERER_PATH_MAX] = {};
+    // The first entity id this view's world owns outright: the removed hook
+    // of a Shader at or above it frees the program and its pipelines, one
+    // below it only borrows them. 0 for the authoring world, which owns
+    // everything; a play instance sets it to its clone's fence, since its
+    // shaders below the fence are the authoring world's programs shared by
+    // id (see RENDER_COMPONENTS::install_hooks).
+    EntityIdLow owns_from = 0;
 };
 
-namespace RENDERER {
+namespace RENDER_RESOURCES {
 
-// `frame_allocator` is where per-frame scratch goes; the caller resets it
-// once per frame, before render().
-bool init(Renderer& renderer, GpuContext* gpu, World* world, AssetResourceProvider* provider, BaseAllocator* frame_allocator, const char* engine_render_dir);
-// Destroys everything. The GPU must be idle and the World's Shader and
-// Material entities already removed (World::free fires their hooks).
-void shutdown(Renderer& renderer);
+// The device-level half, once per process: set 0, the samplers, the white
+// texture and the caches, with `engine_render_dir` as the engine's shader
+// root. False (with messages) if a GPU object could not be made.
+bool init(RenderResources& resources, GpuContext* gpu, AssetResourceProvider* provider, const char* engine_render_dir);
+// Destroys every pipeline, GPU asset and the white texture. The GPU must
+// be idle and every Renderer that used the resources shut down first.
+void shutdown(RenderResources& resources);
 
 // The project's shader root, searched before the engine's render/
 // directory and an include root beside it (the editor passes the project
 // root, since a project shader may sit in any folder and is normally found
 // through its asset entity's AssetPath anyway). nullptr clears it.
-void set_project_render_dir(Renderer& renderer, const char* path);
+void set_project_render_dir(RenderResources& resources, const char* path);
+
+} // namespace RENDER_RESOURCES
+
+namespace RENDERER {
+
+// A view of `world` drawn with `resources`. `frame_allocator` is where
+// per-frame scratch goes; the caller resets it once per frame, before
+// render(). Builds the default graph.
+bool init(Renderer& renderer, RenderResources* resources, World* world, AssetResourceProvider* provider, BaseAllocator* frame_allocator);
+// Releases what the view owns: its graph and plans, the executor's
+// transient textures, the groups and maps. The World's Shader and Material
+// entities must already be removed (World::free fires their hooks, which
+// reach into the renderer). With `gpu_idle` the textures are destroyed at
+// once (the engine's shutdown, after its GPU idle); without it they are
+// released at the end of the frames in flight, which is what stopping a
+// play instance between two frames needs. The shared resources are not
+// touched.
+void shutdown(Renderer& renderer, bool gpu_idle = true);
 
 // Records the frame into frame.frame.cmd, drawing into frame.target.
 // Returns the state the target is left in.

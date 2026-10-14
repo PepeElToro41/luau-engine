@@ -40,10 +40,10 @@ GpuBindGroup RENDER_PASSES::material_group(Renderer& renderer, const EntityId en
             break;
         }
         case GPU_BINDING_TEXTURE: {
-            GpuTexture texture = renderer.white;
+            GpuTexture texture = renderer.resources->white;
             for (u32 i = 0; i < material.texture_count; ++i) {
                 if (material.textures[i].binding == binding.binding) {
-                    if (const GpuTexture* loaded = GPU_ASSETS::get_texture(renderer.assets, material.textures[i].texture)) {
+                    if (const GpuTexture* loaded = GPU_ASSETS::get_texture(renderer.resources->assets, material.textures[i].texture)) {
                         texture = *loaded;
                     }
                 }
@@ -52,7 +52,7 @@ GpuBindGroup RENDER_PASSES::material_group(Renderer& renderer, const EntityId en
             break;
         }
         case GPU_BINDING_SAMPLER: {
-            GpuSampler sampler = renderer.samplers[RENDERER_SAMPLER_LINEAR];
+            GpuSampler sampler = renderer.resources->samplers[RENDERER_SAMPLER_LINEAR];
             for (u32 i = 0; i < material.sampler_count; ++i) {
                 if (material.samplers[i].binding == binding.binding) {
                     sampler = GPU::sampler(renderer.gpu, material.samplers[i].sampler);
@@ -84,9 +84,9 @@ GpuBindGroup RENDER_PASSES::input_group(Renderer& renderer, const RenderPassCont
         }
         if (binding.type == GPU_BINDING_TEXTURE) {
             const bool present = binding.binding < ctx.input_count && ctx.inputs[binding.binding].is_valid();
-            desc.bind_texture(binding.binding, present ? ctx.inputs[binding.binding] : renderer.white);
+            desc.bind_texture(binding.binding, present ? ctx.inputs[binding.binding] : renderer.resources->white);
         } else if (binding.type == GPU_BINDING_SAMPLER) {
-            desc.bind_sampler(binding.binding, renderer.samplers[RENDERER_SAMPLER_LINEAR_CLAMP]);
+            desc.bind_sampler(binding.binding, renderer.resources->samplers[RENDERER_SAMPLER_LINEAR_CLAMP]);
         }
     }
     return GPU::transient_bind_group(renderer.gpu, layout, desc);
@@ -177,12 +177,12 @@ void RENDER_PASSES::draw_scene(Renderer& renderer, const RenderPassContext& ctx)
     };
     world->query<Transform, MeshRenderer>().each([&](const EntityId, Transform& transform, MeshRenderer& mesh_renderer) {
         if (mesh_renderer.material != 0) {
-            collect(transform, mesh_renderer.material, GPU_ASSETS::get_mesh(renderer.assets, mesh_renderer.mesh));
+            collect(transform, mesh_renderer.material, GPU_ASSETS::get_mesh(renderer.resources->assets, mesh_renderer.mesh));
         }
     });
     world->query<Transform, PrimitiveRenderer>().each([&](const EntityId, Transform& transform, PrimitiveRenderer& primitive) {
         if (primitive.material != 0) {
-            collect(transform, primitive.material, GPU_ASSETS::get_primitive(renderer.assets, primitive.shape));
+            collect(transform, primitive.material, GPU_ASSETS::get_primitive(renderer.resources->assets, primitive.shape));
         }
     });
     if (items.count == 0) {

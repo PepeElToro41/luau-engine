@@ -29,7 +29,10 @@ struct World;
 // entities are not scene content, so they offer no menu. Above the tree a
 // line names the scene file the content came from (`scene_title`, set by
 // the Editor), and `changed` reports to the Editor that the panel created an
-// entity during the last draw, which is what makes the scene dirty.
+// entity during the last draw, which is what makes the scene dirty. While a
+// game plays the tree is the play world's, and the entities the game
+// created (ids at or above `runtime_from`, the play fence) are drawn in the
+// runtime color.
 struct ExplorerPanel {
     // Submits the window. `open` is the View-menu toggle. Without a world or
     // scene the panel says so instead of listing anything.
@@ -44,6 +47,9 @@ struct ExplorerPanel {
     // The editor's camera entity (see editor_camera.hpp), listed as its own
     // top-level node under the scene tree; 0 or dead lists nothing.
     EntityId editor_camera = 0;
+    // Entities with a low id at or above this were created by the running
+    // game (PlayState::fence); 0 marks none.
+    EntityIdLow runtime_from = 0;
 
 private:
     // Draws `entity`'s row and, if open, its children. `stack` is the

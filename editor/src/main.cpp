@@ -1,6 +1,7 @@
 #include "engine/engine.hpp"
 #include "engine/plugins/core_plugin.hpp"
 #include "engine/plugins/demo_plugin.hpp"
+#include "engine/plugins/play_plugin.hpp"
 #include "engine/plugins/project_plugin.hpp"
 #include "engine/plugins/render_plugin.hpp"
 #include "engine/plugins/scene_plugin.hpp"
@@ -21,7 +22,9 @@
 // an ImGui Viewport panel (EditorViewportPlugin) and only the UI is drawn
 // into the swapchain (EditorUiPlugin); the Viewport is drawn from the
 // editor's fly camera (EditorCameraPlugin) over a ground grid
-// (EditorGridPlugin), with the selection outlined (EditorHighlightPlugin).
+// (EditorGridPlugin), with the selection outlined (EditorHighlightPlugin);
+// Play (PlayPlugin) runs the game in a clone of the authoring world shown
+// in the same Viewport, and Stop brings the authoring world back untouched.
 // The UI plugin is added before the project so its Output panel is a log
 // sink by the time the project reports what it opened. There is no
 // open-project page yet: the editor opens EDITOR_TEST_PROJECT_DIR
@@ -40,6 +43,9 @@ int main() {
     engine.add_plugin<WindowPlugin>(window);
     engine.add_plugin<CorePlugin>();
     engine.add_plugin<RenderPlugin>();
+    // Play clones the world into an instance of its own and runs the game
+    // there; the editor's toolbar drives it.
+    engine.add_plugin<PlayPlugin>();
     engine.add_plugin<EditorCameraPlugin>();
     engine.add_plugin<EditorGridPlugin>();
     engine.add_plugin<EditorHighlightPlugin>();

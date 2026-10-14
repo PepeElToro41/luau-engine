@@ -89,9 +89,17 @@ inline constexpr usz ENGINE_FRAME_ARENA_BYTES = MEMORY::MB * 8;
 // Engine-wide globals (the world, input state, asset caches, ...) are
 // singletons keyed by C++ type: engine.create_singleton<T>(args...) builds T
 // once and engine.get_singleton<T>() returns that same object afterwards
-// (see singletons.hpp). They are released by shutdown() after the shutdown
-// pipeline ran; anything a singleton owns is released there, explicitly,
-// by a system of the plugin that created it. CorePlugin creates the
+// (see singletons.hpp). They live in `root`, the engine's own store, and
+// are released by shutdown() after the shutdown pipeline ran; anything a
+// singleton owns is released there, explicitly, by a system of the plugin
+// that created it. The accessors resolve against `active`, which is `root`
+// until a plugin points it at a child store of its own: a play instance
+// (PlayPlugin) holds its World, Scene, AssetEntities, FrameAllocator and
+// Renderer in a child whose parent is `root`, so while it is active every
+// system that asks for the World gets the one being played and everything
+// declared SCOPE_SHARED (the asset provider, the project, the GPU caches)
+// still resolves to the root's. Whether a type is shared or per instance
+// is declared where it is created (SINGLETON_SCOPE::declare). CorePlugin creates the
 // AssetResourceProvider that streams asset payloads, the ECS World every
 // entity lives in, the Scene whose "scene_root" entity every scene entity
 // is parented under (spawn entities with scene->spawn(name, parent)), the
@@ -240,25 +248,32 @@ struct Engine {
     void serialize_context(SerializeContext& ctx);
 
     // --- Singletons ----------------------------------------------------------
+    // All against `active`: the root store, or the instance a plugin made
+    // active (see above).
 
-    // Creates T's singleton as T(args...) and returns it. The pointer stays
-    // valid until remove_singleton<T>() or shutdown(). Returns nullptr (with
-    // an error) if T already has a singleton.
+    // Creates T's singleton as T(args...) in the active store and returns
+    // it. The pointer stays valid until remove_singleton<T>(), the store is
+    // freed, or shutdown(). Returns nullptr (with an error) if the store
+    // already holds T.
     template <typename T, typename... Args>
-    T* create_singleton(Args&&... args) { return this->singletons.create<T>(std::forward<Args>(args)...); }
-    // The singleton for T, or nullptr if it was never created. Never creates.
+    T* create_singleton(Args&&... args) { return this->active->create<T>(std::forward<Args>(args)...); }
+    // The singleton for T: the active store's, else a shared type's from
+    // the root. nullptr if it was never created. Never creates.
     template <typename T>
-    T* get_singleton() const { return this->singletons.get<T>(); }
-    // Whether T's singleton exists.
+    T* get_singleton() const { return this->active->get<T>(); }
+    // Whether get_singleton<T>() would find one.
     template <typename T>
-    bool has_singleton() const { return this->singletons.has<T>(); }
-    // Destroys T's singleton. False if there is none.
+    bool has_singleton() const { return this->active->has<T>(); }
+    // Destroys the active store's singleton for T. False if it has none.
     template <typename T>
-    bool remove_singleton() { return this->singletons.remove<T>(); }
+    bool remove_singleton() { return this->active->remove<T>(); }
 
     // --- Members -------------------------------------------------------------
 
-    Singletons singletons;
+    // The engine's own singletons, and the store the accessors resolve
+    // against: `root`, or a child of it while an instance is active.
+    Singletons root;
+    Singletons* active = &this->root;
     PluginRegistry plugins;
     Scheduler scheduler;
     EnginePipelines pipelines;
