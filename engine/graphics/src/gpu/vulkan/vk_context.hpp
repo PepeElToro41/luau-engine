@@ -160,6 +160,9 @@ struct VkFramebufferEntry {
 
 // --- The context -------------------------------------------------------------------
 
+// Acquires in a row without an image before the swapchain is rebuilt.
+static constexpr u32 VK_ACQUIRE_RETRIES_BEFORE_RECREATE = 240;
+
 struct VulkanContext {
     GpuContext* gpu = nullptr;
     SDL_Window* window = nullptr;
@@ -192,6 +195,9 @@ struct VulkanContext {
     SparseId swapchain_textures[VK_MAX_SWAPCHAIN_IMAGES] = {};
     VkSemaphore render_finished[VK_MAX_SWAPCHAIN_IMAGES] = {};
     bool resize_pending = false;
+    // Consecutive acquires that found no image (VK_NOT_READY / VK_TIMEOUT);
+    // the swapchain is rebuilt once it reaches VK_ACQUIRE_RETRIES_BEFORE_RECREATE.
+    u32 acquire_retries = 0;
 
     // Frames (vk_frame.cpp)
     VkFrameSlot slots[FRAMES_IN_FLIGHT];

@@ -38,7 +38,14 @@ void VK_FRAME::destroy(VulkanContext& vk, const VkPending& pending) {
 }
 
 void VK_FRAME::release(VulkanContext& vk, const VkPending& pending) {
-    vk.slots[vk.current_slot].releases.push(pending);
+    // Destroyed once the fence of the last frame that could have used the
+    // resource has been waited: this frame's slot while a frame is open,
+    // else the slot of the frame submitted last, which end_frame has
+    // already moved current_slot past. Queued on the current slot between
+    // frames it would be destroyed after a wait on a fence two frames old,
+    // while the frame just submitted may still be reading it.
+    const u32 slot = vk.frame_open ? vk.current_slot : (vk.current_slot + FRAMES_IN_FLIGHT - 1) % FRAMES_IN_FLIGHT;
+    vk.slots[slot].releases.push(pending);
 }
 
 void VK_FRAME::flush(VulkanContext& vk) {
@@ -169,7 +176,10 @@ static bool vk_begin_frame(GpuContext* gpu, GpuFrame& out) {
     }
 
     VkFrameSlot& slot = vk.slots[vk.current_slot];
-    vkWaitForFences(vk.device, 1, &slot.in_flight, VK_TRUE, UINT64_MAX);
+    if (!vk_check(vkWaitForFences(vk.device, 1, &slot.in_flight, VK_TRUE, UINT64_MAX), "vkWaitForFences")) {
+        // A lost device: nothing below can work, and the error says so.
+        return false;
+    }
 
     // Everything this slot's previous frame could still have used is free now.
     for (const VkPending& pending : slot.releases) {
@@ -179,14 +189,35 @@ static bool vk_begin_frame(GpuContext* gpu, GpuFrame& out) {
     VK_BINDING::begin_slot(vk, slot);
 
     const VkResult acquired = VK_SWAPCHAIN::acquire(vk, slot.image_available, &vk.image_index);
-    if (acquired == VK_ERROR_OUT_OF_DATE_KHR) {
+    if (acquired == VK_ERROR_OUT_OF_DATE_KHR || acquired == VK_ERROR_SURFACE_LOST_KHR) {
         vk.resize_pending = true;
+        vk.acquire_retries = 0;
+        return false;
+    }
+    if (acquired == VK_NOT_READY || acquired == VK_TIMEOUT) {
+        // No image to draw into right now, which with an unbounded timeout
+        // the spec says cannot happen but some drivers report for a surface
+        // the compositor is not presenting (a window on another workspace
+        // or being unmapped). Transient: the caller tries again. Reported
+        // once per streak rather than once per attempt, and after a long
+        // streak the swapchain is rebuilt, which is what brings a stuck
+        // presentation engine back.
+        if (vk.acquire_retries == 0) {
+            LOG::warning(LOG_CATEGORY::GPU, "[vulkan] vkAcquireNextImageKHR has no image to give (VkResult %d); retrying", static_cast<int>(acquired));
+        }
+        vk.acquire_retries += 1;
+        if (vk.acquire_retries >= VK_ACQUIRE_RETRIES_BEFORE_RECREATE) {
+            LOG::warning(LOG_CATEGORY::GPU, "[vulkan] vkAcquireNextImageKHR failed %u times in a row; recreating the swapchain", vk.acquire_retries);
+            vk.acquire_retries = 0;
+            vk.resize_pending = true;
+        }
         return false;
     }
     if (acquired != VK_SUCCESS && acquired != VK_SUBOPTIMAL_KHR) {
         vk_check(acquired, "vkAcquireNextImageKHR");
         return false;
     }
+    vk.acquire_retries = 0;
 
     vkResetCommandBuffer(slot.cmd, 0);
     VkCommandBufferBeginInfo begin_info{};

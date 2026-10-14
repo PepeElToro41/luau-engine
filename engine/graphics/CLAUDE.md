@@ -17,9 +17,9 @@ no combined image samplers, D3D12 and Metal have none),
 `GpuRenderPassDesc` (begin-time attachments with load/store/clear),
 `GpuFrame`).
 `gpu.hpp` is `GpuContext` plus `GPU::`: `init(GpuInitDesc)` selects the backend once (runtime choice, immutable afterwards, one context per process) and every call forwards through the table in `src/gpu/backend.hpp`;
-`begin_frame` / `end_frame` (frames in flight, deferred releases, transient pools, swapchain acquire and present;
+`begin_frame` / `end_frame` (frames in flight, deferred releases, transient pools, swapchain acquire and present, an acquire that finds no image being retried, warned about once per streak and answered with a swapchain rebuild after `VK_ACQUIRE_RETRIES_BEFORE_RECREATE` of them, a lost surface rebuilt at once;
 `GpuFrame::backbuffer` is the swapchain image as an ordinary texture, in UNDEFINED state);
-resources with `destroy_*` (now, GPU idle) versus `release_*` (deferred to the current slot);
+resources with `destroy_*` (now, GPU idle) versus `release_*` (deferred: destroyed once the fence of the last frame that could have used the resource is waited, the open frame's slot or, between frames, the slot of the frame submitted last);
 `sampler` and `bind_layout` cached by hash;
 `create_bind_group` (long-lived) / `transient_bind_group` (this frame) allocate and write in one call;
 `push_uniforms` copies into the slot's 4 MB uniform ring and returns a `GpuUniformRange` to bind;

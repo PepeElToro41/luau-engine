@@ -64,6 +64,9 @@ void WindowPlugin::run(Engine& engine) {
 
         GpuFrame frame;
         if (!GPU::begin_frame(engine.gpu, frame)) {
+            // No image to draw into (minimized, or the presentation engine
+            // holding every image): wait a moment rather than spin on it.
+            SDL_Delay(1);
             continue;
         }
         FrameContext ctx;
